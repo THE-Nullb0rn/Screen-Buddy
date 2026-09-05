@@ -52,12 +52,10 @@
 .mascot-sprite {
   display: block;
   height: 148px;
-  width: auto;
+  width: 220px;
   max-width: 240px;
-  object-fit: contain;
   background: transparent;
   pointer-events: auto;
-  -webkit-user-drag: none;
 }
 
 /* ── Dismiss button ─────────────────────────────────────────────────────────── */

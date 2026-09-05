@@ -7,20 +7,8 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import idleSprite from '../assets/idle.png'
-import walkLeftSprite from '../assets/walk-left.png'
-import walkRightSprite from '../assets/walk-right.png'
-import alertSprite from '../assets/alert.png'
-import sleepSprite from '../assets/sleep.png'
+import CatCanvas from './CatCanvas'
 import './Mascot.css'
-
-const SPRITES = {
-  idle: idleSprite,
-  'walk-left': walkLeftSprite,
-  'walk-right': walkRightSprite,
-  alert: alertSprite,
-  sleep: sleepSprite,
-}
 
 const MARGIN = 16
 const FALLBACK_WIDTH = 220
@@ -268,7 +256,6 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
   }, [])
 
   const displayPose = isReminder ? 'alert' : pose
-  const sprite = SPRITES[displayPose] || SPRITES.idle
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   return (
@@ -289,12 +276,7 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
       aria-label={`screen-buddy, ${displayPose}`}
     >
       <div className={`mascot-sprite-wrap${isReminder ? ' is-alert' : ''}`}>
-        <img
-          className="mascot-sprite"
-          src={sprite}
-          alt=""
-          draggable={false}
-        />
+        <CatCanvas pose={displayPose} />
       </div>
 
       {reminderState === REMINDER_STATE.ACTIVE && (
