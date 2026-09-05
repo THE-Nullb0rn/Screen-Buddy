@@ -17,10 +17,10 @@ import SettingsModal from './components/SettingsModal'
 /**
  * REMINDER_STATE describes the lifecycle of a single reminder pop-up.
  *
- *   IDLE_COUNTING  — timer is ticking down; mascot is hidden
- *   ENTRANCE       — mascot is animating in  (short, ~1 s)
- *   ACTIVE         — mascot is fully visible; user can interact / dismiss
- *   EXIT           — mascot is animating out (short, ~0.8 s)
+ *   IDLE_COUNTING  — timer is ticking down; mascot roams / idles / sleeps
+ *   ENTRANCE       — reminder starts; mascot switches to the alert pose
+ *   ACTIVE         — reminder is visible; user can dismiss
+ *   EXIT           — reminder is animating out (short, ~0.8 s)
  *
  * After EXIT completes, state resets to IDLE_COUNTING.
  */
@@ -180,21 +180,14 @@ export default function App() {
   }, [])
 
   // ── Render ────────────────────────────────────────────────────────────────
-  const mascotVisible =
-    reminderState === REMINDER_STATE.ENTRANCE ||
-    reminderState === REMINDER_STATE.ACTIVE ||
-    reminderState === REMINDER_STATE.EXIT
-
   return (
     <>
-      {/* ── Mascot overlay ─────────────────────────────────────────────── */}
-      {mascotVisible && (
-        <Mascot
-          reminderState={reminderState}
-          onDismiss={dismissReminder}
-          REMINDER_STATE={REMINDER_STATE}
-        />
-      )}
+      {/* ── Mascot overlay (always present; pose/behavior follows reminderState) */}
+      <Mascot
+        reminderState={reminderState}
+        onDismiss={dismissReminder}
+        REMINDER_STATE={REMINDER_STATE}
+      />
 
       {/* ── Settings modal ─────────────────────────────────────────────── */}
       {settingsOpen && settings && (

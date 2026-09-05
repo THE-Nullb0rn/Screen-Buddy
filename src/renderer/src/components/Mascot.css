@@ -1,15 +1,15 @@
 /**
  * Mascot component styles
- * Scoped styles for the mascot container and placeholder art.
- * Animation keyframes live in index.css and are applied via class names.
+ * Sprite rendering, drag cursor, and dismiss control.
+ * Entrance/exit keyframes live in index.css and apply to the inner wrap
+ * so they do not fight the container's roam/drag transform.
  */
 
 /* ── Container ─────────────────────────────────────────────────────────────── */
 .mascot-container {
-  /* Position in the bottom-right corner of the overlay */
   position: fixed;
-  bottom: 48px;
-  right: 48px;
+  left: 0;
+  top: 0;
   z-index: 100;
 
   display: flex;
@@ -17,61 +17,52 @@
   align-items: center;
   gap: 8px;
 
-  /* Pointer events must be captured here so clicks hit the button, not
-     pass through to the window below. The parent overlay is click-through
-     by default; main process switches per-region via IPC (mouseEnter/Leave). */
+  /* Hit-region only — the rest of the overlay stays click-through via IPC */
   pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-/* ── Placeholder mascot art ────────────────────────────────────────────────── */
-.mascot-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-
-  /* Pill-shaped card — a visual placeholder until real art arrives */
-  background: rgba(30, 30, 46, 0.88);
-  border: 2px solid rgba(166, 227, 161, 0.6); /* catppuccin green-ish */
-  border-radius: 20px;
-  padding: 20px 28px;
-  min-width: 160px;
-
-  /* Subtle glow so it stands out on any wallpaper */
-  box-shadow:
-    0 0 24px rgba(166, 227, 161, 0.25),
-    0 8px 32px rgba(0, 0, 0, 0.4);
-
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+.mascot-container.is-dragging {
+  cursor: grabbing;
+  transition: none !important;
 }
 
-.mascot-placeholder__emoji {
-  font-size: 3rem;
-  line-height: 1;
-  /* Bounce-in animation for the emoji specifically */
-  animation: bounce-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+.mascot-sprite-wrap {
+  display: block;
+  line-height: 0;
+  background: transparent;
 }
 
-.mascot-placeholder__label {
-  margin: 0;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(166, 227, 161, 0.8);
+.mascot-sprite-wrap.is-alert {
+  animation: mascot-alert-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
-.mascot-placeholder__hint {
-  margin: 0;
-  font-size: 0.95rem;
-  color: #cdd6f4; /* catppuccin text */
-  text-align: center;
+@keyframes mascot-alert-pop {
+  from {
+    transform: scale(0.92);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.mascot-sprite {
+  display: block;
+  height: 148px;
+  width: auto;
+  max-width: 240px;
+  object-fit: contain;
+  background: transparent;
+  pointer-events: auto;
+  -webkit-user-drag: none;
 }
 
 /* ── Dismiss button ─────────────────────────────────────────────────────────── */
 .mascot-dismiss {
-  background: rgba(243, 139, 168, 0.15); /* catppuccin red tint */
+  background: rgba(243, 139, 168, 0.15);
   border: 1px solid rgba(243, 139, 168, 0.4);
   border-radius: 50%;
   width: 28px;
@@ -90,16 +81,4 @@
 .mascot-dismiss:hover {
   background: rgba(243, 139, 168, 0.35);
   transform: scale(1.1);
-}
-
-/* ── Bounce-in keyframe (emoji only) ───────────────────────────────────────── */
-@keyframes bounce-in {
-  from {
-    transform: scale(0.5);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
 }
