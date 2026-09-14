@@ -28,6 +28,7 @@ const EXIT_DURATION_MS = 800
 
 const POMODORO_WORK_SEC = 25 * 60
 const POMODORO_BREAK_SEC = 5 * 60
+const POMODORO_CELEBRATION_MS = 1200
 
 const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
 
@@ -199,6 +200,9 @@ export default function App() {
   // reminder card appears. Keeping this separate from the reminder state means
   // it never inherits the large movement-break treatment.
   const finishPomodoroWork = useCallback(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[pomodoro] Work session complete — starting jump celebration')
+    }
     setPomodoroCelebrating(true)
     setTimerMode('pomodoro-break')
     window.api.updateTimerStatus({
@@ -208,10 +212,21 @@ export default function App() {
     })
   }, [])
 
-  const finishPomodoroCelebration = useCallback(() => {
-    setPomodoroCelebrating(false)
-    triggerReminder('pomodoroWorkEnd')
-  }, [triggerReminder])
+  // Hold the jump loop long enough for two clear jumps before showing
+  // the normal completion card. The cleanup lets Stop / Reset cancel it.
+  useEffect(() => {
+    if (!pomodoroCelebrating) return
+
+    const celebrationTimer = setTimeout(() => {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[pomodoro] Jump celebration complete — showing reminder')
+      }
+      setPomodoroCelebrating(false)
+      triggerReminder('pomodoroWorkEnd')
+    }, POMODORO_CELEBRATION_MS)
+
+    return () => clearTimeout(celebrationTimer)
+  }, [pomodoroCelebrating, triggerReminder])
 
   // ── Pomodoro & Stopwatch Tick ─────────────────────────────────────────────
   useEffect(() => {
@@ -360,7 +375,6 @@ export default function App() {
         timerRunning={timerRunning}
         timerFormatted={formatTime(timerSeconds)}
         onDismiss={dismissReminder}
-        onPomodoroCelebrationEnd={finishPomodoroCelebration}
         REMINDER_STATE={REMINDER_STATE}
       />
 

@@ -65,7 +65,6 @@ export default function Mascot({
   timerFormatted = '',
   REMINDER_STATE,
   onDismiss,
-  onPomodoroCelebrationEnd,
 }) {
   const containerRef = useRef(null)
 
@@ -342,7 +341,7 @@ export default function Mascot({
     }
   }, [])
 
-  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'pounce' : pose
+  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : pose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   let stateClass = 'is-idle'
@@ -354,7 +353,7 @@ export default function Mascot({
   let flipped = false
 
   if (pomodoroCelebrating) {
-    animationName = 'pounce'
+    animationName = 'jump'
     flipped = false
   } else if (dragging) {
     animationName = 'drag'
@@ -454,8 +453,7 @@ export default function Mascot({
         <SpriteAnimator
           animation={animationName}
           flipped={flipped}
-          loop={animationName === 'pounce' ? false : true}
-          onAnimationEnd={animationName === 'pounce' ? onPomodoroCelebrationEnd : undefined}
+          loop={true}
         />
       </div>
 
