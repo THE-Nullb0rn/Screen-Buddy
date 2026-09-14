@@ -1,39 +1,37 @@
 /**
  * Mascot component styles
- * Sprite rendering, drag cursor, and dismiss control.
- * Entrance/exit keyframes live in index.css and apply to the inner wrap
- * so they do not fight the container's roam/drag transform.
  */
 
-/* ── Container ─────────────────────────────────────────────────────────────── */
 .mascot-container {
   position: fixed;
   left: 0;
   top: 0;
   z-index: 100;
-
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-
-  /* Hit-region only — the rest of the overlay stays click-through via IPC */
   pointer-events: auto;
   cursor: grab;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  transform-origin: bottom center;
 }
 
 .mascot-container.is-dragging {
   cursor: grabbing;
-  transition: none !important;
+  transition: transform 0.1s ease-out !important;
 }
 
 .mascot-sprite-wrap {
-  display: block;
-  line-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 126px;
+  height: 180px;
   background: transparent;
+  transform-origin: bottom center;
 }
 
 .mascot-sprite-wrap.is-alert {
@@ -41,26 +39,10 @@
 }
 
 @keyframes mascot-alert-pop {
-  from {
-    transform: scale(0.92);
-  }
-  to {
-    transform: scale(1);
-  }
+  from { transform: scale(0.92); }
+  to { transform: scale(1); }
 }
 
-.mascot-sprite {
-  display: block;
-  height: 148px;
-  width: auto;
-  max-width: 240px;
-  object-fit: contain;
-  background: transparent;
-  pointer-events: auto;
-  -webkit-user-drag: none;
-}
-
-/* ── Dismiss button ─────────────────────────────────────────────────────────── */
 .mascot-dismiss {
   background: rgba(243, 139, 168, 0.15);
   border: 1px solid rgba(243, 139, 168, 0.4);

@@ -1,0 +1,129 @@
+/* ── Testing Container ── */
+.walk-test-container {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 30, 46, 0.95); /* Dark background to see the character clearly */
+  z-index: 9999;
+  pointer-events: auto; /* Allow interaction if needed */
+}
+
+/* ── SVG Base ── */
+.cat-svg {
+  width: 400px;
+  height: 400px;
+}
+
+/* ── SVG Styling classes ── */
+.path-outline {
+  stroke: #1F1A17;
+  stroke-width: 16px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.path-fill {
+  stroke-width: 8px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.shape-outline {
+  stroke: #1F1A17;
+  stroke-width: 8px;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.shape-fill {
+  stroke: none;
+}
+
+/* Colors */
+.fill-near {
+  stroke: #F58735;
+  fill: #F58735;
+}
+.fill-far {
+  stroke: #D96B1C;
+  fill: #D96B1C;
+}
+
+/* ── Animations ── */
+
+/* Leg swing (Hip joint) */
+@keyframes leg-upper-swing {
+  0%   { transform: rotate(-25deg); } /* Front reach */
+  50%  { transform: rotate(25deg); }  /* Back push */
+  100% { transform: rotate(-25deg); }
+}
+
+/* Knee/Hock bend (Lower leg joint) */
+@keyframes leg-lower-swing {
+  0%   { transform: rotate(0deg); }   /* Planted/Straight */
+  25%  { transform: rotate(0deg); }   /* Pushing back, stays straight */
+  50%  { transform: rotate(10deg); }  /* Starting to lift */
+  75%  { transform: rotate(60deg); }  /* Max bend backwards to clear ground */
+  100% { transform: rotate(0deg); }   /* Back to front reach */
+}
+
+/* Body bob */
+@keyframes body-bob {
+  0%, 50%, 100% { transform: translateY(-4px); } /* Highest when legs cross */
+  25%, 75%      { transform: translateY(4px); }  /* Lowest mid-stride */
+}
+
+/* Head counter-bob */
+@keyframes head-bob {
+  0%, 50%, 100% { transform: rotate(0deg); }
+  25%, 75%      { transform: rotate(-3deg); }
+}
+
+/* Tail sways */
+@keyframes tail-1-sway {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(15deg); }
+}
+@keyframes tail-2-sway {
+  0%, 100% { transform: rotate(0deg); }
+  50%      { transform: rotate(25deg); }
+}
+
+/* ── Apply animation classes ── */
+
+/* Diagonal Pair A: Near Fore & Far Hind */
+.cycle-a {
+  animation: leg-upper-swing 1.2s infinite linear;
+}
+.cycle-a-lower {
+  animation: leg-lower-swing 1.2s infinite linear;
+}
+
+/* Diagonal Pair B: Far Fore & Near Hind (Offset by 50%) */
+.cycle-b {
+  animation: leg-upper-swing 1.2s infinite linear;
+  animation-delay: -0.6s;
+}
+.cycle-b-lower {
+  animation: leg-lower-swing 1.2s infinite linear;
+  animation-delay: -0.6s;
+}
+
+/* Global movement parts */
+.cat-bounce {
+  animation: body-bob 1.2s infinite linear;
+}
+.head-group {
+  animation: head-bob 1.2s infinite linear;
+}
+.tail-1 {
+  animation: tail-1-sway 2.4s infinite ease-in-out;
+}
+.tail-2 {
+  animation: tail-2-sway 2.4s infinite ease-in-out;
+  animation-delay: 0.2s;
+}

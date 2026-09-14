@@ -182,7 +182,7 @@ export default function App() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* ── Mascot overlay (always present; pose/behavior follows reminderState) */}
+      {/* ── Mascot overlay ─────────────────────────────────────────────── */}
       <Mascot
         reminderState={reminderState}
         onDismiss={dismissReminder}

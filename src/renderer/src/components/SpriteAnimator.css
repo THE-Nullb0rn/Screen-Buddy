@@ -1,0 +1,12 @@
+/**
+ * SpriteAnimator component styles
+ */
+
+.sprite-animator {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}

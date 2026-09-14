@@ -1,30 +1,12 @@
-/**
- * screen-buddy — animated cat mascot
- *
- * Renders the current pose sprite, roams along the bottom while the reminder
- * timer is idle, switches to alert when a reminder fires, and can be dragged
- * to a new spot (which pauses roaming until the pointer is released).
- */
-
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import idleSprite from '../assets/idle.png'
-import walkLeftSprite from '../assets/walk-left.png'
-import walkRightSprite from '../assets/walk-right.png'
-import alertSprite from '../assets/alert.png'
-import sleepSprite from '../assets/sleep.png'
 import './Mascot.css'
-
-const SPRITES = {
-  idle: idleSprite,
-  'walk-left': walkLeftSprite,
-  'walk-right': walkRightSprite,
-  alert: alertSprite,
-  sleep: sleepSprite,
-}
+import SpriteAnimator from './SpriteAnimator'
 
 const MARGIN = 16
-const FALLBACK_WIDTH = 220
-const FALLBACK_HEIGHT = 148
+const SPRITE_WIDTH = 126
+const SPRITE_HEIGHT = 180
+const FALLBACK_WIDTH = SPRITE_WIDTH
+const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
 const SLEEP_CHANCE = 0.4
 const IDLE_PAUSE_MIN_MS = 5000
@@ -63,6 +45,8 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
   const lastInteractRef = useRef(Date.now())
   const roamGenRef = useRef(0)
   const dragOffsetRef = useRef({ x: 0, y: 0 })
+  // Spring logic state for dragging
+  const dragTargetRef = useRef({ x, y })
 
   poseRef.current = pose
   posRef.current = { x, y }
@@ -100,6 +84,7 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
     posRef.current = next
     setX(next.x)
     setY(next.y)
+    dragTargetRef.current = next
     return next
   }, [])
 
@@ -109,6 +94,34 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
       poseRef.current = 'idle'
       setPose('idle')
     }
+  }, [])
+
+  // ── Drag Spring Physics ──────────────────────────────────────────────────
+  useEffect(() => {
+    let animationFrameId
+    const updateSpring = () => {
+      if (draggingRef.current) {
+        const target = dragTargetRef.current
+        const current = posRef.current
+
+        // Simple spring math (lerp)
+        const dx = target.x - current.x
+        const dy = target.y - current.y
+
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+          const next = {
+            x: current.x + dx * 0.3,
+            y: current.y + dy * 0.3,
+          }
+          posRef.current = next
+          setX(next.x)
+          setY(next.y)
+        }
+      }
+      animationFrameId = requestAnimationFrame(updateSpring)
+    }
+    updateSpring()
+    return () => cancelAnimationFrame(animationFrameId)
   }, [])
 
   // ── Roaming loop (idle only) ──────────────────────────────────────────────
@@ -177,6 +190,7 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
       requestAnimationFrame(() => {
         if (gen !== roamGenRef.current) return
         setX(targetX)
+        dragTargetRef.current = { x: targetX, y: posRef.current.y }
       })
 
       later(() => {
@@ -204,6 +218,7 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
       const next = clampToViewport(posRef.current.x, posRef.current.y)
       setX(next.x)
       setY(next.y)
+      dragTargetRef.current = next
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -231,13 +246,9 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
 
   const handlePointerMove = (event) => {
     if (!draggingRef.current) return
-    const next = clampToViewport(
-      event.clientX - dragOffsetRef.current.x,
-      event.clientY - dragOffsetRef.current.y
-    )
-    posRef.current = next
-    setX(next.x)
-    setY(next.y)
+    const targetX = event.clientX - dragOffsetRef.current.x
+    const targetY = event.clientY - dragOffsetRef.current.y
+    dragTargetRef.current = clampToViewport(targetX, targetY)
   }
 
   const handlePointerUp = (event) => {
@@ -250,6 +261,12 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
     } catch {
       // capture may already be released
     }
+
+    const finalPos = dragTargetRef.current
+    posRef.current = finalPos
+    setX(finalPos.x)
+    setY(finalPos.y)
+
     if (!isReminder) {
       setRoamEpoch((n) => n + 1)
     }
@@ -268,16 +285,47 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
   }, [])
 
   const displayPose = isReminder ? 'alert' : pose
-  const sprite = SPRITES[displayPose] || SPRITES.idle
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
+
+  let stateClass = 'is-idle'
+  if (moving) stateClass = 'is-walking'
+  if (displayPose === 'sleep') stateClass = 'is-sleep'
+
+  // Map state machine to sprite animations
+  let animationName = 'idle'
+  let flipped = false
+
+  if (dragging) {
+    animationName = 'drag'
+    flipped = false
+  } else if (isReminder) {
+    animationName = 'talk'
+    flipped = false
+  } else if (displayPose === 'walk-left') {
+    animationName = 'walk'
+    flipped = true
+  } else if (displayPose === 'walk-right') {
+    animationName = 'walk'
+    flipped = false
+  } else if (displayPose === 'sleep') {
+    animationName = 'sleep'
+    flipped = false
+  } else {
+    animationName = 'idle'
+    flipped = false
+  }
 
   return (
     <div
       ref={containerRef}
-      className={`mascot-container${dragging ? ' is-dragging' : ''}${moving ? ' is-walking' : ''}`}
+      className={`mascot-container ${stateClass} ${dragging ? 'is-dragging' : ''}`}
       style={{
         transform: `translate3d(${x}px, ${y}px, 0)`,
-        transition: moving ? `transform ${walkMs}ms linear` : 'none',
+        transition: moving
+          ? `transform ${walkMs}ms linear`
+          : dragging
+            ? 'none'
+            : 'transform 0.15s ease-out',
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -289,11 +337,9 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
       aria-label={`screen-buddy, ${displayPose}`}
     >
       <div className={`mascot-sprite-wrap${isReminder ? ' is-alert' : ''}`}>
-        <img
-          className="mascot-sprite"
-          src={sprite}
-          alt=""
-          draggable={false}
+        <SpriteAnimator
+          animation={animationName}
+          flipped={flipped}
         />
       </div>
 
