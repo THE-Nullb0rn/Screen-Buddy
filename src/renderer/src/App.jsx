@@ -3,6 +3,8 @@
  *
  * Owns:
  *  - The top-level reminder state machine (IDLE_COUNTING → ENTRANCE → ACTIVE → EXIT)
+ *  - Reminder types (water, eyeRest, movementBreak) and rotation
+ *  - Pomodoro timer (25m work / 5m break) & Stopwatch
  *  - Interval timer that drives the state machine
  *  - IPC subscriptions for tray events and power monitor events
  *  - Settings state (fetched from main process, shared down via props)
@@ -14,16 +16,6 @@ import Mascot from './components/Mascot'
 import SettingsModal from './components/SettingsModal'
 
 // ─── State machine constants ─────────────────────────────────────────────────
-/**
- * REMINDER_STATE describes the lifecycle of a single reminder pop-up.
- *
- *   IDLE_COUNTING  — timer is ticking down; mascot roams / idles / sleeps
- *   ENTRANCE       — reminder starts; mascot switches to the alert pose
- *   ACTIVE         — reminder is visible; user can dismiss
- *   EXIT           — reminder is animating out (short, ~0.8 s)
- *
- * After EXIT completes, state resets to IDLE_COUNTING.
- */
 const REMINDER_STATE = {
   IDLE_COUNTING: 'IDLE_COUNTING',
   ENTRANCE: 'ENTRANCE',
@@ -31,29 +23,57 @@ const REMINDER_STATE = {
   EXIT: 'EXIT',
 }
 
-// How long each transient state lasts (ms)
 const ENTRANCE_DURATION_MS = 1000
 const EXIT_DURATION_MS = 800
+
+const POMODORO_WORK_SEC = 25 * 60
+const POMODORO_BREAK_SEC = 5 * 60
+
+const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
+
+function getEnabledReminderTypes(s) {
+  const reminders = s?.reminders || {}
+  const enabled = ALL_REMINDER_TYPES.filter((t) => reminders[t] !== false)
+  return enabled.length > 0 ? enabled : ALL_REMINDER_TYPES
+}
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  if (m >= 60) {
+    const h = Math.floor(m / 60)
+    const remM = m % 60
+    return `${h}:${String(remM).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function App() {
   // ── Settings ───────────────────────────────────────────────────────────────
-  const [settings, setSettingsState] = useState(null) // null until loaded
+  const [settings, setSettingsState] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   // ── Reminder state machine ─────────────────────────────────────────────────
   const [reminderState, setReminderState] = useState(REMINDER_STATE.IDLE_COUNTING)
+  const [reminderType, setReminderType] = useState('water')
 
-  // Whether reminders are paused (from tray or settings)
+  // ── Pomodoro & Stopwatch state ─────────────────────────────────────────────
+  const [timerMode, setTimerMode] = useState('none') // 'none' | 'pomodoro-work' | 'pomodoro-break' | 'stopwatch'
+  const [timerSeconds, setTimerSeconds] = useState(0)
+  const [timerRunning, setTimerRunning] = useState(false)
+  const [pomodoroCelebrating, setPomodoroCelebrating] = useState(false)
+
+  // Whether reminders/timers are paused
   const [paused, setPaused] = useState(false)
 
-  // Countdown displayed in development / debug overlay (seconds remaining)
+  // Countdown displayed in development / debug overlay
   const [countdown, setCountdown] = useState(0)
 
-  // Refs so interval callbacks always see the latest values without re-creating
   const pausedRef = useRef(paused)
   const settingsRef = useRef(settings)
   const reminderStateRef = useRef(reminderState)
+  const reminderIndexRef = useRef(0)
 
   useEffect(() => { pausedRef.current = paused }, [paused])
   useEffect(() => { settingsRef.current = settings }, [settings])
@@ -68,37 +88,52 @@ export default function App() {
   }, [])
 
   // ── State machine transitions ─────────────────────────────────────────────
-
-  /** Begin a reminder cycle: IDLE_COUNTING → ENTRANCE → ACTIVE */
-  const triggerReminder = useCallback(() => {
+  const triggerReminder = useCallback((type) => {
+    let resolvedType = type
+    if (!resolvedType) {
+      const enabled = getEnabledReminderTypes(settingsRef.current)
+      resolvedType = enabled[reminderIndexRef.current % enabled.length]
+      reminderIndexRef.current = (reminderIndexRef.current + 1) % enabled.length
+    }
+    setReminderType(resolvedType)
     setReminderState(REMINDER_STATE.ENTRANCE)
 
-    // After entrance animation completes, move to ACTIVE
     setTimeout(() => {
       setReminderState(REMINDER_STATE.ACTIVE)
     }, ENTRANCE_DURATION_MS)
   }, [])
 
-  /** Dismiss the active reminder: ACTIVE → EXIT → IDLE_COUNTING */
   const dismissReminder = useCallback(() => {
     setReminderState(REMINDER_STATE.EXIT)
 
-    // After exit animation completes, go back to idle
     setTimeout(() => {
       setReminderState(REMINDER_STATE.IDLE_COUNTING)
     }, EXIT_DURATION_MS)
   }, [])
 
-  // ── Timer: drives IDLE_COUNTING countdown ─────────────────────────────────
+  // ── Auto-dismiss after a few seconds if not manually dismissed ────────────
   useEffect(() => {
-    if (!settings) return // wait until settings are loaded
+    if (reminderState !== REMINDER_STATE.ACTIVE) return
+
+    const isBig = reminderType === 'movementBreak'
+    const timeoutMs = isBig ? 6500 : 12000
+
+    const timer = setTimeout(() => {
+      dismissReminder()
+    }, timeoutMs)
+
+    return () => clearTimeout(timer)
+  }, [reminderState, reminderType, dismissReminder])
+
+  // ── Timer: drives IDLE_COUNTING countdown & rotation ──────────────────────
+  useEffect(() => {
+    if (!settings) return
 
     const intervalSec = (settings.intervalMinutes || 20) * 60
     let remaining = intervalSec
     setCountdown(remaining)
 
     const tick = setInterval(() => {
-      // Don't progress if paused or if we're already mid-reminder
       if (
         pausedRef.current ||
         reminderStateRef.current !== REMINDER_STATE.IDLE_COUNTING
@@ -110,51 +145,186 @@ export default function App() {
       setCountdown(remaining)
 
       if (remaining <= 0) {
-        // Timer expired — trigger the reminder
         remaining = intervalSec
         setCountdown(remaining)
-        triggerReminder()
+
+        const enabled = getEnabledReminderTypes(settingsRef.current)
+        const nextType = enabled[reminderIndexRef.current % enabled.length]
+        reminderIndexRef.current = (reminderIndexRef.current + 1) % enabled.length
+        triggerReminder(nextType)
       }
     }, 1000)
 
     return () => clearInterval(tick)
-  }, [settings, triggerReminder]) // re-create timer when settings or triggerReminder changes
+  }, [settings, triggerReminder])
+
+  // ── Pomodoro / Stopwatch Controls ─────────────────────────────────────────
+  const startPomodoro = useCallback((workSec = POMODORO_WORK_SEC) => {
+    setPomodoroCelebrating(false)
+    setTimerMode('pomodoro-work')
+    setTimerSeconds(workSec)
+    setTimerRunning(true)
+    window.api.updateTimerStatus({
+      mode: 'pomodoro-work',
+      formattedTime: formatTime(workSec),
+      running: true,
+    })
+  }, [])
+
+  const startStopwatch = useCallback(() => {
+    setPomodoroCelebrating(false)
+    setTimerMode('stopwatch')
+    setTimerSeconds(0)
+    setTimerRunning(true)
+    window.api.updateTimerStatus({
+      mode: 'stopwatch',
+      formattedTime: '00:00',
+      running: true,
+    })
+  }, [])
+
+  const stopTimer = useCallback(() => {
+    setPomodoroCelebrating(false)
+    setTimerMode('none')
+    setTimerSeconds(0)
+    setTimerRunning(false)
+    window.api.updateTimerStatus({
+      mode: 'none',
+      formattedTime: '',
+      running: false,
+    })
+  }, [])
+
+  // A completed work session gets a small, local celebration before its normal
+  // reminder card appears. Keeping this separate from the reminder state means
+  // it never inherits the large movement-break treatment.
+  const finishPomodoroWork = useCallback(() => {
+    setPomodoroCelebrating(true)
+    setTimerMode('pomodoro-break')
+    window.api.updateTimerStatus({
+      mode: 'pomodoro-break',
+      formattedTime: formatTime(POMODORO_BREAK_SEC),
+      running: true,
+    })
+  }, [])
+
+  const finishPomodoroCelebration = useCallback(() => {
+    setPomodoroCelebrating(false)
+    triggerReminder('pomodoroWorkEnd')
+  }, [triggerReminder])
+
+  // ── Pomodoro & Stopwatch Tick ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!timerRunning || timerMode === 'none') return
+
+    const interval = setInterval(() => {
+      if (pausedRef.current) return // Respect pause!
+
+      if (timerMode === 'stopwatch') {
+        setTimerSeconds((prev) => {
+          const next = prev + 1
+          window.api.updateTimerStatus({
+            mode: 'stopwatch',
+            formattedTime: formatTime(next),
+            running: true,
+          })
+          return next
+        })
+      } else if (timerMode === 'pomodoro-work') {
+        setTimerSeconds((prev) => {
+          if (prev <= 1) {
+            finishPomodoroWork()
+            return POMODORO_BREAK_SEC
+          }
+          const next = prev - 1
+          window.api.updateTimerStatus({
+            mode: 'pomodoro-work',
+            formattedTime: formatTime(next),
+            running: true,
+          })
+          return next
+        })
+      } else if (timerMode === 'pomodoro-break') {
+        setTimerSeconds((prev) => {
+          if (prev <= 1) {
+            triggerReminder('pomodoroBreakEnd')
+            setTimerMode('pomodoro-work')
+            window.api.updateTimerStatus({
+              mode: 'pomodoro-work',
+              formattedTime: formatTime(POMODORO_WORK_SEC),
+              running: true,
+            })
+            return POMODORO_WORK_SEC
+          }
+          const next = prev - 1
+          window.api.updateTimerStatus({
+            mode: 'pomodoro-break',
+            formattedTime: formatTime(next),
+            running: true,
+          })
+          return next
+        })
+      }
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [timerRunning, timerMode, finishPomodoroWork, triggerReminder])
 
   // ── IPC: tray push events ─────────────────────────────────────────────────
   useEffect(() => {
-    // "Test Reminder" tray menu item — immediately fire a reminder
-    const offTest = window.api.on('tray:test-reminder', () => {
+    const offTest = window.api.on('tray:test-reminder', (data) => {
       if (reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING) {
-        triggerReminder()
+        triggerReminder(data?.type)
       }
     })
 
-    // "Settings" tray menu item — open settings modal
+    const offTrigger = window.api.on('reminder:trigger', (data) => {
+      if (reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING) {
+        triggerReminder(data?.type)
+      }
+    })
+
+    const offStartPomodoro = window.api.on('timer:start-pomodoro', () => {
+      startPomodoro()
+    })
+
+    const offStartStopwatch = window.api.on('timer:start-stopwatch', () => {
+      startStopwatch()
+    })
+
+    const offStopTimer = window.api.on('timer:stop', () => {
+      stopTimer()
+    })
+
+    const offTestPomodoro = window.api.on('timer:test-pomodoro-work-end', () => {
+      startPomodoro(5) // Fast 5s pomodoro for instant verification
+    })
+
     const offSettings = window.api.on('tray:open-settings', () => {
       setSettingsOpen(true)
     })
 
-    // "Pause/Resume" tray menu item — sync pause state
     const offPause = window.api.on('tray:pause-state', (isPaused) => {
       setPaused(isPaused)
     })
 
     return () => {
       offTest()
+      offTrigger()
+      offStartPomodoro()
+      offStartStopwatch()
+      offStopTimer()
+      offTestPomodoro()
       offSettings()
       offPause()
     }
-  // triggerReminder is stable (wrapped in useCallback with no deps)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [triggerReminder])
+  }, [triggerReminder, startPomodoro, startStopwatch, stopTimer])
 
   // ── IPC: power monitor events ─────────────────────────────────────────────
   useEffect(() => {
-    // Suspend / lock-screen → pause (don't show reminders while away)
     const offSuspend = window.api.on('power:suspend', () => setPaused(true))
     const offLock = window.api.on('power:lock-screen', () => setPaused(true))
 
-    // Resume / unlock → un-pause (unless user manually paused)
     const offResume = window.api.on('power:resume', () => {
       if (!settingsRef.current?.paused) setPaused(false)
     })
@@ -170,26 +340,30 @@ export default function App() {
     }
   }, [])
 
-  // ── Settings save handler (passed into SettingsModal) ─────────────────────
+  // ── Settings save handler ─────────────────────────────────────────────────
   const handleSaveSettings = useCallback(async (updates) => {
     const newSettings = await window.api.setSettings(updates)
     setSettingsState(newSettings)
     setPaused(newSettings.paused)
-    // Notify main process of pause state so tray label stays in sync
     window.api.setPaused(newSettings.paused)
   }, [])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* ── Mascot overlay ─────────────────────────────────────────────── */}
       <Mascot
         reminderState={reminderState}
+        reminderType={reminderType}
+        pomodoroCelebrating={pomodoroCelebrating}
+        timerMode={timerMode}
+        timerSeconds={timerSeconds}
+        timerRunning={timerRunning}
+        timerFormatted={formatTime(timerSeconds)}
         onDismiss={dismissReminder}
+        onPomodoroCelebrationEnd={finishPomodoroCelebration}
         REMINDER_STATE={REMINDER_STATE}
       />
 
-      {/* ── Settings modal ─────────────────────────────────────────────── */}
       {settingsOpen && settings && (
         <SettingsModal
           settings={settings}
@@ -198,12 +372,14 @@ export default function App() {
         />
       )}
 
-      {/* ── Dev debug overlay (only in development) ────────────────────── */}
       {process.env.NODE_ENV === 'development' && settings && (
         <div className="debug-overlay">
-          <span>State: {reminderState}</span>
+          <span>State: {reminderState} ({reminderType})</span>
           <span>Next in: {countdown}s</span>
           <span>{paused ? '⏸ PAUSED' : '▶ RUNNING'}</span>
+          {timerMode !== 'none' && (
+            <span>Timer: {timerMode} ({formatTime(timerSeconds)})</span>
+          )}
         </div>
       )}
     </>

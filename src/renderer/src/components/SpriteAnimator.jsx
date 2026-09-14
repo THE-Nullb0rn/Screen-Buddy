@@ -50,11 +50,17 @@ function getSpritesheetImage(src, onLoaded) {
 export function useSpriteAnimation({
   manifest = defaultManifest,
   animation = 'idle',
+  loop: propLoop,
   onAnimationEnd,
 }) {
-  const animConfig =
+  const baseConfig =
     manifest.animations[animation] ||
     manifest.animations.idle || { frames: [0], fps: 1, loop: true }
+
+  const animConfig = {
+    ...baseConfig,
+    loop: propLoop !== undefined ? propLoop : baseConfig.loop,
+  }
 
   const [frameIndex, setFrameIndex] = useState(0)
 
@@ -138,6 +144,7 @@ export function useSpriteAnimation({
 export default function SpriteAnimator({
   animation = 'idle',
   flipped = false,
+  loop,
   manifest = defaultManifest,
   spritesheet = defaultSheetSrc,
   scale: propScale,
@@ -160,6 +167,7 @@ export default function SpriteAnimator({
   const { currentFrame } = useSpriteAnimation({
     manifest,
     animation,
+    loop,
     onAnimationEnd,
   })
 

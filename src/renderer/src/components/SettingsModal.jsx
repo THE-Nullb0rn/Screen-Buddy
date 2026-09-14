@@ -5,6 +5,7 @@
  *   - Set the reminder interval (in minutes)
  *   - Toggle global pause
  *   - Toggle Linux autostart (.desktop entry)
+ *   - Toggle individual reminder types (water, posture, eyeRest, stretch)
  *
  * Receives the current settings object and two callbacks:
  *   onSave(updates)  — persists changes (async, calls main via IPC)
@@ -19,6 +20,11 @@ export default function SettingsModal({ settings, onSave, onClose }) {
   const [intervalMinutes, setIntervalMinutes] = useState(settings.intervalMinutes)
   const [paused, setPaused] = useState(settings.paused)
   const [autostart, setAutostart] = useState(settings.autostart)
+  const [reminders, setReminders] = useState(() => ({
+    water: settings.reminders?.water ?? true,
+    eyeRest: settings.reminders?.eyeRest ?? true,
+    movementBreak: settings.reminders?.movementBreak ?? settings.reminders?.stretch ?? true,
+  }))
   const [settingsPath, setSettingsPath] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -49,6 +55,7 @@ export default function SettingsModal({ settings, onSave, onClose }) {
       intervalMinutes: Number(intervalMinutes),
       paused,
       autostart,
+      reminders,
     })
     setSaving(false)
     onClose()
@@ -121,6 +128,48 @@ export default function SettingsModal({ settings, onSave, onClose }) {
             />
             <span className="settings-field__toggle-track" aria-hidden="true" />
           </label>
+
+          {/* Reminder Types */}
+          <div className="settings-reminders-section">
+            <span className="settings-field__label">
+              Active reminders
+              <span className="settings-field__hint"> (rotated automatically)</span>
+            </span>
+            <div className="settings-reminders-grid">
+              <label className="settings-field settings-field--toggle">
+                <span className="settings-field__label">💧 Water</span>
+                <input
+                  type="checkbox"
+                  className="settings-field__checkbox"
+                  checked={reminders.water}
+                  onChange={(e) => setReminders((prev) => ({ ...prev, water: e.target.checked }))}
+                />
+                <span className="settings-field__toggle-track" aria-hidden="true" />
+              </label>
+
+              <label className="settings-field settings-field--toggle">
+                <span className="settings-field__label">👀 Eye rest</span>
+                <input
+                  type="checkbox"
+                  className="settings-field__checkbox"
+                  checked={reminders.eyeRest}
+                  onChange={(e) => setReminders((prev) => ({ ...prev, eyeRest: e.target.checked }))}
+                />
+                <span className="settings-field__toggle-track" aria-hidden="true" />
+              </label>
+
+              <label className="settings-field settings-field--toggle">
+                <span className="settings-field__label">🤸 Movement break</span>
+                <input
+                  type="checkbox"
+                  className="settings-field__checkbox"
+                  checked={reminders.movementBreak}
+                  onChange={(e) => setReminders((prev) => ({ ...prev, movementBreak: e.target.checked }))}
+                />
+                <span className="settings-field__toggle-track" aria-hidden="true" />
+              </label>
+            </div>
+          </div>
         </div>
 
         {/* ── Footer ──────────────────────────────────────────────────── */}

@@ -37,12 +37,11 @@ const DEFAULT_SETTINGS = {
   /** Write ~/.config/autostart/screen-buddy.desktop on login */
   autostart: false,
 
-  /** Which reminder types are enabled (placeholder for future expansion) */
+  /** Which reminder types are enabled */
   reminders: {
     water: true,
-    posture: true,
     eyeRest: true,
-    stretch: false,
+    movementBreak: true,
   },
 }
 
@@ -68,6 +67,19 @@ function loadSettings() {
 
     const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8')
     const saved = JSON.parse(raw)
+
+    // Backwards compatibility migration: merge old 'posture' and 'stretch' into 'movementBreak'
+    if (saved.reminders) {
+      if (saved.reminders.movementBreak === undefined) {
+        const hadPostureOrStretch =
+          saved.reminders.stretch === true || saved.reminders.posture === true
+        saved.reminders.movementBreak =
+          hadPostureOrStretch ||
+          (saved.reminders.stretch === undefined && saved.reminders.posture === undefined)
+      }
+      delete saved.reminders.posture
+      delete saved.reminders.stretch
+    }
 
     // Deep merge: saved values override defaults, but new default keys are added
     const merged = deepMerge(DEFAULT_SETTINGS, saved)

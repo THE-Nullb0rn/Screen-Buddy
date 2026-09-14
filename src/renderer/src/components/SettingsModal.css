@@ -172,6 +172,21 @@
   background: #a6e3a1;
 }
 
+/* ── Reminder types group ───────────────────────────────────────────────────── */
+.settings-reminders-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid rgba(205, 214, 244, 0.08);
+  padding-top: 16px;
+}
+
+.settings-reminders-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
 .settings-modal__footer {
   padding: 16px 24px 20px;

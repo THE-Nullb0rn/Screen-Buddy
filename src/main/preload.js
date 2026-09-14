@@ -61,6 +61,15 @@ contextBridge.exposeInMainWorld('api', {
    */
   setPaused: (paused) => ipcRenderer.send('pause:set', paused),
 
+  // ── Timer status ──────────────────────────────────────────────────────────
+
+  /**
+   * Update the tray tooltip with current Pomodoro / Stopwatch status.
+   * The menu object stays in place so open submenus are not collapsed.
+   * @param {{ mode: string, formattedTime: string, running: boolean }} status
+   */
+  updateTimerStatus: (status) => ipcRenderer.send('timer:update-status', status),
+
   // ── Push events from main → renderer ─────────────────────────────────────
 
   /**
@@ -74,8 +83,13 @@ contextBridge.exposeInMainWorld('api', {
   on: (channel, handler) => {
     const ALLOWED = [
       'tray:test-reminder',
+      'reminder:trigger',
       'tray:open-settings',
       'tray:pause-state',
+      'timer:start-pomodoro',
+      'timer:start-stopwatch',
+      'timer:stop',
+      'timer:test-pomodoro-work-end',
       'power:suspend',
       'power:resume',
       'power:lock-screen',

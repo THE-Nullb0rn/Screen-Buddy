@@ -8,7 +8,7 @@
   top: 0;
   z-index: 100;
   display: flex;
-  flex-direction: column;
+  flex-direction: column-reverse;
   align-items: center;
   gap: 8px;
   pointer-events: auto;
@@ -16,7 +16,11 @@
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  transform-origin: bottom center;
+  transform-origin: center center;
+}
+
+.mascot-container.is-near-top {
+  flex-direction: column;
 }
 
 .mascot-container.is-dragging {
@@ -31,7 +35,7 @@
   width: 126px;
   height: 180px;
   background: transparent;
-  transform-origin: bottom center;
+  transform-origin: center center;
 }
 
 .mascot-sprite-wrap.is-alert {
@@ -43,12 +47,95 @@
   to { transform: scale(1); }
 }
 
+/* ── Reminder Card Styles ────────────────────────────────────────── */
+.mascot-reminder-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(24, 24, 37, 0.94);
+  border: 1px solid rgba(243, 139, 168, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+  padding: 8px 12px;
+  color: #cdd6f4;
+  pointer-events: auto;
+  animation: reminder-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+.mascot-reminder-card.is-big {
+  border-color: rgba(137, 180, 250, 0.5);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+  padding: 12px 18px;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+@keyframes reminder-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mascot-reminder-card__content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mascot-reminder-card__icon {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.mascot-reminder-card.is-big .mascot-reminder-card__icon {
+  font-size: 1.75rem;
+}
+
+.mascot-reminder-card__text-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mascot-reminder-card__title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #f38ba8;
+}
+
+.mascot-reminder-card.is-big .mascot-reminder-card__title {
+  color: #89b4fa;
+  font-size: 0.82rem;
+}
+
+.mascot-reminder-card__message {
+  font-size: 0.85rem;
+  color: #cdd6f4;
+  font-weight: 500;
+}
+
+.mascot-reminder-card.is-big .mascot-reminder-card__message {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
 .mascot-dismiss {
   background: rgba(243, 139, 168, 0.15);
   border: 1px solid rgba(243, 139, 168, 0.4);
   border-radius: 50%;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   font-size: 0.75rem;
   color: #f38ba8;
   cursor: pointer;
@@ -56,11 +143,53 @@
   align-items: center;
   justify-content: center;
   transition: background 0.15s, transform 0.15s;
-  align-self: flex-end;
-  margin-top: -4px;
+  flex-shrink: 0;
+  margin-left: 4px;
 }
 
 .mascot-dismiss:hover {
-  background: rgba(243, 139, 168, 0.35);
+  background: rgba(243, 139, 168, 0.4);
   transform: scale(1.1);
+}
+
+/* ── Persistent Timer Badge (Pomodoro / Stopwatch) ──────────────── */
+.mascot-timer-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(24, 24, 37, 0.9);
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 20px;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+  font-family: monospace;
+  font-weight: 600;
+  color: #cdd6f4;
+  pointer-events: none;
+  animation: badge-fade-in 0.2s ease both;
+  white-space: nowrap;
+}
+
+@keyframes badge-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.mascot-timer-badge__icon {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.mascot-timer-badge__time {
+  letter-spacing: 0.05em;
+  color: #a6e3a1;
 }

@@ -41,6 +41,9 @@ let mainWindow = null
 let tray = null
 let settings = null // loaded from disk at startup
 let isPaused = false // runtime pause state (not persisted between sessions)
+const TRAY_TOOLTIP_UPDATE_INTERVAL_MS = 10 * 1000
+let lastTrayTooltipUpdateAt = 0
+let lastTrayTooltipMode = null
 
 app.disableHardwareAcceleration()
 // ─── App lifecycle ───────────────────────────────────────────────────────────
@@ -142,6 +145,25 @@ function createTray() {
   console.log('[main] System tray initialised')
 }
 
+const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
+
+function getEnabledReminderTypes(s) {
+  const reminders = s?.reminders || {}
+  const enabled = ALL_REMINDER_TYPES.filter((t) => reminders[t] !== false)
+  return enabled.length > 0 ? enabled : ALL_REMINDER_TYPES
+}
+
+let lastTestReminderType = null
+
+function getNextTestReminderType(s) {
+  const enabled = getEnabledReminderTypes(s)
+  if (enabled.length <= 1) return enabled[0]
+  const candidates = enabled.filter((t) => t !== lastTestReminderType)
+  const chosen = candidates[Math.floor(Math.random() * candidates.length)]
+  lastTestReminderType = chosen
+  return chosen
+}
+
 /**
  * Builds (or rebuilds) the tray context menu.
  * Called on creation and whenever pause state changes.
@@ -151,9 +173,40 @@ function buildTrayMenu() {
     {
       label: '🔔 Test Reminder',
       click: () => {
+        const type = getNextTestReminderType(settings)
         // Tell the renderer to immediately trigger a reminder cycle
-        mainWindow?.webContents.send('tray:test-reminder')
+        mainWindow?.webContents.send('tray:test-reminder', { type })
       },
+    },
+    {
+      label: '⏱️ Pomodoro & Stopwatch',
+      submenu: [
+        {
+          label: '🍅 Start Pomodoro (25m / 5m)',
+          click: () => {
+            mainWindow?.webContents.send('timer:start-pomodoro')
+          },
+        },
+        {
+          label: '⏱️ Start Stopwatch',
+          click: () => {
+            mainWindow?.webContents.send('timer:start-stopwatch')
+          },
+        },
+        {
+          label: '⏹️ Stop / Reset',
+          click: () => {
+            mainWindow?.webContents.send('timer:stop')
+          },
+        },
+        { type: 'separator' },
+        {
+          label: '⚡ Test: Fast Pomodoro (5s work)',
+          click: () => {
+            mainWindow?.webContents.send('timer:test-pomodoro-work-end')
+          },
+        },
+      ],
     },
     { type: 'separator' },
     {
@@ -246,6 +299,34 @@ function registerIpcHandlers() {
   })
 
   // ── Misc ──────────────────────────────────────────────────────────────────
+
+  // ── Pomodoro / Stopwatch status ───────────────────────────────────────────
+  ipcMain.on('timer:update-status', (_event, { mode, formattedTime, running }) => {
+    if (!tray) return
+
+    if (running && mode && formattedTime) {
+      const prefix = mode.startsWith('pomodoro') ? '🍅' : '⏱️'
+      const now = Date.now()
+      const modeChanged = mode !== lastTrayTooltipMode
+
+      // Some Linux StatusNotifier hosts close open submenus whenever the
+      // tooltip changes. Status still arrives each second, but we only write
+      // the tooltip on start/mode changes and at most once every 10 seconds.
+      if (modeChanged || now - lastTrayTooltipUpdateAt >= TRAY_TOOLTIP_UPDATE_INTERVAL_MS) {
+        tray.setToolTip(`screen-buddy — ${prefix} ${formattedTime}`)
+        lastTrayTooltipUpdateAt = now
+        lastTrayTooltipMode = mode
+      }
+      return
+    }
+
+    // Reset immediately when the timer stops; this is not a periodic tick.
+    if (lastTrayTooltipMode !== null) {
+      tray.setToolTip('screen-buddy')
+      lastTrayTooltipMode = null
+      lastTrayTooltipUpdateAt = 0
+    }
+  })
 
   /** Expose the resolved settings file path to the renderer for display */
   ipcMain.handle('settings:get-path', () => getSettingsPath())

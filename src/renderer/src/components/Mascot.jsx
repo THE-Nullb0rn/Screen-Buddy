@@ -14,6 +14,34 @@ const IDLE_PAUSE_MAX_MS = 15000
 const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
 
+const REMINDER_MESSAGES = {
+  water: {
+    title: 'Water Break',
+    text: 'Time to hydrate!',
+    icon: '💧',
+  },
+  eyeRest: {
+    title: 'Eye Rest',
+    text: 'Rest your eyes — look at something 20ft away',
+    icon: '👀',
+  },
+  movementBreak: {
+    title: 'Movement Break',
+    text: 'Time to get up and move!!',
+    icon: '🤸',
+  },
+  pomodoroWorkEnd: {
+    title: 'Pomodoro Done!',
+    text: 'Pomodoro complete — take a 5 min break!',
+    icon: '🍅',
+  },
+  pomodoroBreakEnd: {
+    title: "Break's Over",
+    text: "Break's over — back to work!",
+    icon: '💼',
+  },
+}
+
 function randBetween(min, max) {
   return min + Math.random() * (max - min)
 }
@@ -29,7 +57,16 @@ function defaultPosition() {
   }
 }
 
-export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
+export default function Mascot({
+  reminderState,
+  reminderType = 'water',
+  pomodoroCelebrating = false,
+  timerMode = 'none',
+  timerFormatted = '',
+  REMINDER_STATE,
+  onDismiss,
+  onPomodoroCelebrationEnd,
+}) {
   const containerRef = useRef(null)
 
   const [pose, setPose] = useState('idle')
@@ -45,8 +82,8 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
   const lastInteractRef = useRef(Date.now())
   const roamGenRef = useRef(0)
   const dragOffsetRef = useRef({ x: 0, y: 0 })
-  // Spring logic state for dragging
   const dragTargetRef = useRef({ x, y })
+  const savedPosRef = useRef(null)
 
   poseRef.current = pose
   posRef.current = { x, y }
@@ -56,6 +93,8 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
     reminderState === REMINDER_STATE.ENTRANCE ||
     reminderState === REMINDER_STATE.ACTIVE ||
     reminderState === REMINDER_STATE.EXIT
+
+  const isBigTreatment = isReminder && reminderType === 'movementBreak'
 
   const measure = useCallback(() => {
     const el = containerRef.current
@@ -104,7 +143,6 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
         const target = dragTargetRef.current
         const current = posRef.current
 
-        // Simple spring math (lerp)
         const dx = target.x - current.x
         const dy = target.y - current.y
 
@@ -123,6 +161,26 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
     updateSpring()
     return () => cancelAnimationFrame(animationFrameId)
   }, [])
+
+  // ── Save position and handle center-screen treatment transitions ──────────
+  useEffect(() => {
+    if (isBigTreatment) {
+      if (reminderState === REMINDER_STATE.ENTRANCE) {
+        if (!savedPosRef.current) {
+          savedPosRef.current = { x: posRef.current.x, y: posRef.current.y }
+        }
+        setWalkMs(0)
+      }
+    } else if (reminderState === REMINDER_STATE.IDLE_COUNTING && savedPosRef.current) {
+      // Returned from big treatment: resume at saved position
+      const saved = savedPosRef.current
+      savedPosRef.current = null
+      posRef.current = saved
+      setX(saved.x)
+      setY(saved.y)
+      dragTargetRef.current = saved
+    }
+  }, [reminderState, isBigTreatment, REMINDER_STATE])
 
   // ── Roaming loop (idle only) ──────────────────────────────────────────────
   useEffect(() => {
@@ -227,7 +285,7 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
   // ── Drag ──────────────────────────────────────────────────────────────────
   const handlePointerDown = (event) => {
     if (event.button !== 0) return
-    if (event.target.closest?.('.mascot-dismiss')) return
+    if (event.target.closest?.('.mascot-reminder-card')) return
 
     roamGenRef.current += 1
     setWalkMs(0)
@@ -284,7 +342,7 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
     }
   }, [])
 
-  const displayPose = isReminder ? 'alert' : pose
+  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'pounce' : pose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   let stateClass = 'is-idle'
@@ -295,11 +353,14 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
   let animationName = 'idle'
   let flipped = false
 
-  if (dragging) {
+  if (pomodoroCelebrating) {
+    animationName = 'pounce'
+    flipped = false
+  } else if (dragging) {
     animationName = 'drag'
     flipped = false
   } else if (isReminder) {
-    animationName = 'talk'
+    animationName = isBigTreatment ? 'stretch' : 'talk'
     flipped = false
   } else if (displayPose === 'walk-left') {
     animationName = 'walk'
@@ -315,17 +376,64 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
     flipped = false
   }
 
+  // ── Coordinates and Transitions for Center-Screen MovementBreak ───────────
+  const centerX = Math.max(MARGIN, Math.round((window.innerWidth - SPRITE_WIDTH) / 2))
+  const centerY = Math.max(MARGIN, Math.round((window.innerHeight - SPRITE_HEIGHT) / 2))
+
+  let targetX = x
+  let targetY = y
+
+  if (isBigTreatment) {
+    if (reminderState === REMINDER_STATE.ENTRANCE || reminderState === REMINDER_STATE.ACTIVE) {
+      targetX = centerX
+      targetY = centerY
+    } else if (reminderState === REMINDER_STATE.EXIT) {
+      targetX = savedPosRef.current ? savedPosRef.current.x : x
+      targetY = savedPosRef.current ? savedPosRef.current.y : y
+    }
+  }
+
+  let containerTransition = 'transform 0.15s ease-out'
+  if (dragging) {
+    containerTransition = 'none'
+  } else if (moving) {
+    containerTransition = `transform ${walkMs}ms linear`
+  } else if (isBigTreatment) {
+    if (reminderState === REMINDER_STATE.ENTRANCE) {
+      containerTransition = 'transform 0.8s cubic-bezier(0.34, 1.2, 0.64, 1)'
+    } else if (reminderState === REMINDER_STATE.ACTIVE) {
+      containerTransition = 'transform 0.15s ease-out'
+    } else if (reminderState === REMINDER_STATE.EXIT) {
+      containerTransition = 'transform 0.75s ease-in-out'
+    }
+  }
+
+  const isScaleBig =
+    isBigTreatment &&
+    (reminderState === REMINDER_STATE.ENTRANCE || reminderState === REMINDER_STATE.ACTIVE)
+  const spriteScale = isScaleBig ? 2 : 1
+
+  let spriteTransition = 'none'
+  if (isBigTreatment) {
+    if (reminderState === REMINDER_STATE.ENTRANCE) {
+      spriteTransition = 'transform 0.8s cubic-bezier(0.34, 1.2, 0.64, 1)'
+    } else if (reminderState === REMINDER_STATE.EXIT) {
+      spriteTransition = 'transform 0.75s ease-in-out'
+    } else if (reminderState === REMINDER_STATE.ACTIVE) {
+      spriteTransition = 'transform 0.15s ease-out'
+    }
+  }
+
+  const isNearTop = targetY < 120
+  const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
+
   return (
     <div
       ref={containerRef}
-      className={`mascot-container ${stateClass} ${dragging ? 'is-dragging' : ''}`}
+      className={`mascot-container ${stateClass} ${dragging ? 'is-dragging' : ''} ${isNearTop ? 'is-near-top' : ''}`}
       style={{
-        transform: `translate3d(${x}px, ${y}px, 0)`,
-        transition: moving
-          ? `transform ${walkMs}ms linear`
-          : dragging
-            ? 'none'
-            : 'transform 0.15s ease-out',
+        transform: `translate3d(${targetX}px, ${targetY}px, 0)`,
+        transition: containerTransition,
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -336,21 +444,52 @@ export default function Mascot({ reminderState, REMINDER_STATE, onDismiss }) {
       role="img"
       aria-label={`screen-buddy, ${displayPose}`}
     >
-      <div className={`mascot-sprite-wrap${isReminder ? ' is-alert' : ''}`}>
+      <div
+        className={`mascot-sprite-wrap${isReminder && !isBigTreatment ? ' is-alert' : ''}`}
+        style={{
+          transform: `scale(${spriteScale})`,
+          transition: spriteTransition,
+        }}
+      >
         <SpriteAnimator
           animation={animationName}
           flipped={flipped}
+          loop={animationName === 'pounce' ? false : true}
+          onAnimationEnd={animationName === 'pounce' ? onPomodoroCelebrationEnd : undefined}
         />
       </div>
 
+      {/* Persistent Timer / Stopwatch indicator near the cat */}
+      {timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE && (
+        <div className="mascot-timer-badge">
+          <span className="mascot-timer-badge__icon">
+            {timerMode.startsWith('pomodoro') ? '🍅' : '⏱️'}
+          </span>
+          <span className="mascot-timer-badge__time">{timerFormatted}</span>
+        </div>
+      )}
+
+      {/* Active Reminder Dismiss Card */}
       {reminderState === REMINDER_STATE.ACTIVE && (
-        <button
-          className="mascot-dismiss"
-          onClick={onDismiss}
-          aria-label="Dismiss reminder"
+        <div
+          className={`mascot-reminder-card ${isBigTreatment ? 'is-big' : 'is-small'}`}
+          onClick={(e) => e.stopPropagation()}
         >
-          ✕
-        </button>
+          <div className="mascot-reminder-card__content">
+            <span className="mascot-reminder-card__icon">{reminderInfo.icon}</span>
+            <div className="mascot-reminder-card__text-wrap">
+              <div className="mascot-reminder-card__title">{reminderInfo.title}</div>
+              <div className="mascot-reminder-card__message">{reminderInfo.text}</div>
+            </div>
+          </div>
+          <button
+            className="mascot-dismiss"
+            onClick={onDismiss}
+            aria-label="Dismiss reminder"
+          >
+            ✕
+          </button>
+        </div>
       )}
     </div>
   )
