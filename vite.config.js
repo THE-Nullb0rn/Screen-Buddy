@@ -61,6 +61,17 @@ export default defineConfig({
           },
         },
       },
+      {
+        entry: resolve(__dirname, 'src/main/mediaMonitor.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
     ]),
 
     // Allow renderer to use Node.js APIs through the contextBridge

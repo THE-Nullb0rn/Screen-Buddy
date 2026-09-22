@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('api', {
       'power:resume',
       'power:lock-screen',
       'power:unlock-screen',
+      'media:status',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

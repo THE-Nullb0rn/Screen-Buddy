@@ -65,6 +65,10 @@ export default function Mascot({
   timerFormatted = '',
   REMINDER_STATE,
   onDismiss,
+  mediaPlaying = false,
+  mediaArtist = '',
+  mediaTitle = '',
+  nowPlayingVisible = false,
 }) {
   const containerRef = useRef(null)
 
@@ -133,6 +137,15 @@ export default function Mascot({
       setPose('idle')
     }
   }, [])
+
+  // Wake cat from sleep when music starts playing
+  useEffect(() => {
+    if (mediaPlaying && poseRef.current === 'sleep') {
+      poseRef.current = 'idle'
+      setPose('idle')
+      lastInteractRef.current = Date.now()
+    }
+  }, [mediaPlaying])
 
   // ── Drag Spring Physics ──────────────────────────────────────────────────
   useEffect(() => {
@@ -216,7 +229,7 @@ export default function Mascot({
       if (poseRef.current === 'sleep') return
 
       const idleFor = Date.now() - lastInteractRef.current
-      if (idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
+      if (!mediaPlaying && idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
         setWalkMs(0)
         poseRef.current = 'sleep'
         setPose('sleep')
@@ -267,7 +280,7 @@ export default function Mascot({
       roamGenRef.current += 1
       timers.forEach(clearTimeout)
     }
-  }, [isReminder, roamEpoch, measure])
+  }, [isReminder, roamEpoch, measure, mediaPlaying])
 
   // ── Keep the cat on-screen if the overlay is resized ──────────────────────
   useEffect(() => {
@@ -370,6 +383,10 @@ export default function Mascot({
   } else if (displayPose === 'sleep') {
     animationName = 'sleep'
     flipped = false
+  } else if (mediaPlaying) {
+    // TODO: swap 'idle' for real headphones/listening animation when art is ready
+    animationName = 'idle'
+    flipped = false
   } else {
     animationName = 'idle'
     flipped = false
@@ -464,6 +481,17 @@ export default function Mascot({
             {timerMode.startsWith('pomodoro') ? '🍅' : '⏱️'}
           </span>
           <span className="mascot-timer-badge__time">{timerFormatted}</span>
+        </div>
+      )}
+
+      {/* Now Playing card — shown briefly on track changes, hidden during reminders */}
+      {nowPlayingVisible && (mediaTitle || mediaArtist) && !isReminder && (
+        <div className="mascot-now-playing">
+          <span className="mascot-now-playing__icon">🎵</span>
+          <div className="mascot-now-playing__text">
+            {mediaTitle && <div className="mascot-now-playing__title">{mediaTitle}</div>}
+            {mediaArtist && <div className="mascot-now-playing__artist">{mediaArtist}</div>}
+          </div>
         </div>
       )}
 

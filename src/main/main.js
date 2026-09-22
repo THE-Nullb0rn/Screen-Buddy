@@ -26,6 +26,7 @@ const path = require('path')
 
 const { loadSettings, saveSettings, getSettingsPath } = require('./settings')
 const { setAutostart, removeAutostart } = require('./autostart')
+const mediaMonitor = require('./mediaMonitor')
 
 // ─── Wayland / Ozone flags ───────────────────────────────────────────────────
 // Must be set before app.ready fires. Required for proper rendering under
@@ -59,6 +60,18 @@ app.whenReady().then(async () => {
   if (settings.autostart) {
     setAutostart()
   }
+
+  // Start media playback monitor — sends real-time updates to renderer
+  mediaMonitor.start((status) => {
+    mainWindow?.webContents.send('media:status', status)
+  })
+
+  mainWindow?.webContents.on('did-finish-load', () => {
+    const current = mediaMonitor.getStatus()
+    if (current && (current.playing || current.title || current.artist)) {
+      mainWindow?.webContents.send('media:status', current)
+    }
+  })
 })
 
 // Electron single-instance guard — prevent duplicate processes.
@@ -71,6 +84,11 @@ if (!gotLock) {
 // but keeps the app well-behaved during development).
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Clean up child processes before exit
+app.on('will-quit', () => {
+  mediaMonitor.stop()
 })
 
 // ─── Overlay window ──────────────────────────────────────────────────────────

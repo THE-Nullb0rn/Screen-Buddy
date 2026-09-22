@@ -68,6 +68,10 @@ export default function App() {
   // Whether reminders/timers are paused
   const [paused, setPaused] = useState(false)
 
+  // ── Media playback state ───────────────────────────────────────────────────
+  const [mediaStatus, setMediaStatus] = useState({ playing: false, artist: '', title: '' })
+  const [nowPlayingVisible, setNowPlayingVisible] = useState(false)
+
   // Countdown displayed in development / debug overlay
   const [countdown, setCountdown] = useState(0)
 
@@ -355,6 +359,62 @@ export default function App() {
     }
   }, [])
 
+  // ── IPC: media playback status ────────────────────────────────────────────
+  const lastPlayingTrackRef = useRef({ artist: '', title: '' })
+  const nowPlayingTimerRef = useRef(null)
+
+  useEffect(() => {
+    const offMedia = window.api.on('media:status', (rawStatus) => {
+      const status = rawStatus || { playing: false, artist: '', title: '' }
+      setMediaStatus(status)
+
+      if (!status.playing) {
+        // Playback paused or stopped — hide the popup and cancel any active timer
+        setNowPlayingVisible(false)
+        if (nowPlayingTimerRef.current) {
+          clearTimeout(nowPlayingTimerRef.current)
+          nowPlayingTimerRef.current = null
+        }
+        return
+      }
+
+      // Only stable PLAYING events with usable metadata are considered for track changes
+      const title = (status.title || '').trim()
+      const artist = (status.artist || '').trim()
+      const hasUsableTrack = Boolean(title || artist)
+
+      if (!hasUsableTrack) {
+        return // Ignore transient empty metadata
+      }
+
+      const last = lastPlayingTrackRef.current
+      const isDifferentTrack = title !== last.title || artist !== last.artist
+
+      if (isDifferentTrack) {
+        // Track changed to a new track — update confirmed playing track
+        lastPlayingTrackRef.current = { artist, title }
+
+        // Show popup and restart the 4.5s auto-hide timer
+        setNowPlayingVisible(true)
+        if (nowPlayingTimerRef.current) {
+          clearTimeout(nowPlayingTimerRef.current)
+        }
+        nowPlayingTimerRef.current = setTimeout(() => {
+          setNowPlayingVisible(false)
+          nowPlayingTimerRef.current = null
+        }, 4500)
+      }
+    })
+
+    return () => {
+      offMedia()
+      if (nowPlayingTimerRef.current) {
+        clearTimeout(nowPlayingTimerRef.current)
+        nowPlayingTimerRef.current = null
+      }
+    }
+  }, [])
+
   // ── Settings save handler ─────────────────────────────────────────────────
   const handleSaveSettings = useCallback(async (updates) => {
     const newSettings = await window.api.setSettings(updates)
@@ -376,6 +436,10 @@ export default function App() {
         timerFormatted={formatTime(timerSeconds)}
         onDismiss={dismissReminder}
         REMINDER_STATE={REMINDER_STATE}
+        mediaPlaying={mediaStatus.playing}
+        mediaArtist={mediaStatus.artist}
+        mediaTitle={mediaStatus.title}
+        nowPlayingVisible={nowPlayingVisible}
       />
 
       {settingsOpen && settings && (
@@ -393,6 +457,9 @@ export default function App() {
           <span>{paused ? '⏸ PAUSED' : '▶ RUNNING'}</span>
           {timerMode !== 'none' && (
             <span>Timer: {timerMode} ({formatTime(timerSeconds)})</span>
+          )}
+          {mediaStatus.playing && (
+            <span>🎵 {mediaStatus.artist} — {mediaStatus.title}</span>
           )}
         </div>
       )}
