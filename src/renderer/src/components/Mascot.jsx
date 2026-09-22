@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import './Mascot.css'
 import SpriteAnimator from './SpriteAnimator'
+import listeningManifest from '../assets/cat-sprite/listening-manifest.json'
+import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
 
 const MARGIN = 16
 const SPRITE_WIDTH = 126
@@ -204,10 +206,15 @@ export default function Mascot({
       timers.push(id)
     }
 
-    if (isReminder) {
+    if (isReminder || mediaPlaying) {
       setWalkMs(0)
-      poseRef.current = 'alert'
-      setPose('alert')
+      if (isReminder) {
+        poseRef.current = 'alert'
+        setPose('alert')
+      } else if (poseRef.current.startsWith('walk')) {
+        poseRef.current = 'idle'
+        setPose('idle')
+      }
       return () => {
         roamGenRef.current += 1
         timers.forEach(clearTimeout)
@@ -354,12 +361,14 @@ export default function Mascot({
     }
   }, [])
 
-  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : pose
+  const isListening = Boolean(mediaPlaying) && !isReminder && !dragging && !pomodoroCelebrating
+  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : isListening ? 'listening' : pose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   let stateClass = 'is-idle'
   if (moving) stateClass = 'is-walking'
   if (displayPose === 'sleep') stateClass = 'is-sleep'
+  if (isListening) stateClass = 'is-listening'
 
   // Map state machine to sprite animations
   let animationName = 'idle'
@@ -374,6 +383,9 @@ export default function Mascot({
   } else if (isReminder) {
     animationName = isBigTreatment ? 'stretch' : 'talk'
     flipped = false
+  } else if (isListening) {
+    animationName = 'listening'
+    flipped = false
   } else if (displayPose === 'walk-left') {
     animationName = 'walk'
     flipped = true
@@ -382,10 +394,6 @@ export default function Mascot({
     flipped = false
   } else if (displayPose === 'sleep') {
     animationName = 'sleep'
-    flipped = false
-  } else if (mediaPlaying) {
-    // TODO: swap 'idle' for real headphones/listening animation when art is ready
-    animationName = 'idle'
     flipped = false
   } else {
     animationName = 'idle'
@@ -468,9 +476,11 @@ export default function Mascot({
         }}
       >
         <SpriteAnimator
-          animation={animationName}
+          animation={isListening ? 'listening' : animationName}
           flipped={flipped}
           loop={true}
+          manifest={isListening ? listeningManifest : undefined}
+          spritesheet={isListening ? listeningSheetSrc : undefined}
         />
       </div>
 

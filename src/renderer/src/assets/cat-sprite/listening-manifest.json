@@ -1,0 +1,12 @@
+{
+  "name": "cat-listening",
+  "sheet": "cat_listening_spritesheet.png",
+  "cellWidth": 270,
+  "cellHeight": 250,
+  "columns": 4,
+  "scale": 0.6,
+  "animations": {
+    "listening": { "frames": [0, 1, 2, 3], "fps": 3, "loop": true },
+    "idle":      { "frames": [0, 1, 2, 3], "fps": 3, "loop": true }
+  }
+}

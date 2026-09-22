@@ -1,47 +1,52 @@
 import React, { useEffect, useRef, useState } from 'react'
 import defaultManifest from '../assets/cat-sprite/manifest.json'
 import defaultSheetSrc from '../assets/cat-sprite/spritesheet.png'
+import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
 import './SpriteAnimator.css'
 
 // Shared image cache to avoid re-decoding across re-renders/mounts
-let cachedImage = null
-let cachedImageSrc = null
-let imageLoadListeners = []
-
-if (typeof window !== 'undefined') {
-  cachedImage = new Image()
-  cachedImageSrc = defaultSheetSrc
-  cachedImage.src = defaultSheetSrc
-}
+const imageCache = new Map()
+const imageLoadListeners = new Map()
 
 function getSpritesheetImage(src, onLoaded) {
-  if (cachedImage && cachedImageSrc === src && cachedImage.complete && cachedImage.naturalWidth > 0) {
-    onLoaded(cachedImage)
+  let img = imageCache.get(src)
+  if (img && img.complete && img.naturalWidth > 0) {
+    onLoaded(img)
     return () => {}
   }
 
-  if (!cachedImage || cachedImageSrc !== src) {
-    cachedImage = new Image()
-    cachedImageSrc = src
-    imageLoadListeners = []
-    cachedImage.src = src
+  if (!img) {
+    img = new Image()
+    imageCache.set(src, img)
+    imageLoadListeners.set(src, [])
+    img.src = src
   }
 
-  const listener = () => onLoaded(cachedImage)
-  if (cachedImage.complete && cachedImage.naturalWidth > 0) {
+  const listener = () => onLoaded(img)
+  if (img.complete && img.naturalWidth > 0) {
     listener()
     return () => {}
   }
 
-  imageLoadListeners.push(listener)
-  cachedImage.onload = () => {
-    imageLoadListeners.forEach((fn) => fn())
-    imageLoadListeners = []
+  const listeners = imageLoadListeners.get(src) || []
+  listeners.push(listener)
+  imageLoadListeners.set(src, listeners)
+
+  img.onload = () => {
+    const list = imageLoadListeners.get(src) || []
+    list.forEach((fn) => fn())
+    imageLoadListeners.set(src, [])
   }
 
   return () => {
-    imageLoadListeners = imageLoadListeners.filter((fn) => fn !== listener)
+    const list = imageLoadListeners.get(src) || []
+    imageLoadListeners.set(src, list.filter((fn) => fn !== listener))
   }
+}
+
+if (typeof window !== 'undefined') {
+  getSpritesheetImage(defaultSheetSrc, () => {})
+  getSpritesheetImage(listeningSheetSrc, () => {})
 }
 
 /**
@@ -72,14 +77,14 @@ export function useSpriteAnimation({
   animRef.current = animConfig
   onEndRef.current = onAnimationEnd
 
-  // Reset frame when animation name changes
+  // Reset frame when animation name or manifest changes
   useEffect(() => {
     if (currentAnimationRef.current !== animation) {
       currentAnimationRef.current = animation
       frameIndexRef.current = 0
       setFrameIndex(0)
     }
-  }, [animation])
+  }, [animation, manifest])
 
   useEffect(() => {
     let animFrameId
@@ -122,7 +127,7 @@ export function useSpriteAnimation({
 
     animFrameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animFrameId)
-  }, [animation])
+  }, [animation, manifest])
 
   const safeFrameIndex = Math.min(frameIndex, animConfig.frames.length - 1)
   const currentFrame = animConfig.frames[safeFrameIndex] ?? animConfig.frames[0] ?? 0
@@ -154,8 +159,14 @@ export default function SpriteAnimator({
   ...rest
 }) {
   const canvasRef = useRef(null)
-  const imageRef = useRef(cachedImage?.complete && cachedImage?.naturalWidth > 0 ? cachedImage : null)
+  const cached = imageCache.get(spritesheet)
+  const currentImg = cached?.complete && cached?.naturalWidth > 0 ? cached : null
+  const imageRef = useRef(currentImg)
   const [imageLoaded, setImageLoaded] = useState(Boolean(imageRef.current))
+
+  if (currentImg && imageRef.current !== currentImg) {
+    imageRef.current = currentImg
+  }
 
   const scale = propScale ?? manifest.scale ?? 1
   const cellWidth = manifest.cellWidth
@@ -207,7 +218,7 @@ export default function SpriteAnimator({
       displayWidth,
       displayHeight
     )
-  }, [currentFrame, imageLoaded, cellWidth, cellHeight, columns, displayWidth, displayHeight])
+  }, [currentFrame, imageLoaded, spritesheet, cellWidth, cellHeight, columns, displayWidth, displayHeight])
 
   return (
     <canvas
