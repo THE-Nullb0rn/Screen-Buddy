@@ -89,39 +89,50 @@ export function useSpriteAnimation({
   useEffect(() => {
     let animFrameId
     let lastTime = performance.now()
-    const { frames, fps, loop } = animRef.current
-    const frameInterval = 1000 / (fps || 1)
+    let accumulated = 0
+    const { frames, fps, loop, frameDurations } = animRef.current
 
     const tick = (now) => {
-      const elapsed = now - lastTime
-      if (elapsed >= frameInterval) {
-        const advance = Math.floor(elapsed / frameInterval)
-        lastTime = now - (elapsed % frameInterval)
+      accumulated += now - lastTime
+      lastTime = now
 
-        const totalFrames = frames.length
-        let next = frameIndexRef.current + advance
+      const totalFrames = frames.length
+      let idx = frameIndexRef.current
 
-        if (loop) {
-          next = next % totalFrames
-          if (next !== frameIndexRef.current) {
-            frameIndexRef.current = next
-            setFrameIndex(next)
-          }
-        } else {
-          if (next >= totalFrames - 1) {
-            next = totalFrames - 1
-            if (next !== frameIndexRef.current) {
-              frameIndexRef.current = next
-              setFrameIndex(next)
+      // Drain accumulated time frame-by-frame so no frame is ever skipped
+      let safety = 0
+      while (safety++ < totalFrames + 1) {
+        const duration = frameDurations
+          ? (frameDurations[idx] ?? (1000 / (fps || 1)))
+          : (1000 / (fps || 1))
+
+        if (accumulated < duration) break
+
+        accumulated -= duration
+
+        const next = idx + 1
+        if (next >= totalFrames) {
+          if (loop) {
+            idx = 0
+          } else {
+            idx = totalFrames - 1
+            if (idx !== frameIndexRef.current) {
+              frameIndexRef.current = idx
+              setFrameIndex(idx)
             }
             onEndRef.current?.(animation)
-            return // Reached end of non-looping animation
-          } else if (next !== frameIndexRef.current) {
-            frameIndexRef.current = next
-            setFrameIndex(next)
+            return // End of non-looping animation
           }
+        } else {
+          idx = next
         }
       }
+
+      if (idx !== frameIndexRef.current) {
+        frameIndexRef.current = idx
+        setFrameIndex(idx)
+      }
+
       animFrameId = requestAnimationFrame(tick)
     }
 

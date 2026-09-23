@@ -81,6 +81,28 @@ export default function Mascot({
   const [dragging, setDragging] = useState(false)
   const [roamEpoch, setRoamEpoch] = useState(0)
 
+  // Walk tween: rAF-driven ease-in-out interpolation
+  const walkTweenRef = useRef(null) // { startX, targetX, startTime, duration }
+
+  // Squash & stretch accent class
+  const [spriteAccent, setSpriteAccent] = useState(null)
+  const spriteWrapRef = useRef(null)
+  const accentTimerRef = useRef(null)
+
+  const triggerAccent = useCallback((cls) => {
+    clearTimeout(accentTimerRef.current)
+    setSpriteAccent(null)
+    // Double-rAF ensures the class removal flushes before re-adding (forces restart)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setSpriteAccent(cls)
+        accentTimerRef.current = setTimeout(() => setSpriteAccent(null), 250)
+      })
+    })
+  }, [])
+  const triggerAccentRef = useRef(triggerAccent)
+  triggerAccentRef.current = triggerAccent
+
   const poseRef = useRef(pose)
   const posRef = useRef({ x, y })
   const draggingRef = useRef(false)
@@ -149,6 +171,15 @@ export default function Mascot({
     }
   }, [mediaPlaying])
 
+  // Squash on jump/pomodoro celebration landing
+  const prevCelebratingRef = useRef(pomodoroCelebrating)
+  useEffect(() => {
+    if (prevCelebratingRef.current && !pomodoroCelebrating) {
+      triggerAccent('is-squash')
+    }
+    prevCelebratingRef.current = pomodoroCelebrating
+  }, [pomodoroCelebrating, triggerAccent])
+
   // ── Drag Spring Physics ──────────────────────────────────────────────────
   useEffect(() => {
     let animationFrameId
@@ -174,6 +205,30 @@ export default function Mascot({
     }
     updateSpring()
     return () => cancelAnimationFrame(animationFrameId)
+  }, [])
+
+  // ── Walk Tween (rAF ease-in-out) ─────────────────────────────────────────
+  useEffect(() => {
+    let rafId
+    const easeInOut = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+
+    const step = (now) => {
+      const tween = walkTweenRef.current
+      if (tween && !draggingRef.current) {
+        const elapsed = now - tween.startTime
+        const t = Math.min(1, elapsed / tween.duration)
+        const eased = easeInOut(t)
+        const newX = tween.startX + (tween.targetX - tween.startX) * eased
+        posRef.current = { x: newX, y: posRef.current.y }
+        setX(newX)
+        if (t >= 1) {
+          walkTweenRef.current = null
+        }
+      }
+      rafId = requestAnimationFrame(step)
+    }
+    rafId = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(rafId)
   }, [])
 
   // ── Save position and handle center-screen treatment transitions ──────────
@@ -264,19 +319,28 @@ export default function Mascot({
       setPose(poseRef.current)
       setWalkMs(duration)
 
-      requestAnimationFrame(() => {
-        if (gen !== roamGenRef.current) return
-        setX(targetX)
-        dragTargetRef.current = { x: targetX, y: posRef.current.y }
-      })
+      // Stretch: body-gather moment as the walk leg launches
+      triggerAccentRef.current('is-stretch')
+
+      // Kick off the rAF-driven ease-in-out tween
+      walkTweenRef.current = {
+        startX: posRef.current.x,
+        targetX,
+        startTime: performance.now(),
+        duration,
+      }
+      dragTargetRef.current = { x: targetX, y: posRef.current.y }
 
       later(() => {
         if (gen !== roamGenRef.current) return
+        walkTweenRef.current = null
         setWalkMs(0)
         if (poseRef.current.startsWith('walk')) {
           poseRef.current = 'idle'
           setPose('idle')
         }
+        // Squash: landing accent when arriving at destination
+        triggerAccentRef.current('is-squash')
         later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
       }, duration + 40)
     }
@@ -300,6 +364,31 @@ export default function Mascot({
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [clampToViewport])
+
+  // ── Idle secondary motion (blink / tail-flick stand-in) ───────────────────
+  useEffect(() => {
+    let timerId
+    const scheduleNext = () => {
+      const delay = randBetween(8000, 15000)
+      timerId = setTimeout(() => {
+        const isIdleNow =
+          !draggingRef.current &&
+          poseRef.current === 'idle' &&
+          !isReminder &&
+          !mediaPlaying
+
+        if (isIdleNow) {
+          // 55% chance to actually blink, otherwise silently skip to make it less metronomic
+          if (Math.random() > 0.45) {
+            triggerAccentRef.current('is-blink')
+          }
+        }
+        scheduleNext()
+      }, delay)
+    }
+    scheduleNext()
+    return () => clearTimeout(timerId)
+  }, [isReminder, mediaPlaying])
 
   // ── Drag ──────────────────────────────────────────────────────────────────
   const handlePointerDown = (event) => {
@@ -343,6 +432,8 @@ export default function Mascot({
     posRef.current = finalPos
     setX(finalPos.x)
     setY(finalPos.y)
+
+    triggerAccent('is-squash')
 
     if (!isReminder) {
       setRoamEpoch((n) => n + 1)
@@ -421,7 +512,7 @@ export default function Mascot({
   if (dragging) {
     containerTransition = 'none'
   } else if (moving) {
-    containerTransition = `transform ${walkMs}ms linear`
+    containerTransition = 'none' // rAF tween drives position directly
   } else if (isBigTreatment) {
     if (reminderState === REMINDER_STATE.ENTRANCE) {
       containerTransition = 'transform 0.8s cubic-bezier(0.34, 1.2, 0.64, 1)'
@@ -469,7 +560,12 @@ export default function Mascot({
       aria-label={`screen-buddy, ${displayPose}`}
     >
       <div
-        className={`mascot-sprite-wrap${isReminder && !isBigTreatment ? ' is-alert' : ''}`}
+        ref={spriteWrapRef}
+        className={[
+          'mascot-sprite-wrap',
+          isReminder && !isBigTreatment ? 'is-alert' : '',
+          spriteAccent || '',
+        ].filter(Boolean).join(' ')}
         style={{
           transform: `scale(${spriteScale})`,
           transition: spriteTransition,

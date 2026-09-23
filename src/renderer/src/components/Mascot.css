@@ -42,6 +42,41 @@
   animation: mascot-alert-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
+/* ── Squash & Stretch accents ────────────────────────────────────── */
+.mascot-sprite-wrap.is-squash {
+  animation: mascot-squash 0.18s cubic-bezier(0.25, 0, 0.5, 1) both;
+  will-change: transform;
+}
+
+.mascot-sprite-wrap.is-stretch {
+  animation: mascot-stretch 0.20s cubic-bezier(0.25, 0, 0.5, 1) both;
+  will-change: transform;
+}
+
+@keyframes mascot-squash {
+  0%   { transform: scale(1.12, 0.84); }
+  60%  { transform: scale(0.97, 1.03); }
+  100% { transform: scale(1, 1); }
+}
+
+@keyframes mascot-stretch {
+  0%   { transform: scale(0.88, 1.14); }
+  60%  { transform: scale(1.02, 0.98); }
+  100% { transform: scale(1, 1); }
+}
+
+/* ── Idle blink / tail-flick stand-in ───────────────────────────── */
+.mascot-sprite-wrap.is-blink {
+  animation: mascot-blink 0.12s ease-in-out both;
+  will-change: transform;
+}
+
+@keyframes mascot-blink {
+  0%   { transform: scaleY(1); }
+  40%  { transform: scaleY(0.82); }
+  100% { transform: scaleY(1); }
+}
+
 @keyframes mascot-alert-pop {
   from { transform: scale(0.92); }
   to { transform: scale(1); }
