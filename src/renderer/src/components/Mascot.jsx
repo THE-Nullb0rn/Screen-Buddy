@@ -88,6 +88,9 @@ export default function Mascot({
   const [spriteAccent, setSpriteAccent] = useState(null)
   const spriteWrapRef = useRef(null)
   const accentTimerRef = useRef(null)
+  const roamTimeoutRef = useRef(null)
+  const blinkTimeoutRef = useRef(null)
+  const justDroppedRef = useRef(false)
 
   const triggerAccent = useCallback((cls) => {
     clearTimeout(accentTimerRef.current)
@@ -254,14 +257,14 @@ export default function Mascot({
   // ── Roaming loop (idle only) ──────────────────────────────────────────────
   useEffect(() => {
     const gen = ++roamGenRef.current
-    const timers = []
 
     const later = (fn, ms) => {
-      const id = setTimeout(fn, ms)
-      timers.push(id)
+      roamTimeoutRef.current = setTimeout(fn, ms)
     }
 
-    if (isReminder || mediaPlaying) {
+    if (isReminder || pomodoroCelebrating) {
+      walkTweenRef.current = null
+      clearTimeout(roamTimeoutRef.current)
       setWalkMs(0)
       if (isReminder) {
         poseRef.current = 'alert'
@@ -272,7 +275,7 @@ export default function Mascot({
       }
       return () => {
         roamGenRef.current += 1
-        timers.forEach(clearTimeout)
+        clearTimeout(roamTimeoutRef.current)
       }
     }
 
@@ -291,7 +294,7 @@ export default function Mascot({
       if (poseRef.current === 'sleep') return
 
       const idleFor = Date.now() - lastInteractRef.current
-      if (!mediaPlaying && idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
+      if (idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
         setWalkMs(0)
         poseRef.current = 'sleep'
         setPose('sleep')
@@ -345,13 +348,15 @@ export default function Mascot({
       }, duration + 40)
     }
 
-    later(walkOnce, randBetween(2500, 6000))
+    const initialDelay = justDroppedRef.current ? randBetween(5000, 6000) : randBetween(2500, 6000)
+    justDroppedRef.current = false
+    later(walkOnce, initialDelay)
 
     return () => {
       roamGenRef.current += 1
-      timers.forEach(clearTimeout)
+      clearTimeout(roamTimeoutRef.current)
     }
-  }, [isReminder, roamEpoch, measure, mediaPlaying])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating])
 
   // ── Keep the cat on-screen if the overlay is resized ──────────────────────
   useEffect(() => {
@@ -367,15 +372,14 @@ export default function Mascot({
 
   // ── Idle secondary motion (blink / tail-flick stand-in) ───────────────────
   useEffect(() => {
-    let timerId
+    if (dragging) return
     const scheduleNext = () => {
       const delay = randBetween(8000, 15000)
-      timerId = setTimeout(() => {
+      blinkTimeoutRef.current = setTimeout(() => {
         const isIdleNow =
           !draggingRef.current &&
           poseRef.current === 'idle' &&
-          !isReminder &&
-          !mediaPlaying
+          !isReminder
 
         if (isIdleNow) {
           // 55% chance to actually blink, otherwise silently skip to make it less metronomic
@@ -387,16 +391,23 @@ export default function Mascot({
       }, delay)
     }
     scheduleNext()
-    return () => clearTimeout(timerId)
-  }, [isReminder, mediaPlaying])
+    return () => clearTimeout(blinkTimeoutRef.current)
+  }, [isReminder, dragging])
 
   // ── Drag ──────────────────────────────────────────────────────────────────
   const handlePointerDown = (event) => {
     if (event.button !== 0) return
     if (event.target.closest?.('.mascot-reminder-card')) return
 
+    walkTweenRef.current = null
+    clearTimeout(roamTimeoutRef.current)
+    clearTimeout(blinkTimeoutRef.current)
+    clearTimeout(accentTimerRef.current)
+
     roamGenRef.current += 1
     setWalkMs(0)
+    poseRef.current = 'idle'
+    setPose('idle')
     snapVisualPosition()
     markInteraction()
 
@@ -436,6 +447,7 @@ export default function Mascot({
     triggerAccent('is-squash')
 
     if (!isReminder) {
+      justDroppedRef.current = true
       setRoamEpoch((n) => n + 1)
     }
   }
@@ -452,14 +464,13 @@ export default function Mascot({
     }
   }, [])
 
-  const isListening = Boolean(mediaPlaying) && !isReminder && !dragging && !pomodoroCelebrating
-  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : isListening ? 'listening' : pose
+  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : pose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   let stateClass = 'is-idle'
   if (moving) stateClass = 'is-walking'
   if (displayPose === 'sleep') stateClass = 'is-sleep'
-  if (isListening) stateClass = 'is-listening'
+  if (mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating) stateClass = 'is-listening'
 
   // Map state machine to sprite animations
   let animationName = 'idle'
@@ -473,9 +484,6 @@ export default function Mascot({
     flipped = false
   } else if (isReminder) {
     animationName = isBigTreatment ? 'stretch' : 'talk'
-    flipped = false
-  } else if (isListening) {
-    animationName = 'listening'
     flipped = false
   } else if (displayPose === 'walk-left') {
     animationName = 'walk'
@@ -572,11 +580,11 @@ export default function Mascot({
         }}
       >
         <SpriteAnimator
-          animation={isListening ? 'listening' : animationName}
+          animation={animationName}
           flipped={flipped}
           loop={true}
-          manifest={isListening ? listeningManifest : undefined}
-          spritesheet={isListening ? listeningSheetSrc : undefined}
+          manifest={(mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && ['idle', 'walk', 'talk'].includes(animationName)) ? listeningManifest : undefined}
+          spritesheet={(mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && ['idle', 'walk', 'talk'].includes(animationName)) ? listeningSheetSrc : undefined}
         />
       </div>
 
