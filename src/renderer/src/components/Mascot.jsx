@@ -16,6 +16,23 @@ const IDLE_PAUSE_MAX_MS = 15000
 const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
 
+// Idle behavior chances (checked each idle pause between walks)
+const TYPING_CHANCE = 0.15       // Increased from 10% to 15%
+const TYPING_FAST_ESCALATE = 0.3 // ~30% chance typing escalates to typingfast
+const PLAY_CHANCE = 0.10         // Increased from 8% to 10%
+
+// Duration ranges for idle behaviors (ms)
+const TYPING_MIN_MS = 4000
+const TYPING_MAX_MS = 8000
+const TYPING_FAST_MIN_MS = 2000
+const TYPING_FAST_MAX_MS = 4000
+const PLAY_MIN_MS = 3000
+const PLAY_MAX_MS = 6000
+
+// Click vs drag distinction
+const CLICK_MAX_DISTANCE = 5     // pixels
+const CLICK_MAX_DURATION = 300   // ms
+
 const REMINDER_MESSAGES = {
   water: {
     title: 'Water Break',
@@ -59,9 +76,14 @@ function defaultPosition() {
   }
 }
 
+// Animations that have a listening-spritesheet equivalent
+const LISTENING_ANIMATIONS = ['idle', 'walk', 'talk', 'eat', 'pet', 'typing', 'typingfast', 'play']
+
 export default function Mascot({
   reminderState,
   reminderType = 'water',
+  hungerState = 'IDLE',
+  onFeed,
   pomodoroCelebrating = false,
   timerMode = 'none',
   timerFormatted = '',
@@ -80,6 +102,9 @@ export default function Mascot({
   const [walkMs, setWalkMs] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [roamEpoch, setRoamEpoch] = useState(0)
+  
+  // Hover state for petting
+  const [isHoveringHead, setIsHoveringHead] = useState(false)
 
   // Walk tween: rAF-driven ease-in-out interpolation
   const walkTweenRef = useRef(null) // { startX, targetX, startTime, duration }
@@ -91,6 +116,12 @@ export default function Mascot({
   const roamTimeoutRef = useRef(null)
   const blinkTimeoutRef = useRef(null)
   const justDroppedRef = useRef(false)
+
+  // Idle behavior timeout ref
+  const idleBehaviorTimeoutRef = useRef(null)
+  
+  // Click detection refs
+  const pointerDownInfoRef = useRef(null) // { x, y, time }
 
   const triggerAccent = useCallback((cls) => {
     clearTimeout(accentTimerRef.current)
@@ -164,6 +195,33 @@ export default function Mascot({
       setPose('idle')
     }
   }, [])
+
+  // ── Helper: start an idle behavior pose for a duration, then return to idle ──
+  const startIdleBehavior = useCallback((behaviorPose, durationMs) => {
+    clearTimeout(idleBehaviorTimeoutRef.current)
+    poseRef.current = behaviorPose
+    setPose(behaviorPose)
+    idleBehaviorTimeoutRef.current = setTimeout(() => {
+      // Only revert if still in the behavior pose (wasn't interrupted)
+      if (poseRef.current === behaviorPose) {
+        poseRef.current = 'idle'
+        setPose('idle')
+      }
+    }, durationMs)
+  }, [])
+
+  const handleFeedTrigger = useCallback(() => {
+    if (hungerState === 'ACTIVE') {
+      if (onFeed) onFeed()
+      // Interrupt whatever it was doing to eat
+      walkTweenRef.current = null
+      setWalkMs(0)
+      clearTimeout(roamTimeoutRef.current)
+      clearTimeout(idleBehaviorTimeoutRef.current)
+      setIsHoveringHead(false)
+      startIdleBehavior('eat', 900)
+    }
+  }, [hungerState, onFeed, startIdleBehavior])
 
   // Wake cat from sleep when music starts playing
   useEffect(() => {
@@ -265,6 +323,7 @@ export default function Mascot({
     if (isReminder || pomodoroCelebrating) {
       walkTweenRef.current = null
       clearTimeout(roamTimeoutRef.current)
+      clearTimeout(idleBehaviorTimeoutRef.current)
       setWalkMs(0)
       if (isReminder) {
         poseRef.current = 'alert'
@@ -276,6 +335,7 @@ export default function Mascot({
       return () => {
         roamGenRef.current += 1
         clearTimeout(roamTimeoutRef.current)
+        clearTimeout(idleBehaviorTimeoutRef.current)
       }
     }
 
@@ -292,6 +352,11 @@ export default function Mascot({
         return
       }
       if (poseRef.current === 'sleep') return
+      // Don't interrupt active idle behaviors (eat, pet, typing, play)
+      if (['eat', 'pet', 'typing', 'typingfast', 'play'].includes(poseRef.current)) {
+        later(walkOnce, 1000)
+        return
+      }
 
       const idleFor = Date.now() - lastInteractRef.current
       if (idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
@@ -301,6 +366,46 @@ export default function Mascot({
         return
       }
 
+      // ── Random idle behaviors before walking ──
+      // Roll for a random behavior instead of walking sometimes
+      const roll = Math.random()
+      let triggeredBehavior = 'walk'
+      if (roll < TYPING_CHANCE) triggeredBehavior = 'typing'
+      else if (roll < TYPING_CHANCE + PLAY_CHANCE) triggeredBehavior = 'play'
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Mascot] Idle roll: ${roll.toFixed(3)} -> Action: ${triggeredBehavior} (Thresholds: Type <${TYPING_CHANCE}, Play <${(TYPING_CHANCE + PLAY_CHANCE).toFixed(2)})`)
+      }
+
+      if (triggeredBehavior === 'typing') {
+        // Typing: sustained for a few seconds, may escalate to typingfast
+        const typingDuration = randBetween(TYPING_MIN_MS, TYPING_MAX_MS)
+        startIdleBehavior('typing', typingDuration)
+
+        // Maybe escalate to fast typing partway through
+        if (Math.random() < TYPING_FAST_ESCALATE) {
+          const escalateAfter = typingDuration * 0.5
+          const fastDuration = randBetween(TYPING_FAST_MIN_MS, TYPING_FAST_MAX_MS)
+          setTimeout(() => {
+            if (gen !== roamGenRef.current) return
+            if (poseRef.current === 'typing') {
+              startIdleBehavior('typingfast', fastDuration)
+            }
+          }, escalateAfter)
+        }
+
+        later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
+        return
+      }
+      if (triggeredBehavior === 'play') {
+        // Play: cat bats its paws for a few seconds
+        const playDuration = randBetween(PLAY_MIN_MS, PLAY_MAX_MS)
+        startIdleBehavior('play', playDuration)
+        later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
+        return
+      }
+
+      // ── Normal walk ──
       const { width } = measure()
       const minX = MARGIN
       const maxX = Math.max(minX, window.innerWidth - width - MARGIN)
@@ -355,8 +460,9 @@ export default function Mascot({
     return () => {
       roamGenRef.current += 1
       clearTimeout(roamTimeoutRef.current)
+      clearTimeout(idleBehaviorTimeoutRef.current)
     }
-  }, [isReminder, roamEpoch, measure, pomodoroCelebrating])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior])
 
   // ── Keep the cat on-screen if the overlay is resized ──────────────────────
   useEffect(() => {
@@ -394,15 +500,23 @@ export default function Mascot({
     return () => clearTimeout(blinkTimeoutRef.current)
   }, [isReminder, dragging])
 
-  // ── Drag ──────────────────────────────────────────────────────────────────
+  // ── Drag & Click Handling ─────────────────────────────────────────────────
   const handlePointerDown = (event) => {
     if (event.button !== 0) return
     if (event.target.closest?.('.mascot-reminder-card')) return
+
+    // Record down info to distinguish click from drag
+    pointerDownInfoRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now(),
+    }
 
     walkTweenRef.current = null
     clearTimeout(roamTimeoutRef.current)
     clearTimeout(blinkTimeoutRef.current)
     clearTimeout(accentTimerRef.current)
+    clearTimeout(idleBehaviorTimeoutRef.current)
 
     roamGenRef.current += 1
     setWalkMs(0)
@@ -444,10 +558,45 @@ export default function Mascot({
     setX(finalPos.x)
     setY(finalPos.y)
 
+    // ── Click detection: was this a click (not a drag)? ──
+    const downInfo = pointerDownInfoRef.current
+    if (downInfo) {
+      const dx = Math.abs(event.clientX - downInfo.x)
+      const dy = Math.abs(event.clientY - downInfo.y)
+      const elapsed = Date.now() - downInfo.time
+      const isClick = dx <= CLICK_MAX_DISTANCE && dy <= CLICK_MAX_DISTANCE && elapsed <= CLICK_MAX_DURATION
+
+      if (isClick && hungerState === 'ACTIVE') {
+        pointerDownInfoRef.current = null
+        handleFeedTrigger()
+        return
+      }
+      pointerDownInfoRef.current = null
+    }
+
     triggerAccent('is-squash')
 
     if (!isReminder) {
       justDroppedRef.current = true
+      setRoamEpoch((n) => n + 1)
+    }
+  }
+
+  // ── Hitbox Hover (Pet) ────────────────────────────────────────────────────
+  const handleHeadPointerEnter = () => {
+    if (draggingRef.current || isReminder || pomodoroCelebrating) return
+    // Cancel walks and other idle behaviors while being pet
+    walkTweenRef.current = null
+    setWalkMs(0)
+    clearTimeout(roamTimeoutRef.current)
+    clearTimeout(idleBehaviorTimeoutRef.current)
+    setIsHoveringHead(true)
+  }
+
+  const handleHeadPointerLeave = () => {
+    if (isHoveringHead) {
+      setIsHoveringHead(false)
+      // Resume normal idle cycle
       setRoamEpoch((n) => n + 1)
     }
   }
@@ -464,7 +613,12 @@ export default function Mascot({
     }
   }, [])
 
-  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : pose
+  let currentPose = pose
+  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating) {
+    currentPose = 'pet'
+  }
+
+  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   let stateClass = 'is-idle'
@@ -493,6 +647,21 @@ export default function Mascot({
     flipped = false
   } else if (displayPose === 'sleep') {
     animationName = 'sleep'
+    flipped = false
+  } else if (displayPose === 'eat') {
+    animationName = 'eat'
+    flipped = false
+  } else if (displayPose === 'pet') {
+    animationName = 'pet'
+    flipped = false
+  } else if (displayPose === 'typing') {
+    animationName = 'typing'
+    flipped = false
+  } else if (displayPose === 'typingfast') {
+    animationName = 'typingfast'
+    flipped = false
+  } else if (displayPose === 'play') {
+    animationName = 'play'
     flipped = false
   } else {
     animationName = 'idle'
@@ -547,6 +716,9 @@ export default function Mascot({
     }
   }
 
+  // Determine whether to use the listening spritesheet
+  const useListening = mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && LISTENING_ANIMATIONS.includes(animationName)
+
   const isNearTop = targetY < 120
   const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
@@ -577,14 +749,31 @@ export default function Mascot({
         style={{
           transform: `scale(${spriteScale})`,
           transition: spriteTransition,
+          position: 'relative' // Added to position the hitbox correctly
         }}
       >
+        {/* Hover hit-box over the cat's head for petting */}
+        <div
+          className="mascot-head-hitbox"
+          style={{
+            position: 'absolute',
+            top: '10%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: '45%',
+            height: '40%',
+            zIndex: 10,
+          }}
+          onPointerEnter={handleHeadPointerEnter}
+          onPointerLeave={handleHeadPointerLeave}
+          title="Pet me!"
+        />
         <SpriteAnimator
           animation={animationName}
           flipped={flipped}
           loop={true}
-          manifest={(mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && ['idle', 'walk', 'talk'].includes(animationName)) ? listeningManifest : undefined}
-          spritesheet={(mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && ['idle', 'walk', 'talk'].includes(animationName)) ? listeningSheetSrc : undefined}
+          manifest={useListening ? listeningManifest : undefined}
+          spritesheet={useListening ? listeningSheetSrc : undefined}
         />
       </div>
 
@@ -606,6 +795,35 @@ export default function Mascot({
             {mediaTitle && <div className="mascot-now-playing__title">{mediaTitle}</div>}
             {mediaArtist && <div className="mascot-now-playing__artist">{mediaArtist}</div>}
           </div>
+        </div>
+      )}
+
+      {/* Active Hunger Card (hidden if a regular reminder is active to prevent overlapping cards) */}
+      {hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE && (
+        <div
+          className="mascot-reminder-card is-small"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleFeedTrigger()
+          }}
+        >
+          <div className="mascot-reminder-card__content">
+            <span className="mascot-reminder-card__icon">🐟</span>
+            <div className="mascot-reminder-card__text-wrap">
+              <div className="mascot-reminder-card__title">Hungry!</div>
+              <div className="mascot-reminder-card__message">Time to eat.</div>
+            </div>
+          </div>
+          <button
+            className="mascot-dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleFeedTrigger()
+            }}
+            aria-label="Feed cat"
+          >
+            ✕
+          </button>
         </div>
       )}
 

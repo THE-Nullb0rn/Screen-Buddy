@@ -59,6 +59,10 @@ export default function App() {
   const [reminderState, setReminderState] = useState(REMINDER_STATE.IDLE_COUNTING)
   const [reminderType, setReminderType] = useState('water')
 
+  // ── Hunger state ───────────────────────────────────────────────────────────
+  const [hungerState, setHungerState] = useState('IDLE')
+  const [hungerCountdown, setHungerCountdown] = useState(() => Math.floor((20 + Math.random() * 20) * 60))
+
   // ── Pomodoro & Stopwatch state ─────────────────────────────────────────────
   const [timerMode, setTimerMode] = useState('none') // 'none' | 'pomodoro-work' | 'pomodoro-break' | 'stopwatch'
   const [timerSeconds, setTimerSeconds] = useState(0)
@@ -79,10 +83,12 @@ export default function App() {
   const settingsRef = useRef(settings)
   const reminderStateRef = useRef(reminderState)
   const reminderIndexRef = useRef(0)
+  const hungerStateRef = useRef(hungerState)
 
   useEffect(() => { pausedRef.current = paused }, [paused])
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { reminderStateRef.current = reminderState }, [reminderState])
+  useEffect(() => { hungerStateRef.current = hungerState }, [hungerState])
 
   // ── Load settings from main process on mount ──────────────────────────────
   useEffect(() => {
@@ -114,6 +120,11 @@ export default function App() {
     setTimeout(() => {
       setReminderState(REMINDER_STATE.IDLE_COUNTING)
     }, EXIT_DURATION_MS)
+  }, [])
+
+  const handleFeed = useCallback(() => {
+    setHungerState('IDLE')
+    setHungerCountdown(Math.floor((20 + Math.random() * 20) * 60))
   }, [])
 
   // ── Auto-dismiss after a few seconds if not manually dismissed ────────────
@@ -162,6 +173,24 @@ export default function App() {
 
     return () => clearInterval(tick)
   }, [settings, triggerReminder])
+
+  // ── Hunger Timer ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (pausedRef.current) return
+      if (hungerStateRef.current === 'IDLE') {
+        setHungerCountdown((prev) => {
+          const next = prev - 1
+          if (next <= 0) {
+            setHungerState('ACTIVE')
+            return 0
+          }
+          return next
+        })
+      }
+    }, 1000)
+    return () => clearInterval(tick)
+  }, [])
 
   // ── Pomodoro / Stopwatch Controls ─────────────────────────────────────────
   const startPomodoro = useCallback((workSec = POMODORO_WORK_SEC) => {
@@ -297,6 +326,10 @@ export default function App() {
       }
     })
 
+    const offTestHunger = window.api.on('tray:test-hunger', () => {
+      setHungerState('ACTIVE')
+    })
+
     const offTrigger = window.api.on('reminder:trigger', (data) => {
       if (reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING) {
         triggerReminder(data?.type)
@@ -329,6 +362,7 @@ export default function App() {
 
     return () => {
       offTest()
+      offTestHunger()
       offTrigger()
       offStartPomodoro()
       offStartStopwatch()
@@ -429,6 +463,8 @@ export default function App() {
       <Mascot
         reminderState={reminderState}
         reminderType={reminderType}
+        hungerState={hungerState}
+        onFeed={handleFeed}
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}
         timerSeconds={timerSeconds}
@@ -454,6 +490,7 @@ export default function App() {
         <div className="debug-overlay">
           <span>State: {reminderState} ({reminderType})</span>
           <span>Next in: {countdown}s</span>
+          <span>Hunger: {hungerState} ({hungerCountdown}s)</span>
           <span>{paused ? '⏸ PAUSED' : '▶ RUNNING'}</span>
           {timerMode !== 'none' && (
             <span>Timer: {timerMode} ({formatTime(timerSeconds)})</span>

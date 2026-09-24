@@ -22,6 +22,22 @@
         70
       ]
     },
+    "eat": {
+      "frames": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "fps": 4,
+      "loop": false,
+      "frameDurations": [
+        200,
+        250,
+        200,
+        250
+      ]
+    },
     "walk": {
       "frames": [
         8,
@@ -36,6 +52,58 @@
         75,
         190,
         75
+      ]
+    },
+    "pet": {
+      "frames": [
+        18,
+        19,
+        18,
+        19
+      ],
+      "fps": 5,
+      "loop": true,
+      "frameDurations": [
+        200,
+        200,
+        200,
+        200
+      ]
+    },
+    "typing": {
+      "frames": [
+        22,
+        23
+      ],
+      "fps": 7,
+      "loop": true,
+      "frameDurations": [
+        140,
+        140
+      ]
+    },
+    "typingfast": {
+      "frames": [
+        24,
+        25
+      ],
+      "fps": 11,
+      "loop": true,
+      "frameDurations": [
+        90,
+        90
+      ]
+    },
+    "play": {
+      "frames": [
+        26,
+        27
+      ],
+      "fps": 5,
+      "loop": true,
+      "frameDurations": [
+        200,
+        200
       ]
     },
     "talk": {
