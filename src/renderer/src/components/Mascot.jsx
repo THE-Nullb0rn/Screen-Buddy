@@ -17,15 +17,9 @@ const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
 
 // Idle behavior chances (checked each idle pause between walks)
-const TYPING_CHANCE = 0.15       // Increased from 10% to 15%
-const TYPING_FAST_ESCALATE = 0.3 // ~30% chance typing escalates to typingfast
-const PLAY_CHANCE = 0.10         // Increased from 8% to 10%
+const PLAY_CHANCE = 0.15         // Increased to compensate for removed typing roll
 
 // Duration ranges for idle behaviors (ms)
-const TYPING_MIN_MS = 4000
-const TYPING_MAX_MS = 8000
-const TYPING_FAST_MIN_MS = 2000
-const TYPING_FAST_MAX_MS = 4000
 const PLAY_MIN_MS = 3000
 const PLAY_MAX_MS = 6000
 
@@ -119,6 +113,9 @@ export default function Mascot({
 
   // Idle behavior timeout ref
   const idleBehaviorTimeoutRef = useRef(null)
+  
+  // Typing event tracking for real typing detection
+  const typingEventsRef = useRef([])
   
   // Click detection refs
   const pointerDownInfoRef = useRef(null) // { x, y, time }
@@ -240,6 +237,64 @@ export default function Mascot({
     }
     prevCelebratingRef.current = pomodoroCelebrating
   }, [pomodoroCelebrating, triggerAccent])
+
+  // ── Typing Activity Listener ──────────────────────────────────────────────
+  useEffect(() => {
+    const unsub = window.api.on('typing:activity', () => {
+      if (draggingRef.current || isReminder || pomodoroCelebrating) {
+        return
+      }
+      
+      // Do not interrupt important interactive/idle behaviors
+      if (['eat', 'pet', 'play', 'sleep'].includes(poseRef.current) && poseRef.current !== 'sleep') {
+        return
+      }
+
+      const now = Date.now()
+      // Keep events for 1000ms for rate calculation
+      typingEventsRef.current = typingEventsRef.current.filter(t => now - t < 1000)
+      typingEventsRef.current.push(now)
+      
+      lastInteractRef.current = now
+
+      // Interrupt walking or sleep
+      if (poseRef.current.startsWith('walk')) {
+        walkTweenRef.current = null
+        setWalkMs(0)
+        clearTimeout(roamTimeoutRef.current)
+      } else if (poseRef.current === 'sleep') {
+        poseRef.current = 'idle'
+        setPose('idle')
+      }
+
+      // Switch to typing or typingfast based on event frequency in the last 1000ms
+      const rate = typingEventsRef.current.length
+      
+      // Hysteresis: escalate at > 12, de-escalate at < 8
+      let targetPose = poseRef.current
+      if (poseRef.current === 'typingfast') {
+        if (rate < 8) targetPose = 'typing'
+      } else {
+        targetPose = rate > 12 ? 'typingfast' : 'typing'
+      }
+
+      if (poseRef.current !== targetPose) {
+        poseRef.current = targetPose
+        setPose(targetPose)
+      }
+
+      // Revert to idle if no more typing events occur
+      clearTimeout(idleBehaviorTimeoutRef.current)
+      idleBehaviorTimeoutRef.current = setTimeout(() => {
+        if (poseRef.current === 'typing' || poseRef.current === 'typingfast') {
+          poseRef.current = 'idle'
+          setPose('idle')
+          setRoamEpoch(e => e + 1) // Kick off roam cycle again
+        }
+      }, 800)
+    })
+    return unsub
+  }, [isReminder, pomodoroCelebrating])
 
   // ── Drag Spring Physics ──────────────────────────────────────────────────
   useEffect(() => {
@@ -370,33 +425,12 @@ export default function Mascot({
       // Roll for a random behavior instead of walking sometimes
       const roll = Math.random()
       let triggeredBehavior = 'walk'
-      if (roll < TYPING_CHANCE) triggeredBehavior = 'typing'
-      else if (roll < TYPING_CHANCE + PLAY_CHANCE) triggeredBehavior = 'play'
+      if (roll < PLAY_CHANCE) triggeredBehavior = 'play'
 
       if (process.env.NODE_ENV === 'development') {
-        console.log(`[Mascot] Idle roll: ${roll.toFixed(3)} -> Action: ${triggeredBehavior} (Thresholds: Type <${TYPING_CHANCE}, Play <${(TYPING_CHANCE + PLAY_CHANCE).toFixed(2)})`)
+        console.log(`[Mascot] Idle roll: ${roll.toFixed(3)} -> Action: ${triggeredBehavior} (Thresholds: Play <${PLAY_CHANCE})`)
       }
 
-      if (triggeredBehavior === 'typing') {
-        // Typing: sustained for a few seconds, may escalate to typingfast
-        const typingDuration = randBetween(TYPING_MIN_MS, TYPING_MAX_MS)
-        startIdleBehavior('typing', typingDuration)
-
-        // Maybe escalate to fast typing partway through
-        if (Math.random() < TYPING_FAST_ESCALATE) {
-          const escalateAfter = typingDuration * 0.5
-          const fastDuration = randBetween(TYPING_FAST_MIN_MS, TYPING_FAST_MAX_MS)
-          setTimeout(() => {
-            if (gen !== roamGenRef.current) return
-            if (poseRef.current === 'typing') {
-              startIdleBehavior('typingfast', fastDuration)
-            }
-          }, escalateAfter)
-        }
-
-        later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
-        return
-      }
       if (triggeredBehavior === 'play') {
         // Play: cat bats its paws for a few seconds
         const playDuration = randBetween(PLAY_MIN_MS, PLAY_MAX_MS)

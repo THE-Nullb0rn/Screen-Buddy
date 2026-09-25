@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld('api', {
    */
   updateTimerStatus: (status) => ipcRenderer.send('timer:update-status', status),
 
+  // ── Typing ────────────────────────────────────────────────────────────────
+  
+  /** Ask the main process for the status of the typing detection permissions */
+  checkTypingPermission: () => ipcRenderer.invoke('typing:check-permission'),
+
   // ── Push events from main → renderer ─────────────────────────────────────
 
   /**
@@ -95,6 +100,7 @@ contextBridge.exposeInMainWorld('api', {
       'power:lock-screen',
       'power:unlock-screen',
       'media:status',
+      'typing:activity',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

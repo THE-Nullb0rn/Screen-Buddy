@@ -27,6 +27,7 @@ const path = require('path')
 const { loadSettings, saveSettings, getSettingsPath } = require('./settings')
 const { setAutostart, removeAutostart } = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
+const TypingDetector = require('./typing/TypingDetector')
 
 // ─── Wayland / Ozone flags ───────────────────────────────────────────────────
 // Must be set before app.ready fires. Required for proper rendering under
@@ -45,11 +46,16 @@ let isPaused = false // runtime pause state (not persisted between sessions)
 const TRAY_TOOLTIP_UPDATE_INTERVAL_MS = 10 * 1000
 let lastTrayTooltipUpdateAt = 0
 let lastTrayTooltipMode = null
+let typingDetector = null
 
 app.disableHardwareAcceleration()
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   settings = loadSettings()
+
+  typingDetector = new TypingDetector((channel, event) => {
+    mainWindow?.webContents.send(channel, event)
+  })
 
   createOverlayWindow()
   createTray()
@@ -60,6 +66,9 @@ app.whenReady().then(async () => {
   if (settings.autostart) {
     setAutostart()
   }
+  
+  // Start typing detection based on initial settings
+  typingDetector.updateSettings(settings)
 
   // Start media playback monitor — sends real-time updates to renderer
   mediaMonitor.start((status) => {
@@ -110,7 +119,7 @@ function createOverlayWindow() {
     height,
     x: 0,
     y: 0,
-    transparent: true,
+    transparent: false,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -126,21 +135,43 @@ function createOverlayWindow() {
   // Start click-through everywhere — renderer will ask to enable input on hover
   mainWindow.setIgnoreMouseEvents(true, { forward: true })
 
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.log('[main] LOAD FAILED:', { errorCode, errorDescription, validatedURL });
+  });
+
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.log('[main] RENDERER CRASHED:', details);
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[main] Overlay window did-finish-load event fired.')
+  });
+
+  mainWindow.webContents.on('dom-ready', () => {
+    console.log('[main] Overlay window dom-ready event fired.')
+  });
+
   // Load the renderer
   if (process.env.VITE_DEV_SERVER_URL) {
     // Development: load from the Vite dev server
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+    const url = process.env.VITE_DEV_SERVER_URL
+    console.log(`[main] LOADING RENDERER via loadURL: "${url}"`)
+    mainWindow.loadURL(url)
   } else {
-    // Production: load the built index.html
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    // Production: load the built index.html from the project root's dist/ folder.
+    const resolvedPath = path.join(app.getAppPath(), 'dist/index.html')
+    console.log(`[main] LOADING RENDERER via loadFile: "${resolvedPath}"`)
+    mainWindow.loadFile(resolvedPath).catch((err) => {
+      console.error('[main] loadFile threw an error:', err)
+    })
   }
-
   // Open DevTools in development for easy debugging
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
 
-  console.log('[main] Overlay window created:', width, 'x', height)
+  mainWindow.show()
+  console.log(`[main] Overlay created!`)
 }
 
 // ─── System tray ─────────────────────────────────────────────────────────────
@@ -280,10 +311,22 @@ function registerIpcHandlers() {
     } else {
       removeAutostart()
     }
+    
+    // Update typing detector settings
+    if (typingDetector) {
+      typingDetector.updateSettings(settings)
+    }
 
     console.log('[main] Settings saved:', settings)
     return settings
   })
+
+  // ── Typing ────────────────────────────────────────────────────────────────
+
+  ipcMain.handle('typing:check-permission', () => {
+    return typingDetector ? typingDetector.checkPermissionStatus() : null
+  })
+
 
   // ── Mouse hit-testing ─────────────────────────────────────────────────────
 

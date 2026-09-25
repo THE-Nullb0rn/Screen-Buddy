@@ -25,8 +25,24 @@ export default function SettingsModal({ settings, onSave, onClose }) {
     eyeRest: settings.reminders?.eyeRest ?? true,
     movementBreak: settings.reminders?.movementBreak ?? settings.reminders?.stretch ?? true,
   }))
+  const [systemTypingDetection, setSystemTypingDetection] = useState(settings.systemTypingDetection || false)
+  const [typingPerm, setTypingPerm] = useState(null)
+  
   const [settingsPath, setSettingsPath] = useState('')
   const [saving, setSaving] = useState(false)
+
+  const checkTypingPerm = async () => {
+    const perm = await window.api.checkTypingPermission()
+    setTypingPerm(perm)
+  }
+
+  useEffect(() => {
+    if (systemTypingDetection) {
+      checkTypingPerm()
+    } else {
+      setTypingPerm(null)
+    }
+  }, [systemTypingDetection])
 
   // ── Fetch settings file path for display ─────────────────────────────────
   useEffect(() => {
@@ -56,6 +72,7 @@ export default function SettingsModal({ settings, onSave, onClose }) {
       paused,
       autostart,
       reminders,
+      systemTypingDetection,
     })
     setSaving(false)
     onClose()
@@ -128,6 +145,32 @@ export default function SettingsModal({ settings, onSave, onClose }) {
             />
             <span className="settings-field__toggle-track" aria-hidden="true" />
           </label>
+          
+          {/* Typing Detection */}
+          <div className="settings-field-group" style={{ marginBottom: '16px' }}>
+            <label className="settings-field settings-field--toggle" style={{ marginBottom: '0' }}>
+              <span className="settings-field__label">
+                System-wide typing detection
+                <span className="settings-field__hint"> (Detect keystrokes across apps)</span>
+              </span>
+              <input
+                type="checkbox"
+                className="settings-field__checkbox"
+                checked={systemTypingDetection}
+                onChange={(e) => setSystemTypingDetection(e.target.checked)}
+              />
+              <span className="settings-field__toggle-track" aria-hidden="true" />
+            </label>
+            
+            {typingPerm && !typingPerm.permitted && (
+              <div className="settings-permission-box" style={{ marginTop: '8px', padding: '12px', background: 'rgba(255,200,0,0.1)', borderRadius: '6px', fontSize: '0.9em' }}>
+                <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-line' }}>{typingPerm.instructions}</p>
+                <button type="button" className="btn btn--secondary" onClick={checkTypingPerm} style={{ fontSize: '0.85em', padding: '4px 12px' }}>
+                  Recheck Permission
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Reminder Types */}
           <div className="settings-reminders-section">

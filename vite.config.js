@@ -72,6 +72,61 @@ export default defineConfig({
           },
         },
       },
+      {
+        entry: resolve(__dirname, 'src/main/typing/TypingProvider.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron/typing'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
+      {
+        entry: resolve(__dirname, 'src/main/typing/DevInputProvider.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron/typing'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
+      {
+        entry: resolve(__dirname, 'src/main/typing/SimulationProvider.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron/typing'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
+      {
+        entry: resolve(__dirname, 'src/main/typing/EisProvider.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron/typing'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
+      {
+        entry: resolve(__dirname, 'src/main/typing/TypingDetector.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron/typing'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
     ]),
 
     // Allow renderer to use Node.js APIs through the contextBridge
