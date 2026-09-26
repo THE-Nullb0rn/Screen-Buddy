@@ -98,6 +98,8 @@ export default function App() {
     })
   }, [])
 
+
+
   // ── State machine transitions ─────────────────────────────────────────────
   const triggerReminder = useCallback((type) => {
     let resolvedType = type
@@ -449,7 +451,13 @@ export default function App() {
     }
   }, [])
 
-  // ── Settings save handler ─────────────────────────────────────────────────
+  // ── Settings save handler & Window Mode ──────────────────────────────────
+  useEffect(() => {
+    if (window.api?.setWindowMode) {
+      window.api.setWindowMode(settingsOpen ? 'settings' : 'mascot')
+    }
+  }, [settingsOpen])
+
   const handleSaveSettings = useCallback(async (updates) => {
     const newSettings = await window.api.setSettings(updates)
     setSettingsState(newSettings)
@@ -479,27 +487,16 @@ export default function App() {
       />
 
       {settingsOpen && settings && (
-        <SettingsModal
-          settings={settings}
-          onSave={handleSaveSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
-
-      {process.env.NODE_ENV === 'development' && settings && (
-        <div className="debug-overlay">
-          <span>State: {reminderState} ({reminderType})</span>
-          <span>Next in: {countdown}s</span>
-          <span>Hunger: {hungerState} ({hungerCountdown}s)</span>
-          <span>{paused ? '⏸ PAUSED' : '▶ RUNNING'}</span>
-          {timerMode !== 'none' && (
-            <span>Timer: {timerMode} ({formatTime(timerSeconds)})</span>
-          )}
-          {mediaStatus.playing && (
-            <span>🎵 {mediaStatus.artist} — {mediaStatus.title}</span>
-          )}
+        <div style={{ position: 'fixed', inset: 0, zIndex: 199, pointerEvents: 'auto' }}>
+          <SettingsModal
+            settings={settings}
+            onSave={handleSaveSettings}
+            onClose={() => setSettingsOpen(false)}
+          />
         </div>
       )}
+
+
     </>
   )
 }

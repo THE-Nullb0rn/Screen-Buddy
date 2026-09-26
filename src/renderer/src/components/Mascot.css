@@ -4,8 +4,9 @@
 
 .mascot-container {
   position: fixed;
-  left: 0;
-  top: 0;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   z-index: 100;
   display: flex;
   flex-direction: column-reverse;
@@ -25,7 +26,7 @@
 
 .mascot-container.is-dragging {
   cursor: grabbing;
-  transition: transform 0.1s ease-out !important;
+  transition: none !important;
 }
 
 .mascot-sprite-wrap {

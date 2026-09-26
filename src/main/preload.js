@@ -52,6 +52,9 @@ contextBridge.exposeInMainWorld('api', {
    */
   mouseLeaveInteractive: () => ipcRenderer.send('mouse:leave-interactive'),
 
+  moveWindow: (x, y) => ipcRenderer.send('window:move', x, y),
+  setWindowMode: (mode, ...args) => ipcRenderer.invoke('window:mode', mode, ...args),
+
   // ── Pause / resume ────────────────────────────────────────────────────────
 
   /**

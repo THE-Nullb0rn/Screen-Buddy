@@ -38,6 +38,26 @@ TBD — targeting something that plays nice with Electron-on-Wayland or a lighte
 
 Built and tested on Fedora + Hyprland. Not targeting Windows/macOS.
 
+## Hyprland Setup
+
+Because Screen-Buddy uses a transparent full-screen overlay, Hyprland will try to apply its default window decorations (like borders, shadows, and blur) to the transparent window, making it look like a large floating sheet of glass.
+
+To make the overlay truly invisible (except for the cat and the cards) and prevent rendering glitches when switching workspaces, add these rules to your `hyprland.conf`:
+
+```hyprlang
+# Screen-Buddy Overlay Rules
+windowrulev2 = float, title:^(screen-buddy-overlay)$
+windowrulev2 = pin, title:^(screen-buddy-overlay)$
+windowrulev2 = noblur, title:^(screen-buddy-overlay)$
+windowrulev2 = noshadow, title:^(screen-buddy-overlay)$
+windowrulev2 = noborder, title:^(screen-buddy-overlay)$
+windowrulev2 = rounding 0, title:^(screen-buddy-overlay)$
+windowrulev2 = noanim, title:^(screen-buddy-overlay)$
+windowrulev2 = opacity 1.0 override 1.0 override, title:^(screen-buddy-overlay)$
+```
+
+> **Note on Focus**: We intentionally do *not* use the `nofocus` window rule here. While a true "click-through" overlay usually shouldn't steal focus, Screen-Buddy requires focus to allow you to drag the cat or click buttons on the reminder cards. The tradeoff is that when you click the cat, your active window will temporarily lose focus. When you're just working and not interacting with the cat, clicks pass right through to your desktop.
+
 ## Credits
 
 Concept loosely inspired by early hydration-reminder desktop apps — screen-buddy itself is an original build from scratch: own code, own mascot, own architecture.

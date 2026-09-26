@@ -64,9 +64,11 @@ function clamp(value, min, max) {
 }
 
 function defaultPosition() {
+  const sw = window.screen.availWidth || window.screen.width || 1920
+  const sh = window.screen.availHeight || window.screen.height || 1080
   return {
-    x: Math.max(MARGIN, window.innerWidth - FALLBACK_WIDTH - 48),
-    y: Math.max(MARGIN, window.innerHeight - FALLBACK_HEIGHT - 48),
+    x: Math.max(MARGIN, sw - FALLBACK_WIDTH - 48),
+    y: Math.max(MARGIN, sh - FALLBACK_HEIGHT - 48),
   }
 }
 
@@ -142,10 +144,17 @@ export default function Mascot({
   const dragOffsetRef = useRef({ x: 0, y: 0 })
   const dragTargetRef = useRef({ x, y })
   const savedPosRef = useRef(null)
+  const lastSentMoveRef = useRef({ x: -1, y: -1 })
+  const dragPointerDownRef = useRef(false)
+  const lastDragPointerRef = useRef(null)
+  const dragExpandingRef = useRef(false)
+  const dragEndingRef = useRef(false)
+  const dragPointerIdRef = useRef(null)
 
   poseRef.current = pose
-  posRef.current = { x, y }
-  draggingRef.current = dragging
+  if (!draggingRef.current && !dragPointerDownRef.current) {
+    posRef.current = { x, y }
+  }
 
   const isReminder =
     reminderState === REMINDER_STATE.ENTRANCE ||
@@ -165,24 +174,21 @@ export default function Mascot({
   const clampToViewport = useCallback(
     (nx, ny) => {
       const { width, height } = measure()
+      // Use logical screen size instead of the (now small) window innerWidth
+      const screenW = window.screen.width || 1920
+      const screenH = window.screen.height || 1080
       return {
-        x: clamp(nx, MARGIN, Math.max(MARGIN, window.innerWidth - width - MARGIN)),
-        y: clamp(ny, MARGIN, Math.max(MARGIN, window.innerHeight - height - MARGIN)),
+        x: clamp(nx, MARGIN, Math.max(MARGIN, screenW - width - MARGIN)),
+        y: clamp(ny, MARGIN, Math.max(MARGIN, screenH - height - MARGIN)),
       }
     },
     [measure]
   )
 
   const snapVisualPosition = useCallback(() => {
-    const el = containerRef.current
-    if (!el) return posRef.current
-    const rect = el.getBoundingClientRect()
-    const next = { x: rect.left, y: rect.top }
-    posRef.current = next
-    setX(next.x)
-    setY(next.y)
-    dragTargetRef.current = next
-    return next
+    // The window is physically moved now; we don't need to read DOM rects.
+    // posRef already perfectly tracks the physical screen position.
+    return posRef.current
   }, [])
 
   const markInteraction = useCallback(() => {
@@ -296,32 +302,7 @@ export default function Mascot({
     return unsub
   }, [isReminder, pomodoroCelebrating])
 
-  // ── Drag Spring Physics ──────────────────────────────────────────────────
-  useEffect(() => {
-    let animationFrameId
-    const updateSpring = () => {
-      if (draggingRef.current) {
-        const target = dragTargetRef.current
-        const current = posRef.current
-
-        const dx = target.x - current.x
-        const dy = target.y - current.y
-
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-          const next = {
-            x: current.x + dx * 0.3,
-            y: current.y + dy * 0.3,
-          }
-          posRef.current = next
-          setX(next.x)
-          setY(next.y)
-        }
-      }
-      animationFrameId = requestAnimationFrame(updateSpring)
-    }
-    updateSpring()
-    return () => cancelAnimationFrame(animationFrameId)
-  }, [])
+  // Walk tween is idle-only. Active drag writes pointer coords 1:1 in onDragMove.
 
   // ── Walk Tween (rAF ease-in-out) ─────────────────────────────────────────
   useEffect(() => {
@@ -330,7 +311,7 @@ export default function Mascot({
 
     const step = (now) => {
       const tween = walkTweenRef.current
-      if (tween && !draggingRef.current) {
+      if (tween && !draggingRef.current && !dragPointerDownRef.current) {
         const elapsed = now - tween.startTime
         const t = Math.min(1, elapsed / tween.duration)
         const eased = easeInOut(t)
@@ -402,7 +383,8 @@ export default function Mascot({
 
     const walkOnce = () => {
       if (gen !== roamGenRef.current) return
-      if (draggingRef.current) {
+      if (draggingRef.current || dragPointerDownRef.current) {
+        console.log(`[Renderer] walkOnce deferred (still dragging) gen=${gen}`)
         later(walkOnce, 400)
         return
       }
@@ -442,7 +424,8 @@ export default function Mascot({
       // ── Normal walk ──
       const { width } = measure()
       const minX = MARGIN
-      const maxX = Math.max(minX, window.innerWidth - width - MARGIN)
+      const screenW = window.screen.availWidth || window.screen.width || 1920
+      const maxX = Math.max(minX, screenW - width - MARGIN)
       const currentX = posRef.current.x
       let dir = Math.random() < 0.5 ? 'left' : 'right'
       if (currentX <= minX + 24) dir = 'right'
@@ -460,6 +443,7 @@ export default function Mascot({
       poseRef.current = dir === 'left' ? 'walk-left' : 'walk-right'
       setPose(poseRef.current)
       setWalkMs(duration)
+      console.log(`[Renderer] walkOnce START gen=${gen} dir=${dir} currentX=${currentX.toFixed(1)} targetX=${targetX.toFixed(1)} duration=${Math.round(duration)}ms`)
 
       // Stretch: body-gather moment as the walk leg launches
       triggerAccentRef.current('is-stretch')
@@ -488,6 +472,7 @@ export default function Mascot({
     }
 
     const initialDelay = justDroppedRef.current ? randBetween(5000, 6000) : randBetween(2500, 6000)
+    console.log(`[Renderer] roam loop start gen=${gen} justDropped=${justDroppedRef.current} initialDelay=${Math.round(initialDelay)}ms draggingRef=${draggingRef.current}`)
     justDroppedRef.current = false
     later(walkOnce, initialDelay)
 
@@ -535,18 +520,78 @@ export default function Mascot({
   }, [isReminder, dragging])
 
   // ── Drag & Click Handling ─────────────────────────────────────────────────
-  const handlePointerDown = (event) => {
+  // We attach pointermove/pointerup to `document` during drag so that events
+  // keep flowing even when the 350×350 Electron window physically moves away
+  // from under the cursor via Hyprland IPC.
+
+  const recaptureDragPointer = () => {
+    const el = containerRef.current
+    const pointerId = dragPointerIdRef.current
+    if (!el || pointerId == null) return
+    try {
+      if (el.hasPointerCapture?.(pointerId)) return
+      el.setPointerCapture(pointerId)
+    } catch (_) {
+      // Wayland may reject capture while the native window is mid-resize.
+    }
+  }
+
+  const unbindDragPointerListeners = () => {
+    document.removeEventListener('pointermove', onDragMove, true)
+    document.removeEventListener('pointerup', onDragEnd, true)
+    document.removeEventListener('pointercancel', onDragCancel, true)
+    document.removeEventListener('lostpointercapture', onLostPointerCapture, true)
+    document.removeEventListener('mouseup', onMouseUp, true)
+  }
+
+  const applyDragPointer = (event) => {
+    let targetX
+    let targetY
+
+    if (dragExpandingRef.current) {
+      // Window is still 350x350. clientX is local to the small window.
+      // Global mouse = window center (posRef) + local offset from center.
+      const globalMouseX = posRef.current.x + (event.clientX - (window.innerWidth / 2))
+      const globalMouseY = posRef.current.y + (event.clientY - (window.innerHeight / 2))
+      targetX = globalMouseX - dragOffsetRef.current.x
+      targetY = globalMouseY - dragOffsetRef.current.y
+    } else {
+      // Window is fullscreen (1920x1080). clientX is now global screen coordinate.
+      targetX = event.clientX - dragOffsetRef.current.x
+      targetY = event.clientY - dragOffsetRef.current.y
+    }
+
+    const next = clampToViewport(targetX, targetY)
+    dragTargetRef.current = next
+    lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
+
+    if (!draggingRef.current) return
+    posRef.current = next
+    setX(next.x)
+    setY(next.y)
+  }
+
+  const handlePointerDown = async (event) => {
     if (event.button !== 0) return
     if (event.target.closest?.('.mascot-reminder-card')) return
 
     // Record down info to distinguish click from drag
     pointerDownInfoRef.current = {
-      x: event.clientX,
-      y: event.clientY,
+      x: event.screenX,
+      y: event.screenY,
       time: Date.now(),
     }
 
+    dragPointerIdRef.current = event.pointerId
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch (_) {}
+
     walkTweenRef.current = null
+    dragEndingRef.current = false
+    dragPointerDownRef.current = true
+    draggingRef.current = true
+    dragExpandingRef.current = true
+    lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
+
     clearTimeout(roamTimeoutRef.current)
     clearTimeout(blinkTimeoutRef.current)
     clearTimeout(accentTimerRef.current)
@@ -559,44 +604,157 @@ export default function Mascot({
     snapVisualPosition()
     markInteraction()
 
-    const rect = containerRef.current.getBoundingClientRect()
+    // Cat is perfectly centered in the 350x350 window.
+    // The offset of the cursor from the cat's center is just clientX - center.
     dragOffsetRef.current = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      x: event.clientX - (window.innerWidth / 2),
+      y: event.clientY - (window.innerHeight / 2),
     }
-    draggingRef.current = true
+    dragTargetRef.current = { x: posRef.current.x, y: posRef.current.y }
+
+    document.addEventListener('pointermove', onDragMove, true)
+    document.addEventListener('pointerup', onDragEnd, true)
+    document.addEventListener('pointercancel', onDragCancel, true)
+    document.addEventListener('lostpointercapture', onLostPointerCapture, true)
+    document.addEventListener('mouseup', onMouseUp, true)
+
+    let dragResizeApplied = true
+    if (window.api?.setWindowMode) {
+      const result = await window.api.setWindowMode('drag')
+      dragResizeApplied = result?.applied === true
+      if (!dragResizeApplied) {
+        console.error('[Renderer] handlePointerDown NOT switching to screen-space CSS: hyprctl did not confirm fullscreen size')
+      }
+    }
+
+    dragExpandingRef.current = false
+
+    if (!dragPointerDownRef.current || dragEndingRef.current) {
+      console.log('[Renderer] handlePointerDown aborted: pointer released before fullscreen confirmed')
+      return
+    }
+
+    if (!dragResizeApplied) {
+      unbindDragPointerListeners()
+      draggingRef.current = false
+      setDragging(false)
+      return
+    }
+
+    recaptureDragPointer()
+    applyDragPointer({
+      clientX: lastDragPointerRef.current?.clientX ?? event.clientX,
+      clientY: lastDragPointerRef.current?.clientY ?? event.clientY,
+    })
     setDragging(true)
-    event.currentTarget.setPointerCapture(event.pointerId)
   }
 
-  const handlePointerMove = (event) => {
-    if (!draggingRef.current) return
-    const targetX = event.clientX - dragOffsetRef.current.x
-    const targetY = event.clientY - dragOffsetRef.current.y
-    dragTargetRef.current = clampToViewport(targetX, targetY)
-  }
-
-  const handlePointerUp = (event) => {
-    if (!draggingRef.current) return
-    draggingRef.current = false
-    setDragging(false)
-    lastInteractRef.current = Date.now()
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    } catch {
-      // capture may already be released
+  const onDragMove = (event) => {
+    if (!dragPointerDownRef.current && !draggingRef.current) return
+    // If we missed a fast pointerup during the resize expansion,
+    // the next move event will correctly report that the button is physically released.
+    if (event.buttons === 0) {
+      console.log('[Renderer] button physically released during move, force ending drag')
+      onDragEnd(event)
+      return
     }
+    applyDragPointer(event)
+  }
+
+  const onDragCancel = (event) => {
+    if (!dragPointerDownRef.current && !draggingRef.current) return
+    lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
+    console.log(`[Renderer] pointercancel ignored (resize/capture loss); expanding=${dragExpandingRef.current} buttons=${event.buttons}`)
+    recaptureDragPointer()
+  }
+
+  const onLostPointerCapture = (event) => {
+    if (!dragPointerDownRef.current && !draggingRef.current) return
+    if (dragEndingRef.current) return
+    if (dragPointerIdRef.current != null && event.pointerId !== dragPointerIdRef.current) return
+    console.log('[Renderer] lostpointercapture during drag; recapturing')
+    recaptureDragPointer()
+  }
+
+  const onMouseUp = (event) => {
+    if (event.button !== 0) return
+    if (dragExpandingRef.current) {
+      console.log('[Renderer] deferring mouseup during drag-start expand')
+      return
+    }
+    onDragEnd(event)
+  }
+
+  const onDragEnd = async (event) => {
+    if (dragEndingRef.current) return
+    if (!dragPointerDownRef.current && !draggingRef.current) return
+
+    if (event?.type === 'pointercancel') {
+      onDragCancel(event)
+      return
+    }
+    if (dragExpandingRef.current && event?.type === 'pointerup') {
+      console.log('[Renderer] deferring pointerup during drag-start expand')
+      return
+    }
+
+    dragEndingRef.current = true
+    dragExpandingRef.current = false
+    dragPointerDownRef.current = false
+
+    lastInteractRef.current = Date.now()
+
+    unbindDragPointerListeners()
+    dragPointerIdRef.current = null
 
     const finalPos = dragTargetRef.current
     posRef.current = finalPos
     setX(finalPos.x)
     setY(finalPos.y)
 
+    const logCatBoundsVsWindow = (tag) => {
+      const el = containerRef.current
+      const cs = el ? window.getComputedStyle(el) : null
+      const innerW = window.innerWidth
+      const innerH = window.innerHeight
+      const catW = el?.offsetWidth || FALLBACK_WIDTH
+      const catH = el?.offsetHeight || FALLBACK_HEIGHT
+      const dragCssInside350 = finalPos.x >= 0 && finalPos.x <= 350 && finalPos.y >= 0 && finalPos.y <= 350
+      const dragCssInsideInner = finalPos.x >= 0 && finalPos.x <= innerW && finalPos.y >= 0 && finalPos.y <= innerH
+      const centeredCssInsideInner = innerW >= catW && innerH >= catH
+      console.log(
+        `[Renderer] ${tag} inner=${innerW}x${innerH} catBox=${catW}x${catH} css left=${cs?.left} top=${cs?.top} transform=${cs?.transform} draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current} finalPos=(${finalPos.x}, ${finalPos.y}) dragCssInside350=${dragCssInside350} dragCssInsideInner=${dragCssInsideInner} centeredCssFitsInner=${centeredCssInsideInner}`
+      )
+    }
+
+    // Shrink window back to 350x350 and reposition at the cat's final center.
+    // AWAIT this transition so the window fully moves to the right spot
+    // before we turn off drag mode (which switches CSS back to centered)
+    // and before we resume the roaming loop.
+    console.log(`[Renderer] onDragEnd type=${event?.type} BEFORE setWindowMode mascot finalPos=(${finalPos.x}, ${finalPos.y}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
+    logCatBoundsVsWindow('onDragEnd before await mascot')
+    let mascotResizeApplied = true
+    if (window.api?.setWindowMode) {
+      lastSentMoveRef.current = { x: finalPos.x, y: finalPos.y }
+      const mascotResult = await window.api.setWindowMode('mascot', finalPos.x, finalPos.y)
+      mascotResizeApplied = mascotResult?.applied === true
+      console.log(`[Renderer] onDragEnd setWindowMode(mascot) resolved ${JSON.stringify(mascotResult)}`)
+      if (!mascotResizeApplied) {
+        console.error('[Renderer] onDragEnd hyprctl did not confirm 350x350 before roam resume')
+      }
+    }
+    console.log('[Renderer] onDragEnd AFTER await setWindowMode mascot — about to set draggingRef=false and resume roam')
+    logCatBoundsVsWindow('onDragEnd after await mascot, still draggingRef=true')
+
+    draggingRef.current = false
+    setDragging(false)
+    logCatBoundsVsWindow('onDragEnd after draggingRef=false (React dragging state still true until next paint)')
+
     // ── Click detection: was this a click (not a drag)? ──
     const downInfo = pointerDownInfoRef.current
     if (downInfo) {
-      const dx = Math.abs(event.clientX - downInfo.x)
-      const dy = Math.abs(event.clientY - downInfo.y)
+      const dx = Math.abs(event.screenX - downInfo.x)
+      const dy = Math.abs(event.screenY - downInfo.y)
       const elapsed = Date.now() - downInfo.time
       const isClick = dx <= CLICK_MAX_DISTANCE && dy <= CLICK_MAX_DISTANCE && elapsed <= CLICK_MAX_DURATION
 
@@ -612,9 +770,15 @@ export default function Mascot({
 
     if (!isReminder) {
       justDroppedRef.current = true
+      console.log(`[Renderer] onDragEnd scheduling roam resume via setRoamEpoch (after await + draggingRef=false mascotApplied=${mascotResizeApplied})`)
       setRoamEpoch((n) => n + 1)
     }
   }
+
+  // Keep original handler names for the JSX props; pointerMove/Up on the
+  // element are no-ops now — the document listeners do the real work.
+  const handlePointerMove = () => {}
+  const handlePointerUp = () => {}
 
   // ── Hitbox Hover (Pet) ────────────────────────────────────────────────────
   const handleHeadPointerEnter = () => {
@@ -635,15 +799,13 @@ export default function Mascot({
     }
   }
 
-  const handleMouseEnter = () => window.api.mouseEnterInteractive()
-  const handleMouseLeave = () => {
-    if (draggingRef.current) return
-    window.api.mouseLeaveInteractive()
-  }
+  const handleMouseEnter = () => {}
+  const handleMouseLeave = () => {}
 
   useEffect(() => {
     return () => {
-      window.api.mouseLeaveInteractive()
+      // Clean up document-level drag listeners if component unmounts mid-drag
+      unbindDragPointerListeners()
     }
   }, [])
 
@@ -703,8 +865,10 @@ export default function Mascot({
   }
 
   // ── Coordinates and Transitions for Center-Screen MovementBreak ───────────
-  const centerX = Math.max(MARGIN, Math.round((window.innerWidth - SPRITE_WIDTH) / 2))
-  const centerY = Math.max(MARGIN, Math.round((window.innerHeight - SPRITE_HEIGHT) / 2))
+  const screenW = window.screen.availWidth || window.screen.width || 1920
+  const screenH = window.screen.availHeight || window.screen.height || 1080
+  const centerX = Math.max(MARGIN, Math.round((screenW - SPRITE_WIDTH) / 2))
+  const centerY = Math.max(MARGIN, Math.round((screenH - SPRITE_HEIGHT) / 2))
 
   let targetX = x
   let targetY = y
@@ -756,13 +920,35 @@ export default function Mascot({
   const isNearTop = targetY < 120
   const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
+  // ── Sync physical window position with logical coordinates ──────────────
+  // During drag the window is fullscreen and the cat is positioned via CSS
+  // transform, so we skip Hyprland window movement.
+  useEffect(() => {
+    if (window.api?.moveWindow && !draggingRef.current) {
+      // Prevent stale/redundant moveWindow IPCs if we already sent this position
+      // (e.g. via setWindowMode('mascot', x, y) on drag release)
+      if (lastSentMoveRef.current.x === targetX && lastSentMoveRef.current.y === targetY) {
+        return
+      }
+      lastSentMoveRef.current = { x: targetX, y: targetY }
+      console.log(`[Renderer] calling moveWindow(${targetX}, ${targetY}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
+      window.api.moveWindow(targetX, targetY)
+    }
+  }, [targetX, targetY])
+
   return (
     <div
       ref={containerRef}
       className={`mascot-container ${stateClass} ${dragging ? 'is-dragging' : ''} ${isNearTop ? 'is-near-top' : ''}`}
-      style={{
-        transform: `translate3d(${targetX}px, ${targetY}px, 0)`,
-        transition: containerTransition,
+      style={dragging ? {
+        // During drag the window is fullscreen at (0,0). Position the cat
+        // at its screen coordinates via CSS transform.
+        left: 0,
+        top: 0,
+        transform: `translate3d(${targetX}px, ${targetY}px, 0) translate(-50%, -50%)`,
+        transition: 'none',
+      } : {
+        // Normal mode: cat is centered in the 350x350 window via Mascot.css.
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
