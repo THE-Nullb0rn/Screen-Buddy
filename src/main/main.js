@@ -54,6 +54,7 @@ app.commandLine.appendSwitch('enable-transparent-visuals')
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 let mainWindow = null
+let settingsWindow = null
 let tray = null
 let settings = null // loaded from disk at startup
 let isPaused = false // runtime pause state (not persisted between sessions)
@@ -102,7 +103,7 @@ app.whenReady().then(async () => {
   if (settings.autostart) {
     setAutostart()
   }
-  
+
   // Start typing detection based on initial settings
   typingDetector.updateSettings(settings)
 
@@ -153,6 +154,38 @@ app.on('will-quit', () => {
  *   - resizable: true          → required so programmatic setSize() works on Wayland;
  *                                 frameless + transparent still hide chrome / resize handles
  */
+
+function openSettingsWindow() {
+  if (settingsWindow) {
+    settingsWindow.focus()
+    return
+  }
+  settingsWindow = new BrowserWindow({
+    title: 'Screen Buddy Settings',
+    width: 500,
+    height: 700,
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    }
+  })
+
+  if (process.env.VITE_DEV_SERVER_URL) {
+    settingsWindow.loadURL(process.env.VITE_DEV_SERVER_URL + '/#settings')
+  } else {
+    settingsWindow.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: 'settings' })
+  }
+
+  settingsWindow.on('closed', () => {
+    settingsWindow = null
+  })
+}
+
 function createOverlayWindow() {
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
@@ -354,8 +387,7 @@ function buildTrayMenu() {
     {
       label: '⚙️  Settings',
       click: () => {
-        // Tell the renderer to open the settings modal
-        mainWindow?.webContents.send('tray:open-settings')
+        openSettingsWindow()
       },
     },
     {
@@ -409,6 +441,9 @@ function registerIpcHandlers() {
     if (typingDetector) {
       typingDetector.updateSettings(settings)
     }
+
+    mainWindow?.webContents.send('settings:updated', settings)
+    settingsWindow?.webContents.send('settings:updated', settings)
 
     console.log('[main] Settings saved:', settings)
     return settings
@@ -656,7 +691,6 @@ function registerIpcHandlers() {
 
     // 1. Standard Electron setPosition (fallback / X11)
     mainWindow?.setPosition(wx, wy)
-
     // 2. Hyprland — queue latest position, flushed by the timer
     if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
       _movePending = { x: wx, y: wy }
@@ -695,12 +729,6 @@ function registerIpcHandlers() {
         `handler ${Date.now() - modeEnteredAt}ms`
       )
       return { applied: verify.applied, width, height, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
-    } else if (mode === 'settings') {
-      currentWindowMode = 'settings'
-      currentWinW = 800
-      currentWinH = 600
-      mainWindow?.setSize(800, 600)
-      mainWindow?.center()
     } else {
       // 'mascot' — keep currentWindowMode as 'drag' (or previous) until shrink +
       // reposition are done, so window:move / roaming cannot interrupt.

@@ -13,7 +13,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Mascot from './components/Mascot'
-import SettingsModal from './components/SettingsModal'
 
 // ─── State machine constants ─────────────────────────────────────────────────
 const REMINDER_STATE = {
@@ -53,7 +52,6 @@ function formatTime(sec) {
 export default function App() {
   // ── Settings ───────────────────────────────────────────────────────────────
   const [settings, setSettingsState] = useState(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // ── Reminder state machine ─────────────────────────────────────────────────
   const [reminderState, setReminderState] = useState(REMINDER_STATE.IDLE_COUNTING)
@@ -96,6 +94,11 @@ export default function App() {
       setSettingsState(s)
       setPaused(s.paused)
     })
+    const off = window.api.on('settings:updated', (s) => {
+      setSettingsState(s)
+      setPaused(s.paused)
+    })
+    return off
   }, [])
 
 
@@ -354,10 +357,6 @@ export default function App() {
       startPomodoro(5) // Fast 5s pomodoro for instant verification
     })
 
-    const offSettings = window.api.on('tray:open-settings', () => {
-      setSettingsOpen(true)
-    })
-
     const offPause = window.api.on('tray:pause-state', (isPaused) => {
       setPaused(isPaused)
     })
@@ -370,7 +369,6 @@ export default function App() {
       offStartStopwatch()
       offStopTimer()
       offTestPomodoro()
-      offSettings()
       offPause()
     }
   }, [triggerReminder, startPomodoro, startStopwatch, stopTimer])
@@ -451,20 +449,6 @@ export default function App() {
     }
   }, [])
 
-  // ── Settings save handler & Window Mode ──────────────────────────────────
-  useEffect(() => {
-    if (window.api?.setWindowMode) {
-      window.api.setWindowMode(settingsOpen ? 'settings' : 'mascot')
-    }
-  }, [settingsOpen])
-
-  const handleSaveSettings = useCallback(async (updates) => {
-    const newSettings = await window.api.setSettings(updates)
-    setSettingsState(newSettings)
-    setPaused(newSettings.paused)
-    window.api.setPaused(newSettings.paused)
-  }, [])
-
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -485,17 +469,6 @@ export default function App() {
         mediaTitle={mediaStatus.title}
         nowPlayingVisible={nowPlayingVisible}
       />
-
-      {settingsOpen && settings && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 199, pointerEvents: 'auto' }}>
-          <SettingsModal
-            settings={settings}
-            onSave={handleSaveSettings}
-            onClose={() => setSettingsOpen(false)}
-          />
-        </div>
-      )}
-
 
     </>
   )

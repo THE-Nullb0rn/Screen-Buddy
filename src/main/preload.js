@@ -92,7 +92,7 @@ contextBridge.exposeInMainWorld('api', {
     const ALLOWED = [
       'tray:test-reminder',
       'reminder:trigger',
-      'tray:open-settings',
+      'settings:updated',
       'tray:pause-state',
       'timer:start-pomodoro',
       'timer:start-stopwatch',
