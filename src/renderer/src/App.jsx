@@ -452,7 +452,7 @@ export default function App() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <Mascot
+      {settings && <Mascot
         reminderState={reminderState}
         reminderType={reminderType}
         hungerState={hungerState}
@@ -468,7 +468,11 @@ export default function App() {
         mediaArtist={mediaStatus.artist}
         mediaTitle={mediaStatus.title}
         nowPlayingVisible={nowPlayingVisible}
-      />
+        initialPosition={{
+          x: (settings.mascotPosition?.x ?? 0) + 175,
+          y: (settings.mascotPosition?.y ?? 0) + 175,
+        }}
+      />}
 
     </>
   )

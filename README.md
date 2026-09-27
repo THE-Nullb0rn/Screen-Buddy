@@ -58,6 +58,35 @@ windowrulev2 = opacity 1.0 override 1.0 override, title:^(screen-buddy-overlay)$
 
 > **Note on Focus**: We intentionally do *not* use the `nofocus` window rule here. While a true "click-through" overlay usually shouldn't steal focus, Screen-Buddy requires focus to allow you to drag the cat or click buttons on the reminder cards. The tradeoff is that when you click the cat, your active window will temporarily lose focus. When you're just working and not interacting with the cat, clicks pass right through to your desktop.
 
+### Global pause hotkey on Hyprland
+
+Screen-Buddy attempts to register `Ctrl+Alt+P` through Electron's Wayland portal
+integration. Some Electron/portal/Hyprland combinations decline the request or
+report a registration that does not receive keypresses. The app therefore always
+provides a compositor-native fallback: it watches the per-user runtime file
+`$XDG_RUNTIME_DIR/screen-buddy-toggle`.
+
+Add this bind to `hyprland.conf` for a reliable global hotkey regardless of
+Electron portal support:
+
+```hyprlang
+# Ctrl+Alt+P toggles Screen-Buddy's manual pause state.
+bind = CTRL ALT, P, exec, sh -c 'date +%s%N > "$XDG_RUNTIME_DIR/screen-buddy-toggle"'
+```
+
+Reload Hyprland after saving (`hyprctl reload`). Start Screen-Buddy before using
+the bind. The main-process log prints both the Electron registration result and
+`Hyprland hotkey control file changed`, which makes it clear which route handled
+the hotkey.
+
+### Fullscreen behavior
+
+On Hyprland, Screen-Buddy listens to the compositor's `.socket2.sock` events and
+rechecks `hyprctl activewindow -j` when a fullscreen/focus event occurs. The cat
+hides and pauses while the active non-Screen-Buddy window is fullscreen, then
+returns when fullscreen ends. A manual pause remains paused after fullscreen is
+left; the two reasons are intentionally independent.
+
 ## Credits
 
 Concept loosely inspired by early hydration-reminder desktop apps — screen-buddy itself is an original build from scratch: own code, own mascot, own architecture.

@@ -89,12 +89,15 @@ export default function Mascot({
   mediaArtist = '',
   mediaTitle = '',
   nowPlayingVisible = false,
+  // Coordinates are the global cat centre; App converts the persisted
+  // BrowserWindow top-left position before passing this value.
+  initialPosition = null,
 }) {
   const containerRef = useRef(null)
 
   const [pose, setPose] = useState('idle')
-  const [x, setX] = useState(() => defaultPosition().x)
-  const [y, setY] = useState(() => defaultPosition().y)
+  const [x, setX] = useState(() => Number.isFinite(initialPosition?.x) ? initialPosition.x : defaultPosition().x)
+  const [y, setY] = useState(() => Number.isFinite(initialPosition?.y) ? initialPosition.y : defaultPosition().y)
   const [walkMs, setWalkMs] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [roamEpoch, setRoamEpoch] = useState(0)

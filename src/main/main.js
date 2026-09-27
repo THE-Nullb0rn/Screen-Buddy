@@ -20,9 +20,17 @@ const {
   ipcMain,
   nativeImage,
   powerMonitor,
+  globalShortcut,
   screen: electronScreen,
 } = require('electron')
 const path = require('path')
+const net = require('net')
+const fs = require('fs')
+const util = require('util')
+const { execFile: execFileCallback } = require('child_process')
+
+const execFileAsync = util.promisify(execFileCallback)
+
 
 const { loadSettings, saveSettings, getSettingsPath } = require('./settings')
 const { setAutostart, removeAutostart } = require('./autostart')
@@ -32,7 +40,9 @@ const TypingDetector = require('./typing/TypingDetector')
 // ─── Wayland / Ozone flags ───────────────────────────────────────────────────
 // Must be set before app.ready fires. Required for proper rendering under
 // Hyprland's Wayland compositor. Safe to set on X11 (ignored gracefully).
-app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform')
+// GlobalShortcutsPortal is needed by Electron 32 for Wayland portal-backed
+// shortcuts. Hyprland's SIGUSR1 bind remains available when the portal declines.
+app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,GlobalShortcutsPortal')
 
 // Platform selector — default: native Wayland.
 // ── XWayland diagnostic test ──────────────────────────────────────────────
@@ -57,7 +67,15 @@ let mainWindow = null
 let settingsWindow = null
 let tray = null
 let settings = null // loaded from disk at startup
-let isPaused = false // runtime pause state (not persisted between sessions)
+// Manual pause is intentionally not persisted. Fullscreen pause is a separate
+// transient reason, so leaving fullscreen never overrides a manual pause.
+let isPaused = false
+let autoPausedForFullscreen = false
+let hyprlandEventSocket = null
+let hyprlandEventReconnectTimer = null
+let fullscreenSafetyPoll = null
+let fullscreenReconcileTimer = null
+let isShuttingDown = false
 const TRAY_TOOLTIP_UPDATE_INTERVAL_MS = 10 * 1000
 let lastTrayTooltipUpdateAt = 0
 let lastTrayTooltipMode = null
@@ -67,6 +85,8 @@ let typingDetector = null
 // and the windowrulev2 entries in README / hyprland.conf.
 const WINDOW_TITLE = 'screen-buddy-overlay'
 const HYPR_TITLE_MATCH = `title:^(${WINDOW_TITLE})$`
+const HOTKEY_ACCELERATOR = 'Control+Alt+P'
+const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-toggle')
 
 // ─── Click-through state ──────────────────────────────────────────────────────
 // Tracks whether the overlay is currently in interactive mode (cursor is over
@@ -98,6 +118,9 @@ app.whenReady().then(async () => {
   createTray()
   registerIpcHandlers()
   registerPowerMonitor()
+  installHyprlandHotkeyFallback()
+  registerGlobalPauseShortcut()
+  startHyprlandFullscreenMonitor()
 
   // Apply saved autostart preference on launch
   if (settings.autostart) {
@@ -134,12 +157,166 @@ app.on('window-all-closed', () => {
 
 // Clean up child processes before exit
 app.on('will-quit', () => {
+  isShuttingDown = true
   mediaMonitor.stop()
   if (passthruInterval) {
     clearInterval(passthruInterval)
     passthruInterval = null
   }
+  globalShortcut.unregisterAll()
+  stopHyprlandFullscreenMonitor()
+  removeHyprlandHotkeyFallback()
 })
+
+// ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
+function effectivePauseState() {
+  return isPaused || autoPausedForFullscreen
+}
+
+function broadcastPauseState(source) {
+  const paused = effectivePauseState()
+  mainWindow?.webContents.send('tray:pause-state', paused)
+
+  if (autoPausedForFullscreen) {
+    mainWindow?.hide()
+  } else if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+    // Do not take focus away from the game/video that just left fullscreen.
+    mainWindow.showInactive()
+  }
+
+  buildTrayMenu()
+  console.log(`[main] Pause state updated by ${source}: manual=${isPaused} fullscreen=${autoPausedForFullscreen} effective=${paused}`)
+}
+
+function setManualPaused(paused, source) {
+  isPaused = Boolean(paused)
+  broadcastPauseState(source)
+}
+
+function toggleManualPause(source) {
+  setManualPaused(!isPaused, source)
+}
+
+function setFullscreenAutoPause(paused, source) {
+  const next = Boolean(paused)
+  if (autoPausedForFullscreen === next) return
+  autoPausedForFullscreen = next
+  broadcastPauseState(source)
+}
+
+function registerGlobalPauseShortcut() {
+  // Electron 32 requires this portal feature on native Wayland. Hyprland may
+  // still decline it, so the documented control-file bind remains available.
+  const registered = globalShortcut.register(HOTKEY_ACCELERATOR, () => {
+    console.log(`[main] globalShortcut callback fired for ${HOTKEY_ACCELERATOR}`)
+    toggleManualPause('globalShortcut')
+  })
+  const isRegistered = globalShortcut.isRegistered(HOTKEY_ACCELERATOR)
+  console.log(`[main] globalShortcut.register(${HOTKEY_ACCELERATOR}) => ${registered}; isRegistered => ${isRegistered}`)
+  if (!registered || !isRegistered) {
+    console.warn(`[main] Global shortcut unavailable on this Wayland session; use the documented Hyprland control-file bind.`)
+  }
+}
+
+function installHyprlandHotkeyFallback() {
+  try {
+    fs.writeFileSync(HOTKEY_CONTROL_FILE, '', { mode: 0o600 })
+    fs.watchFile(HOTKEY_CONTROL_FILE, { interval: 250 }, (current, previous) => {
+      if (current.mtimeMs === previous.mtimeMs) return
+      console.log('[main] Hyprland hotkey control file changed; toggling manual pause')
+      toggleManualPause('Hyprland control file')
+    })
+    console.log(`[main] Hyprland hotkey fallback ready; control file: ${HOTKEY_CONTROL_FILE}`)
+  } catch (err) {
+    console.error('[main] Could not create Hyprland hotkey control file:', err)
+  }
+}
+
+function removeHyprlandHotkeyFallback() {
+  try {
+    fs.unwatchFile(HOTKEY_CONTROL_FILE)
+    if (fs.existsSync(HOTKEY_CONTROL_FILE)) fs.unlinkSync(HOTKEY_CONTROL_FILE)
+  } catch (err) {
+    console.warn('[main] Could not remove Hyprland hotkey control file:', err.message)
+  }
+}
+
+function scheduleFullscreenReconcile(reason) {
+  if (fullscreenReconcileTimer) clearTimeout(fullscreenReconcileTimer)
+  fullscreenReconcileTimer = setTimeout(() => {
+    fullscreenReconcileTimer = null
+    reconcileHyprlandFullscreen(reason)
+  }, 100)
+}
+
+async function reconcileHyprlandFullscreen(reason) {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
+  try {
+    const { stdout } = await execFileAsync('hyprctl', ['activewindow', '-j'])
+    const activeWindow = JSON.parse(stdout)
+    const isOverlay = activeWindow?.title === WINDOW_TITLE
+    const fullscreen = !isOverlay && Number(activeWindow?.fullscreen || 0) > 0
+    console.log(`[main] Hyprland fullscreen check (${reason}): title=${JSON.stringify(activeWindow?.title || '')} fullscreen=${activeWindow?.fullscreen ?? 0} autoPause=${fullscreen}`)
+    setFullscreenAutoPause(fullscreen, `Hyprland ${reason}`)
+  } catch (err) {
+    console.warn(`[main] Hyprland fullscreen check failed (${reason}):`, err.message)
+  }
+}
+
+function startHyprlandFullscreenMonitor() {
+  const signature = process.env.HYPRLAND_INSTANCE_SIGNATURE
+  const runtimeDir = process.env.XDG_RUNTIME_DIR
+  if (!signature || !runtimeDir) {
+    console.log('[main] Hyprland fullscreen monitor disabled (not in a Hyprland session)')
+    return
+  }
+
+  const socketPath = path.join(runtimeDir, 'hypr', signature, '.socket2.sock')
+  const connect = () => {
+    hyprlandEventSocket = net.createConnection(socketPath)
+    hyprlandEventSocket.setEncoding('utf8')
+    hyprlandEventSocket.on('connect', () => {
+      console.log(`[main] Connected to Hyprland event socket: ${socketPath}`)
+      scheduleFullscreenReconcile('socket connect')
+    })
+    hyprlandEventSocket.on('data', (chunk) => {
+      for (const line of chunk.split('\n')) {
+        const event = line.split('>>', 1)[0]
+        if (event === 'fullscreen' || event === 'activewindow' || event === 'activewindowv2' || event === 'openwindow' || event === 'closewindow') {
+          scheduleFullscreenReconcile(`event:${event}`)
+        }
+      }
+    })
+    hyprlandEventSocket.on('error', (err) => {
+      console.warn('[main] Hyprland event socket error:', err.message)
+    })
+    hyprlandEventSocket.on('close', () => {
+      hyprlandEventSocket = null
+      if (!isShuttingDown && !hyprlandEventReconnectTimer) {
+        hyprlandEventReconnectTimer = setTimeout(() => {
+          hyprlandEventReconnectTimer = null
+          connect()
+        }, 5000)
+      }
+    })
+  }
+
+  connect()
+  // socket2 is the primary mechanism. The low-frequency check covers the
+  // documented case where Hyprland emits duplicate or missing fullscreen events.
+  fullscreenSafetyPoll = setInterval(() => reconcileHyprlandFullscreen('safety poll'), 2000)
+}
+
+function stopHyprlandFullscreenMonitor() {
+  if (fullscreenSafetyPoll) clearInterval(fullscreenSafetyPoll)
+  if (hyprlandEventReconnectTimer) clearTimeout(hyprlandEventReconnectTimer)
+  if (fullscreenReconcileTimer) clearTimeout(fullscreenReconcileTimer)
+  fullscreenSafetyPoll = null
+  hyprlandEventReconnectTimer = null
+  fullscreenReconcileTimer = null
+  hyprlandEventSocket?.destroy()
+  hyprlandEventSocket = null
+}
 
 // ─── Overlay window ──────────────────────────────────────────────────────────
 /**
@@ -187,12 +364,13 @@ function openSettingsWindow() {
 }
 
 function createOverlayWindow() {
+  const savedPosition = getSavedMascotPosition()
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
     width: 350,  // Enough to fit cat and reminder cards
     height: 350,
-    x: 0,
-    y: 0,
+    x: savedPosition.x,
+    y: savedPosition.y,
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
@@ -297,7 +475,26 @@ function createOverlayWindow() {
 
   // showInactive() prevents stealing focus from the user's active app on startup
   mainWindow.showInactive()
-  console.log(`[main] Overlay created!`)
+  console.log(`[main] Overlay created at saved mascot position (${savedPosition.x}, ${savedPosition.y})`)
+}
+
+function getSavedMascotPosition() {
+  const saved = settings?.mascotPosition
+  const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
+  const maxX = Math.max(0, width - 350)
+  const maxY = Math.max(0, height - 350)
+  const x = Number.isFinite(saved?.x) ? Math.round(saved.x) : 0
+  const y = Number.isFinite(saved?.y) ? Math.round(saved.y) : 0
+  return {
+    x: Math.max(0, Math.min(x, maxX)),
+    y: Math.max(0, Math.min(y, maxY)),
+  }
+}
+
+function persistMascotPosition(x, y) {
+  settings = { ...settings, mascotPosition: { x, y } }
+  saveSettings(settings)
+  console.log(`[main] Saved mascot position to settings: (${x}, ${y})`)
 }
 
 // ─── System tray ─────────────────────────────────────────────────────────────
@@ -393,11 +590,7 @@ function buildTrayMenu() {
     {
       label: isPaused ? '▶️  Resume' : '⏸️  Pause',
       click: () => {
-        isPaused = !isPaused
-        // Notify renderer of new pause state
-        mainWindow?.webContents.send('tray:pause-state', isPaused)
-        // Rebuild menu so the label flips
-        buildTrayMenu()
+        toggleManualPause('tray')
       },
     },
     { type: 'separator' },
@@ -760,6 +953,9 @@ function registerIpcHandlers() {
 
           // Shrink after the reposition is confirmed
           verify = await applyMascotWindowSize('drag-end')
+          // Save only after the existing drag settle/resize path completes, so
+          // persistence never records an in-flight fullscreen drag coordinate.
+          persistMascotPosition(wx, wy)
           console.log(`[main] window:mode -> mascot at window (${wx}, ${wy}) from cat center (${catX}, ${catY}) electronTitle="${mainWindow?.getTitle?.()}" hyprMatch=${HYPR_TITLE_MATCH} applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)}`)
         } else {
           verify = await applyMascotWindowSize('no-coords')
@@ -784,8 +980,7 @@ function registerIpcHandlers() {
    * We sync the main-process flag and rebuild the tray so it stays correct.
    */
   ipcMain.on('pause:set', (_event, paused) => {
-    isPaused = paused
-    buildTrayMenu()
+    setManualPaused(paused, 'renderer')
   })
 
   // ── Misc ──────────────────────────────────────────────────────────────────

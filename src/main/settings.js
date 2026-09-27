@@ -34,6 +34,12 @@ const DEFAULT_SETTINGS = {
   /** Whether reminders are globally paused */
   paused: false,
 
+  /** Last settled top-left position of the 350×350 mascot window. */
+  mascotPosition: {
+    x: 0,
+    y: 0,
+  },
+
   /** Write ~/.config/autostart/screen-buddy.desktop on login */
   autostart: false,
 
