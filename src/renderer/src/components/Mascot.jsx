@@ -100,6 +100,9 @@ export default function Mascot({
   const [y, setY] = useState(() => Number.isFinite(initialPosition?.y) ? initialPosition.y : defaultPosition().y)
   const [walkMs, setWalkMs] = useState(0)
   const [dragging, setDragging] = useState(false)
+  const [falling, setFalling] = useState(false)
+  const fallRafRef = useRef(null)
+  const fallVelocityRef = useRef(0)
   const [roamEpoch, setRoamEpoch] = useState(0)
   
   // Hover state for petting
@@ -178,8 +181,8 @@ export default function Mascot({
     (nx, ny) => {
       const { width, height } = measure()
       // Use logical screen size instead of the (now small) window innerWidth
-      const screenW = window.screen.width || 1920
-      const screenH = window.screen.height || 1080
+      const screenW = window.screen.availWidth || window.screen.width || 1920
+      const screenH = window.screen.availHeight || window.screen.height || 1080
       return {
         x: clamp(nx, MARGIN, Math.max(MARGIN, screenW - width - MARGIN)),
         y: clamp(ny, MARGIN, Math.max(MARGIN, screenH - height - MARGIN)),
@@ -247,6 +250,55 @@ export default function Mascot({
     prevCelebratingRef.current = pomodoroCelebrating
   }, [pomodoroCelebrating, triggerAccent])
 
+
+  // ── Ensure cat falls if spawned in the air ──
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (draggingRef.current || fallRafRef.current) return;
+      const { y: floorY } = clampToViewport(posRef.current.x, 999999)
+      if (posRef.current.y < floorY - 5) {
+        setFalling(true)
+        poseRef.current = 'fall'
+        setPose('fall')
+        fallVelocityRef.current = 0
+        justDroppedRef.current = true
+
+        let lastTime = performance.now()
+        const fallStep = (time) => {
+          if (draggingRef.current || dragPointerDownRef.current || isReminder) {
+            setFalling(false)
+            return
+          }
+          let dt = (time - lastTime) / 1000
+          lastTime = time
+          if (dt > 0.1) dt = 0.016
+
+          fallVelocityRef.current += 3000 * dt
+          let newY = posRef.current.y + fallVelocityRef.current * dt
+
+          const { y: currentFloorY } = clampToViewport(posRef.current.x, 999999)
+
+          if (newY >= currentFloorY) {
+            newY = currentFloorY
+            posRef.current = { x: posRef.current.x, y: newY }
+            setY(newY)
+            dragTargetRef.current = { ...posRef.current }
+            setFalling(false)
+            poseRef.current = 'idle'
+            setPose('idle')
+            triggerAccentRef.current('is-squash')
+            setRoamEpoch((n) => n + 1)
+          } else {
+            posRef.current = { x: posRef.current.x, y: newY }
+            setY(newY)
+            dragTargetRef.current = { ...posRef.current }
+            fallRafRef.current = requestAnimationFrame(fallStep)
+          }
+        }
+        fallRafRef.current = requestAnimationFrame(fallStep)
+      }
+    })
+  }, [clampToViewport, isReminder])
   // ── Typing Activity Listener ──────────────────────────────────────────────
   useEffect(() => {
     const unsub = window.api.on('typing:activity', () => {
@@ -578,6 +630,12 @@ export default function Mascot({
     if (event.button !== 0) return
     if (event.target.closest?.('.mascot-reminder-card')) return
 
+    if (fallRafRef.current) {
+      cancelAnimationFrame(fallRafRef.current)
+      fallRafRef.current = null
+      setFalling(false)
+    }
+
     // Record down info to distinguish click from drag
     pointerDownInfoRef.current = {
       x: event.screenX,
@@ -755,6 +813,7 @@ export default function Mascot({
 
     // ── Click detection: was this a click (not a drag)? ──
     const downInfo = pointerDownInfoRef.current
+    let handledClick = false
     if (downInfo) {
       const dx = Math.abs(event.screenX - downInfo.x)
       const dy = Math.abs(event.screenY - downInfo.y)
@@ -764,17 +823,63 @@ export default function Mascot({
       if (isClick && hungerState === 'ACTIVE') {
         pointerDownInfoRef.current = null
         handleFeedTrigger()
-        return
+        handledClick = true
       }
       pointerDownInfoRef.current = null
     }
 
-    triggerAccent('is-squash')
+    if (handledClick) return
 
-    if (!isReminder) {
+    const { y: floorY } = clampToViewport(finalPos.x, 999999)
+    const isFalling = finalPos.y < floorY - 5
+
+    if (isFalling) {
+      setFalling(true)
+      poseRef.current = 'fall'
+      setPose('fall')
+      fallVelocityRef.current = 0
       justDroppedRef.current = true
-      console.log(`[Renderer] onDragEnd scheduling roam resume via setRoamEpoch (after await + draggingRef=false mascotApplied=${mascotResizeApplied})`)
-      setRoamEpoch((n) => n + 1)
+
+      let lastTime = performance.now()
+      const fallStep = (time) => {
+        if (draggingRef.current || dragPointerDownRef.current || isReminder) {
+          setFalling(false)
+          return
+        }
+        let dt = (time - lastTime) / 1000
+        lastTime = time
+        if (dt > 0.1) dt = 0.016
+
+        fallVelocityRef.current += 3000 * dt
+        let newY = posRef.current.y + fallVelocityRef.current * dt
+
+        const { y: currentFloorY } = clampToViewport(posRef.current.x, 999999)
+
+        if (newY >= currentFloorY) {
+          newY = currentFloorY
+          posRef.current = { x: posRef.current.x, y: newY }
+          setY(newY)
+          dragTargetRef.current = { ...posRef.current }
+          setFalling(false)
+          poseRef.current = 'idle'
+          setPose('idle')
+          triggerAccentRef.current('is-squash')
+          setRoamEpoch((n) => n + 1)
+        } else {
+          posRef.current = { x: posRef.current.x, y: newY }
+          setY(newY)
+          dragTargetRef.current = { ...posRef.current }
+          fallRafRef.current = requestAnimationFrame(fallStep)
+        }
+      }
+      fallRafRef.current = requestAnimationFrame(fallStep)
+    } else {
+      triggerAccent('is-squash')
+      if (!isReminder) {
+        justDroppedRef.current = true
+        console.log(`[Renderer] onDragEnd scheduling roam resume via setRoamEpoch (after await + draggingRef=false mascotApplied=${mascotResizeApplied})`)
+        setRoamEpoch((n) => n + 1)
+      }
     }
   }
 
@@ -829,7 +934,10 @@ export default function Mascot({
   let animationName = 'idle'
   let flipped = false
 
-  if (pomodoroCelebrating) {
+  if (falling) {
+    animationName = 'fall'
+    flipped = false
+  } else if (pomodoroCelebrating) {
     animationName = 'jump'
     flipped = false
   } else if (dragging) {
