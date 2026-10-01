@@ -174,7 +174,9 @@ class DevInputProvider extends TypingProvider {
                   reason = 'not in ALLOWED_KEYCODES or NUMPAD_CODES'
                 }
 
-                console.log(`[DevInputProvider] EV_KEY: code=${code}, value=${value} | Modifiers: C=${this._ctrlHeld} A=${this._altHeld} M=${this._metaHeld} Num=${this._numLockOn} | ${status}: ${reason}`)
+                if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+                  console.log(`[DevInputProvider] EV_KEY: code=${code}, value=${value} | Modifiers: C=${this._ctrlHeld} A=${this._altHeld} M=${this._metaHeld} Num=${this._numLockOn} | ${status}: ${reason}`)
+                }
               }
             }
           })

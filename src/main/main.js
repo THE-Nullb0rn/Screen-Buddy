@@ -889,9 +889,11 @@ function registerIpcHandlers() {
       'dispatch', 'movewindowpixel',
       `exact ${Math.round(x)} ${Math.round(y)},${HYPR_TITLE_MATCH}`
     ]
-    console.log(
-      `[main] hyprctl ${cmdArgs.join(' ')} (mode=${currentWindowMode} repositionInProgress=${mascotRepositionInProgress} trackedSize=${currentWinW}x${currentWinH})`
-    )
+    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+      console.log(
+        `[main] hyprctl ${cmdArgs.join(' ')} (mode=${currentWindowMode} repositionInProgress=${mascotRepositionInProgress} trackedSize=${currentWinW}x${currentWinH})`
+      )
+    }
 
     try {
       const util = require('util')

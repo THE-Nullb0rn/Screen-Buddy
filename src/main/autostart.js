@@ -35,8 +35,8 @@ function buildDesktopEntry() {
   // In production, the packaged executable is self-contained.
   const execPath =
     process.env.NODE_ENV === 'development'
-      ? `${process.execPath} ${path.resolve(__dirname, '../..')}`
-      : process.execPath
+      ? `"${process.execPath}" "${path.resolve(__dirname, '..')}"`
+      : `"${process.execPath}"`
 
   return `[Desktop Entry]
 Type=Application
