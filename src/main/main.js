@@ -81,12 +81,20 @@ let lastTrayTooltipUpdateAt = 0
 let lastTrayTooltipMode = null
 let typingDetector = null
 
+// ─── Chat state (session-only, never persisted) ───────────────────────────────
+// Tracks the current chat UI state so the hotkey watcher can guard correctly.
+// Values mirror the renderer chatState: 'idle' | 'input' | 'waiting' | 'reply'
+let chatInputOpen = 'idle'
+// Ring-buffer: last 10 messages (5 turns) for Gemini context.
+let chatHistory = [] // Array of { role: 'user'|'model', parts: [{ text }] }
+
 // Canonical Hyprland / Electron window title. Must match hyprctl title: regexes
 // and the windowrulev2 entries in README / hyprland.conf.
 const WINDOW_TITLE = 'screen-buddy-overlay'
 const HYPR_TITLE_MATCH = `title:^(${WINDOW_TITLE})$`
 const HOTKEY_ACCELERATOR = 'Control+Alt+P'
 const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-toggle')
+const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-chat')
 
 // ─── Click-through state ──────────────────────────────────────────────────────
 // Tracks whether the overlay is currently in interactive mode (cursor is over
@@ -95,6 +103,19 @@ const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'sc
 // ROLLBACK: delete isInteractive + passthruInterval + the setInterval block in registerIpcHandlers.
 let isInteractive = false
 let passthruInterval = null
+
+// ─── Safe settings broadcast ──────────────────────────────────────────────────
+/**
+ * Return a copy of the settings object with the Gemini API key removed.
+ * MUST be used for all broadcasts to renderer windows — the key must never
+ * reach any renderer process.
+ */
+function safeSettingsForRenderer(s) {
+  if (!s) return s
+  // eslint-disable-next-line no-unused-vars
+  const { geminiApiKey, ...safe } = s
+  return safe
+}
 
 // ── Renderer diagnostic mode ────────────────────────────────────────────────
 const rendererOverride = process.env.SCREEN_BUDDY_RENDERER
@@ -119,6 +140,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers()
   registerPowerMonitor()
   installHyprlandHotkeyFallback()
+  installChatHotkeyFallback()
   registerGlobalPauseShortcut()
   startHyprlandFullscreenMonitor()
 
@@ -166,6 +188,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopHyprlandFullscreenMonitor()
   removeHyprlandHotkeyFallback()
+  removeChatHotkeyFallback()
 })
 
 // ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
@@ -239,6 +262,193 @@ function removeHyprlandHotkeyFallback() {
   } catch (err) {
     console.warn('[main] Could not remove Hyprland hotkey control file:', err.message)
   }
+}
+
+// ─── Chat hotkey (SUPER+C via Hyprland control file) ─────────────────────────
+
+function installChatHotkeyFallback() {
+  try {
+    fs.writeFileSync(CHAT_HOTKEY_CONTROL_FILE, '', { mode: 0o600 })
+    fs.watchFile(CHAT_HOTKEY_CONTROL_FILE, { interval: 250 }, (current, previous) => {
+      if (current.mtimeMs === previous.mtimeMs) return
+
+      // Guard 1: global pause (manual or fullscreen auto-pause)
+      if (effectivePauseState()) {
+        console.log('[main] Chat hotkey ignored — app is paused')
+        return
+      }
+
+      // Guard 2: still waiting for a Gemini reply — ignore a second trigger
+      if (chatInputOpen === 'waiting') {
+        console.log('[main] Chat hotkey ignored — waiting for Gemini reply')
+        return
+      }
+
+      console.log('[main] Chat hotkey triggered; chatInputOpen=%s', chatInputOpen)
+      mainWindow?.webContents.send('chat:open')
+
+      // Focus only when opening the input (not when toggling a reply off).
+      // When chatInputOpen is 'reply' the renderer will dismiss it; no focus needed.
+      if (chatInputOpen !== 'reply') {
+        focusChatWindow()
+      }
+    })
+    console.log(`[main] Chat hotkey fallback ready; control file: ${CHAT_HOTKEY_CONTROL_FILE}`)
+  } catch (err) {
+    console.error('[main] Could not create chat hotkey control file:', err)
+  }
+}
+
+function removeChatHotkeyFallback() {
+  try {
+    fs.unwatchFile(CHAT_HOTKEY_CONTROL_FILE)
+    if (fs.existsSync(CHAT_HOTKEY_CONTROL_FILE)) fs.unlinkSync(CHAT_HOTKEY_CONTROL_FILE)
+  } catch (err) {
+    console.warn('[main] Could not remove chat hotkey control file:', err.message)
+  }
+}
+
+/**
+ * Focus the overlay window so the chat input can receive key events.
+ * On Hyprland/Wayland, hyprctl dispatch focuswindow is more reliable than
+ * Electron's mainWindow.focus() alone.
+ */
+async function focusChatWindow() {
+  // Fast path / X11 / XWayland
+  try {
+    mainWindow?.focus()
+  } catch (err) {
+    console.warn('[main] mainWindow.focus() error:', err.message)
+  }
+
+  // Ask the Hyprland compositor to grant focus — required on native Wayland
+  if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+    try {
+      await execFileAsync('hyprctl', ['dispatch', 'focuswindow', HYPR_TITLE_MATCH])
+      console.log('[main] hyprctl focuswindow sent for chat input')
+    } catch (err) {
+      // Not fatal — Wayland focus is best-effort for overlays.
+      console.warn('[main] hyprctl focuswindow failed (Wayland focus may not be available for overlays):', err.message)
+    }
+  }
+}
+
+// ─── Gemini API call ─────────────────────────────────────────────────────────
+
+const GEMINI_SYSTEM_INSTRUCTION =
+  "You are a small black cat desktop companion. Answer the user's " +
+  "question correctly and helpfully in 1-3 short sentences. Include a " +
+  "small cat touch in EVERY reply (a meow, a purr, or a paw emoji 🐾, " +
+  "at the start or end) while keeping the answer itself accurate and " +
+  "complete. If you don't know something, say so plainly. Always reply " +
+  "in English, even if the user writes in another language."
+
+const GEMINI_TIMEOUT_MS = 25_000
+
+const CHAT_ERROR_MESSAGES = {
+  noKey:      "I need a Gemini API key in settings.json.",
+  timeout:    "That took too long, try again, meow.",
+  noInternet: "Meow... can't reach the internet.",
+  rateLimit:  "Too many questions, let me nap a bit.",
+  badKey:     "My API key doesn't work.",
+  generic:    "Something broke, meow.",
+}
+
+/**
+ * Call the Gemini generateContent REST endpoint.
+ * Session history is maintained in the module-level chatHistory array (never saved to disk).
+ *
+ * @param {string} userMessage
+ * @returns {Promise<string>} Reply text — never throws; errors map to cat messages.
+ */
+async function callGemini(userMessage) {
+  // Resolve API key in main process only — never logged, never returned to renderer
+  const apiKey = settings?.geminiApiKey || process.env.GEMINI_API_KEY || ''
+  if (!apiKey) {
+    return CHAT_ERROR_MESSAGES.noKey
+  }
+
+  const model = (settings?.geminiModel && settings.geminiModel.trim())
+    ? settings.geminiModel.trim()
+    : 'gemini-2.5-flash-lite'
+
+  // Append new user turn to session history
+  chatHistory.push({ role: 'user', parts: [{ text: userMessage }] })
+  // Trim to last 10 messages (5 turns) before sending
+  if (chatHistory.length > 10) {
+    chatHistory = chatHistory.slice(chatHistory.length - 10)
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+  const body = {
+    systemInstruction: { parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }] },
+    contents: chatHistory,
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS)
+
+  let res
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // Key is sent only in the x-goog-api-key header, never in the URL
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (fetchErr) {
+    clearTimeout(timer)
+    const isAbort = fetchErr.name === 'AbortError'
+    console.error('[main] Gemini fetch error:', isAbort ? 'timeout' : fetchErr.message)
+    // Roll back the user turn so the failed message doesn't poison history
+    chatHistory.pop()
+    return isAbort ? CHAT_ERROR_MESSAGES.timeout : CHAT_ERROR_MESSAGES.noInternet
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (!res.ok) {
+    let errorMessage = 'unknown error'
+    try {
+      const errData = await res.json()
+      if (errData?.error?.message) errorMessage = errData.error.message
+    } catch (_) {
+      // Ignore JSON parse errors on error responses
+    }
+    console.error(`[main] Gemini HTTP ${res.status}: ${errorMessage}`)
+    chatHistory.pop()
+    if (res.status === 429) return CHAT_ERROR_MESSAGES.rateLimit
+    if (res.status === 401 || res.status === 403) return CHAT_ERROR_MESSAGES.badKey
+    return CHAT_ERROR_MESSAGES.generic
+  }
+
+  let data
+  try {
+    data = await res.json()
+  } catch (parseErr) {
+    console.error('[main] Gemini response parse error:', parseErr.message)
+    chatHistory.pop()
+    return CHAT_ERROR_MESSAGES.generic
+  }
+
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+  if (!text) {
+    console.error('[main] Gemini unexpected response shape:', JSON.stringify(data).slice(0, 200))
+    chatHistory.pop()
+    return CHAT_ERROR_MESSAGES.generic
+  }
+
+  // Commit the model turn and keep the ring buffer bounded
+  chatHistory.push({ role: 'model', parts: [{ text }] })
+  if (chatHistory.length > 10) {
+    chatHistory = chatHistory.slice(chatHistory.length - 10)
+  }
+
+  return text
 }
 
 function scheduleFullscreenReconcile(reason) {
@@ -981,6 +1191,47 @@ function registerIpcHandlers() {
    */
   ipcMain.on('pause:set', (_event, paused) => {
     setManualPaused(paused, 'renderer')
+  })
+
+  // ── Chat ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Renderer reports its current chat UI state so the hotkey watcher can
+   * make informed decisions (e.g. ignore SUPER+C while waiting).
+   * Values: 'idle' | 'input' | 'waiting' | 'reply'
+   */
+  ipcMain.on('chat:state', (_event, state) => {
+    chatInputOpen = state
+    console.log('[main] chat state updated to:', state)
+
+    // When the input is open, disable click-through so key events reach the input.
+    // When it is closed (idle / reply), the input element is gone so we can
+    // restore the normal pointer-events-auto state (small window, natural bounds).
+    // setIgnoreMouseEvents is not used here — the window is small and physical
+    // bounds already give correct hit-testing; enabling/disabling is about focus.
+    if (state === 'input') {
+      // Ensure the window is interactive and focused
+      try {
+        mainWindow?.setIgnoreMouseEvents(false)
+      } catch (_) {}
+    } else if (state === 'idle') {
+      // Re-enable normal passthrough when input is fully closed
+      try {
+        mainWindow?.setIgnoreMouseEvents(false)
+      } catch (_) {}
+    }
+  })
+
+  /**
+   * Send a message to Gemini and return the reply.
+   * The API key is read from main-process settings only — never exposed to renderer.
+   */
+  ipcMain.handle('chat:send', async (_event, userMessage) => {
+    if (typeof userMessage !== 'string' || !userMessage.trim()) {
+      return { reply: CHAT_ERROR_MESSAGES.generic }
+    }
+    const reply = await callGemini(userMessage.trim())
+    return { reply }
   })
 
   // ── Misc ──────────────────────────────────────────────────────────────────

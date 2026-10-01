@@ -67,6 +67,10 @@ export default function App() {
   const [timerRunning, setTimerRunning] = useState(false)
   const [pomodoroCelebrating, setPomodoroCelebrating] = useState(false)
 
+  // ── Chat state ─────────────────────────────────────────────────────────────
+  const [chatState, setChatState] = useState('idle') // 'idle' | 'input' | 'waiting' | 'reply'
+  const [chatReply, setChatReply] = useState('')
+
   // Whether reminders/timers are paused
   const [paused, setPaused] = useState(false)
 
@@ -449,6 +453,76 @@ export default function App() {
     }
   }, [])
 
+  // ── Chat handlers and effects ─────────────────────────────────────────────
+  
+  // Sync state to main process for click-through and hotkey guarding
+  useEffect(() => {
+    window.api.chat.setState(chatState)
+  }, [chatState])
+
+  useEffect(() => {
+    const offOpen = window.api.on('chat:open', () => {
+      setChatState(prev => {
+        // If it's already showing the reply bubble, hotkey dismisses it.
+        if (prev === 'reply') {
+          return 'input'
+        }
+        // If it's closed, open it.
+        if (prev === 'idle') {
+          return 'input'
+        }
+        return prev
+      })
+    })
+
+    const offDismiss = window.api.on('chat:dismiss', () => {
+      setChatState('idle')
+    })
+
+    return () => {
+      offOpen()
+      offDismiss()
+    }
+  }, [])
+
+  const chatInputTimerRef = useRef(null)
+  const resetChatInputTimer = useCallback(() => {
+    if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
+    chatInputTimerRef.current = setTimeout(() => {
+      setChatState('idle')
+    }, 8000)
+  }, [])
+
+  useEffect(() => {
+    if (chatState === 'input') {
+      resetChatInputTimer()
+      return () => {
+        if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
+      }
+    } else if (chatState === 'reply') {
+      const timer = setTimeout(() => {
+        setChatState('idle')
+      }, 12000)
+      return () => clearTimeout(timer)
+    }
+  }, [chatState, resetChatInputTimer])
+
+  const handleChatSend = useCallback((message) => {
+    setChatState('waiting')
+    window.api.chat.send(message).then(({ reply }) => {
+      setChatReply(reply)
+      setChatState('reply')
+    }).catch(err => {
+      setChatReply("Meow... something broke.")
+      setChatState('reply')
+      console.error(err)
+    })
+  }, [])
+
+  const handleChatDismiss = useCallback(() => {
+    setChatState('idle')
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -468,6 +542,11 @@ export default function App() {
         mediaArtist={mediaStatus.artist}
         mediaTitle={mediaStatus.title}
         nowPlayingVisible={nowPlayingVisible}
+        chatState={chatState}
+        chatReply={chatReply}
+        onChatSend={handleChatSend}
+        onChatDismiss={handleChatDismiss}
+        onChatActivity={resetChatInputTimer}
         initialPosition={{
           x: (settings.mascotPosition?.x ?? 0) + 175,
           y: (settings.mascotPosition?.y ?? 0) + 175,

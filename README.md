@@ -23,6 +23,7 @@ Most "hydration reminder" apps are Windows-only, bloated, or just an annoying po
 - 🪑 Posture check nudges
 - 👀 Eye-rest reminders (20-20-20 style)
 - 🧍 Stretch break prompts
+- 💬 AI Chat — Talk to your companion using Gemini (Phase 2a)
 - 🎭 Animated mascot with multiple entrance styles
 - ⚙️ System tray / Waybar-friendly controls
 - 🐧 Linux-native autostart (systemd user service / `.desktop` entry)
@@ -78,6 +79,26 @@ Reload Hyprland after saving (`hyprctl reload`). Start Screen-Buddy before using
 the bind. The main-process log prints both the Electron registration result and
 `Hyprland hotkey control file changed`, which makes it clear which route handled
 the hotkey.
+
+### AI Chat hotkey on Hyprland
+
+Screen-Buddy includes a built-in chat powered by Gemini. By default, it requires you to provide an API key.
+Add this bind to `hyprland.conf` to open the chat input (you can choose any keybind you like):
+
+```hyprlang
+# Ctrl+Super+C opens the AI chat input
+bind = CTRL SUPER, C, exec, touch "$XDG_RUNTIME_DIR/screen-buddy-chat"
+```
+
+To use it, you must add your API key to `~/.config/screen-buddy/settings.json`:
+```json
+{
+  "geminiApiKey": "AIzaSy..."
+}
+```
+Or set the `GEMINI_API_KEY` environment variable.
+
+*Note: The input box auto-closes after 8 seconds of no typing, and the reply bubble auto-dismisses after 12 seconds.*
 
 ### Fullscreen behavior
 

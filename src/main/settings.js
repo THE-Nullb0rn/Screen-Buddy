@@ -49,6 +49,9 @@ const DEFAULT_SETTINGS = {
     eyeRest: true,
     movementBreak: true,
   },
+
+  /** Gemini model to use for the AI chat */
+  geminiModel: 'gemini-3.5-flash-lite',
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────

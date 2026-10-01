@@ -78,6 +78,12 @@ contextBridge.exposeInMainWorld('api', {
   /** Ask the main process for the status of the typing detection permissions */
   checkTypingPermission: () => ipcRenderer.invoke('typing:check-permission'),
 
+  // ── Chat ──────────────────────────────────────────────────────────────────
+  chat: {
+    send: (message) => ipcRenderer.invoke('chat:send', message),
+    setState: (state) => ipcRenderer.send('chat:state', state),
+  },
+
   // ── Push events from main → renderer ─────────────────────────────────────
 
   /**
@@ -104,6 +110,8 @@ contextBridge.exposeInMainWorld('api', {
       'power:unlock-screen',
       'media:status',
       'typing:activity',
+      'chat:open',
+      'chat:dismiss',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

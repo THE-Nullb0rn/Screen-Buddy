@@ -298,3 +298,90 @@
   text-overflow: ellipsis;
   line-height: 1.25;
 }
+
+/* ── Chat Input ─────────────────────────────────────────────── */
+.mascot-chat-input-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: auto;
+  z-index: 10;
+  animation: badge-fade-in 0.2s ease both;
+}
+
+.mascot-chat-input {
+  background: rgba(24, 24, 37, 0.94);
+  border: 1px solid rgba(205, 214, 244, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 20px;
+  padding: 6px 12px;
+  width: 240px;
+  color: #cdd6f4;
+  font-family: inherit;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.mascot-chat-input::placeholder {
+  color: #6c7086;
+}
+
+.mascot-chat-input:focus {
+  border-color: rgba(137, 180, 250, 0.6);
+}
+
+/* ── Chat Bubble ────────────────────────────────────────────── */
+.mascot-chat-bubble {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 24, 37, 0.94);
+  border: 1px solid rgba(137, 180, 250, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+  padding: 8px 12px;
+  color: #cdd6f4;
+  pointer-events: auto;
+  animation: reminder-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  z-index: 10;
+  max-width: 280px;
+}
+
+.mascot-chat-bubble--waiting {
+  padding: 6px 12px;
+}
+
+.mascot-chat-bubble__dots {
+  display: flex;
+  gap: 2px;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: #89b4fa;
+}
+
+.mascot-chat-bubble__dots span {
+  animation: chat-dots 1.4s infinite ease-in-out;
+}
+
+.mascot-chat-bubble__dots span:nth-child(1) { animation-delay: 0s; }
+.mascot-chat-bubble__dots span:nth-child(2) { animation-delay: 0.2s; }
+.mascot-chat-bubble__dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes chat-dots {
+  0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+.mascot-chat-bubble--reply {
+  border-color: rgba(166, 227, 161, 0.5);
+  cursor: pointer;
+  white-space: normal;
+  line-height: 1.3;
+  /* Cap height to fit in 350x350 window if it gets too long */
+  max-height: 150px;
+  overflow-y: auto;
+}
