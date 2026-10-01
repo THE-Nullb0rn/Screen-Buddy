@@ -70,6 +70,7 @@ export default function App() {
   // ── Chat state ─────────────────────────────────────────────────────────────
   const [chatState, setChatState] = useState('idle') // 'idle' | 'input' | 'waiting' | 'reply'
   const [chatReply, setChatReply] = useState('')
+  const [activeNotification, setActiveNotification] = useState(null)
 
   // Whether reminders/timers are paused
   const [paused, setPaused] = useState(false)
@@ -90,6 +91,7 @@ export default function App() {
   useEffect(() => { pausedRef.current = paused }, [paused])
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { reminderStateRef.current = reminderState }, [reminderState])
+  useEffect(() => { window.api.sendReminderState?.(reminderState) }, [reminderState])
   useEffect(() => { hungerStateRef.current = hungerState }, [hungerState])
 
   // ── Load settings from main process on mount ──────────────────────────────
@@ -397,6 +399,21 @@ export default function App() {
     }
   }, [])
 
+  // ── IPC: desktop notifications ────────────────────────────────────────────
+  useEffect(() => {
+    const offNotifShow = window.api.on('notification:show', (notif) => {
+      setActiveNotification(notif)
+    })
+    const offNotifClose = window.api.on('notification:close', (id) => {
+      // CloseNotification(id) from a D-Bus caller — just hide without emitting closed again
+      setActiveNotification((prev) => (prev && prev.id === id ? null : prev))
+    })
+    return () => {
+      offNotifShow()
+      offNotifClose()
+    }
+  }, [])
+
   // ── IPC: media playback status ────────────────────────────────────────────
   const lastPlayingTrackRef = useRef({ artist: '', title: '' })
   const nowPlayingTimerRef = useRef(null)
@@ -519,6 +536,22 @@ export default function App() {
     })
   }, [])
 
+  
+  const handleNotificationDismiss = useCallback((id, reason) => {
+    setActiveNotification(prev => {
+      if (prev && prev.id === id) {
+        window.api.notifications.dismiss(id, reason)
+        return null
+      }
+      return prev
+    })
+  }, [])
+
+  const handleNotificationAction = useCallback((id, actionKey) => {
+    window.api.notifications.action(id, actionKey)
+    handleNotificationDismiss(id, 2) // Action implies dismissal
+  }, [handleNotificationDismiss])
+
   const handleChatDismiss = useCallback(() => {
     setChatState('idle')
   }, [])
@@ -547,6 +580,9 @@ export default function App() {
         onChatSend={handleChatSend}
         onChatDismiss={handleChatDismiss}
         onChatActivity={resetChatInputTimer}
+        activeNotification={activeNotification}
+        onNotificationDismiss={handleNotificationDismiss}
+        onNotificationAction={handleNotificationAction}
         initialPosition={{
           x: (settings.mascotPosition?.x ?? 0) + 175,
           y: (settings.mascotPosition?.y ?? 0) + 175,

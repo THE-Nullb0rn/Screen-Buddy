@@ -23,7 +23,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron'],
+              external: ['electron', 'dbus-next'],
             },
           },
         },
@@ -46,6 +46,17 @@ export default defineConfig({
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
               external: ['electron'],
+            },
+          },
+        },
+      },
+      {
+        entry: resolve(__dirname, 'src/main/notifications.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron'),
+            rollupOptions: {
+              external: ['electron', 'dbus-next'],
             },
           },
         },

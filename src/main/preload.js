@@ -79,6 +79,12 @@ contextBridge.exposeInMainWorld('api', {
   checkTypingPermission: () => ipcRenderer.invoke('typing:check-permission'),
 
   // ── Chat ──────────────────────────────────────────────────────────────────
+  notifications: {
+    dismiss: (id, reason) => ipcRenderer.send('notification:dismiss', id, reason),
+    action: (id, actionKey) => ipcRenderer.send('notification:action', id, actionKey),
+  },
+  sendReminderState: (state) => ipcRenderer.send('reminder:state', state),
+
   chat: {
     send: (message) => ipcRenderer.invoke('chat:send', message),
     setState: (state) => ipcRenderer.send('chat:state', state),
@@ -111,6 +117,8 @@ contextBridge.exposeInMainWorld('api', {
       'media:status',
       'typing:activity',
       'chat:open',
+      'notification:show',
+      'notification:close',
       'chat:dismiss',
     ]
     if (!ALLOWED.includes(channel)) {

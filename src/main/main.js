@@ -36,6 +36,7 @@ const { loadSettings, saveSettings, getSettingsPath } = require('./settings')
 const { setAutostart, removeAutostart } = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
+const { NotificationsManager } = require('./notifications')
 
 // ─── Wayland / Ozone flags ───────────────────────────────────────────────────
 // Must be set before app.ready fires. Required for proper rendering under
@@ -67,6 +68,7 @@ let mainWindow = null
 let settingsWindow = null
 let tray = null
 let settings = null // loaded from disk at startup
+let notificationsManager = null
 // Manual pause is intentionally not persisted. Fullscreen pause is a separate
 // transient reason, so leaving fullscreen never overrides a manual pause.
 let isPaused = false
@@ -136,6 +138,9 @@ app.whenReady().then(async () => {
   })
 
   createOverlayWindow()
+
+  notificationsManager = new NotificationsManager(mainWindow, settings)
+  notificationsManager.start()
   createTray()
   registerIpcHandlers()
   registerPowerMonitor()
@@ -181,6 +186,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   isShuttingDown = true
   mediaMonitor.stop()
+  notificationsManager?.stop()
   if (passthruInterval) {
     clearInterval(passthruInterval)
     passthruInterval = null
@@ -199,6 +205,7 @@ function effectivePauseState() {
 function broadcastPauseState(source) {
   const paused = effectivePauseState()
   mainWindow?.webContents.send('tray:pause-state', paused)
+  notificationsManager?.setPaused(paused)
 
   if (autoPausedForFullscreen) {
     mainWindow?.hide()
@@ -1189,6 +1196,20 @@ function registerIpcHandlers() {
    * Renderer can toggle pause (e.g. from the settings modal checkbox).
    * We sync the main-process flag and rebuild the tray so it stays correct.
    */
+  
+  ipcMain.on('notification:dismiss', (_event, id, reason) => {
+    notificationsManager?.handleNotificationDismiss(id, reason)
+  })
+
+  ipcMain.on('notification:action', (_event, id, actionKey) => {
+    notificationsManager?.handleActionInvoked(id, actionKey)
+  })
+
+  ipcMain.on('reminder:state', (_event, state) => {
+    console.log('[main] reminder state updated to:', state)
+    notificationsManager?.setReminderActive(state !== 'IDLE_COUNTING')
+  })
+
   ipcMain.on('pause:set', (_event, paused) => {
     setManualPaused(paused, 'renderer')
   })
@@ -1201,6 +1222,7 @@ function registerIpcHandlers() {
    * Values: 'idle' | 'input' | 'waiting' | 'reply'
    */
   ipcMain.on('chat:state', (_event, state) => {
+    notificationsManager?.setChatState(state)
     chatInputOpen = state
     console.log('[main] chat state updated to:', state)
 

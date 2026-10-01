@@ -50,6 +50,12 @@ const DEFAULT_SETTINGS = {
     movementBreak: true,
   },
 
+  /** Whether screen-buddy should act as the desktop notification daemon */
+  notificationsEnabled: true,
+
+  /** List of app names (case-insensitive) to block from showing notifications */
+  notificationAppBlocklist: [],
+
   /** Gemini model to use for the AI chat */
   geminiModel: 'gemini-3.5-flash-lite',
 }

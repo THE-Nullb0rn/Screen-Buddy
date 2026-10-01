@@ -108,7 +108,39 @@ hides and pauses while the active non-Screen-Buddy window is fullscreen, then
 returns when fullscreen ends. A manual pause remains paused after fullscreen is
 left; the two reasons are intentionally independent.
 
-## Credits
+## Desktop Notification Daemon
+
+screen-buddy can act as your system's notification daemon, displaying desktop notifications from other apps directly above the companion mascot — no separate daemon (Dunst, Mako, Sway NC, etc.) required.
+
+When enabled, screen-buddy claims the `org.freedesktop.Notifications` D-Bus name on startup and implements the [freedesktop.org Notifications spec 1.2](https://specifications.freedesktop.org/notification-spec/latest/).
+
+### Settings (`~/.config/screen-buddy/settings.json`)
+
+| Setting | Default | Description |
+|---|---|---|
+| `notificationsEnabled` | `true` | Set to `false` to disable the notification daemon entirely. screen-buddy will not claim the D-Bus name. |
+| `notificationAppBlocklist` | `[]` | List of app names (case-insensitive) whose notifications should be silently dropped. e.g. `["discord", "slack"]` |
+
+### ⚠️ Prerequisites
+
+**You must disable any existing notification daemon before enabling this feature**, otherwise screen-buddy will fail to claim the name and will retry silently every 15 seconds.
+
+Known daemons to disable:
+
+- **Dunst:** `systemctl --user stop dunst && systemctl --user disable dunst`  
+- **Mako:** `systemctl --user stop mako && systemctl --user mask mako`  
+- **Sway NC / swaync:** `systemctl --user stop swaync && systemctl --user mask swaync`  
+- **Quickshell:** Remove or stub the `org.freedesktop.Notifications` server from your Quickshell config.
+
+### Notes
+
+- Notifications are **not shown** while screen-buddy is not running or is paused.
+- At most **one notification is visible at a time**; up to 5 are queued.
+- Notifications are held while a reminder card or AI chat reply is visible, and shown once the mascot returns to idle.
+- Notification text is rendered as **plain text only** — no HTML, images, or icons from notification data are loaded.
+
+---
+
 
 Concept loosely inspired by early hydration-reminder desktop apps — screen-buddy itself is an original build from scratch: own code, own mascot, own architecture.
 
