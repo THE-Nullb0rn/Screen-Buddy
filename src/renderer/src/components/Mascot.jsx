@@ -7,6 +7,11 @@ import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.pn
 const MARGIN = 16
 const SPRITE_WIDTH = 126
 const SPRITE_HEIGHT = 180
+const FLOOR_GAP_PX = 24
+const FOOT_PAD_PX = 5
+const SPRITE_BOTTOM_INSET_PX = 8
+// Cat-centre Y inside the 350×350 window.  Must match CAT_CY in main.js.
+export const CAT_CY = 350 - SPRITE_BOTTOM_INSET_PX - SPRITE_HEIGHT / 2  // 252
 const FALLBACK_WIDTH = SPRITE_WIDTH
 const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
@@ -261,13 +266,10 @@ export default function Mascot({
 
   const isBigTreatment = isReminder && reminderType === 'movementBreak'
 
-  const measure = useCallback(() => {
-    const el = containerRef.current
-    return {
-      width: el?.offsetWidth || FALLBACK_WIDTH,
-      height: el?.offsetHeight || FALLBACK_HEIGHT,
-    }
-  }, [])
+  const measure = useCallback(() => ({
+    width: SPRITE_WIDTH,    // always the sprite, never the container
+    height: SPRITE_HEIGHT,  // bubbles must not affect floor math
+  }), [])
 
   const clampToViewport = useCallback(
     (nx, ny) => {
@@ -277,7 +279,7 @@ export default function Mascot({
       const screenH = window.screen.availHeight || window.screen.height || 1080
       return {
         x: clamp(nx, MARGIN, Math.max(MARGIN, screenW - width - MARGIN)),
-        y: clamp(ny, MARGIN, Math.max(MARGIN, screenH - height - MARGIN)),
+        y: clamp(ny, MARGIN, Math.max(MARGIN, screenH - height / 2 - FLOOR_GAP_PX + FOOT_PAD_PX)),
       }
     },
     [measure]
@@ -359,6 +361,8 @@ export default function Mascot({
         const fallStep = (time) => {
           if (draggingRef.current || dragPointerDownRef.current || isReminder) {
             setFalling(false)
+            if (fallRafRef.current) cancelAnimationFrame(fallRafRef.current)
+            fallRafRef.current = null
             return
           }
           let dt = (time - lastTime) / 1000
@@ -380,6 +384,9 @@ export default function Mascot({
             setPose('idle')
             triggerAccentRef.current('is-squash')
             setRoamEpoch((n) => n + 1)
+            window.api?.persistPosition?.(posRef.current.x, newY)
+            if (fallRafRef.current) cancelAnimationFrame(fallRafRef.current)
+            fallRafRef.current = null
           } else {
             posRef.current = { x: posRef.current.x, y: newY }
             setY(newY)
@@ -388,6 +395,14 @@ export default function Mascot({
           }
         }
         fallRafRef.current = requestAnimationFrame(fallStep)
+      } else if (posRef.current.y > floorY + 5) {
+        // Below floor (stale saved position from old geometry) — snap up
+        posRef.current = { x: posRef.current.x, y: floorY }
+        setY(floorY)
+        dragTargetRef.current = { ...posRef.current }
+        triggerAccentRef.current('is-squash')
+        setRoamEpoch((n) => n + 1)
+        window.api?.persistPosition?.(posRef.current.x, floorY)
       }
     })
   }, [clampToViewport, isReminder])
@@ -697,9 +712,9 @@ export default function Mascot({
 
     if (dragExpandingRef.current) {
       // Window is still 350x350. clientX is local to the small window.
-      // Global mouse = window center (posRef) + local offset from center.
+      // Global mouse = window cat center (posRef) + local offset from cat center.
       const globalMouseX = posRef.current.x + (event.clientX - (window.innerWidth / 2))
-      const globalMouseY = posRef.current.y + (event.clientY - (window.innerHeight / 2))
+      const globalMouseY = posRef.current.y + (event.clientY - CAT_CY)
       targetX = globalMouseX - dragOffsetRef.current.x
       targetY = globalMouseY - dragOffsetRef.current.y
     } else {
@@ -757,11 +772,11 @@ export default function Mascot({
     snapVisualPosition()
     markInteraction()
 
-    // Cat is perfectly centered in the 350x350 window.
-    // The offset of the cursor from the cat's center is just clientX - center.
+    // Cat is horizontally centered, but vertically pinned at CAT_CY in the 350x350 window.
+    // The offset of the cursor from the cat's center.
     dragOffsetRef.current = {
       x: event.clientX - (window.innerWidth / 2),
-      y: event.clientY - (window.innerHeight / 2),
+      y: event.clientY - CAT_CY,
     }
     dragTargetRef.current = { x: posRef.current.x, y: posRef.current.y }
 
@@ -936,6 +951,8 @@ export default function Mascot({
       const fallStep = (time) => {
         if (draggingRef.current || dragPointerDownRef.current || isReminder) {
           setFalling(false)
+          if (fallRafRef.current) cancelAnimationFrame(fallRafRef.current)
+          fallRafRef.current = null
           return
         }
         let dt = (time - lastTime) / 1000
@@ -957,6 +974,8 @@ export default function Mascot({
           setPose('idle')
           triggerAccentRef.current('is-squash')
           setRoamEpoch((n) => n + 1)
+          if (fallRafRef.current) cancelAnimationFrame(fallRafRef.current)
+          fallRafRef.current = null
         } else {
           posRef.current = { x: posRef.current.x, y: newY }
           setY(newY)
@@ -1123,7 +1142,9 @@ export default function Mascot({
   // Determine whether to use the listening spritesheet
   const useListening = mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && LISTENING_ANIMATIONS.includes(animationName)
 
-  const isNearTop = targetY < 120
+  // Only flip the stack order if dragging (full-screen window), as mascot window
+  // has a fixed 162px of empty space above the sprite that bubbles must stack into.
+  const isNearTop = targetY < 120 && dragging
   const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
   // ── Sync physical window position with logical coordinates ──────────────
@@ -1151,7 +1172,8 @@ export default function Mascot({
         // at its screen coordinates via CSS transform.
         left: 0,
         top: 0,
-        transform: `translate3d(${targetX}px, ${targetY}px, 0) translate(-50%, -50%)`,
+        bottom: 'auto',
+        transform: `translate3d(${targetX}px, ${targetY}px, 0) translate(-50%, calc(-100% + ${SPRITE_HEIGHT / 2}px))`,
         transition: 'none',
       } : {
         // Normal mode: cat is centered in the 350x350 window via Mascot.css.
@@ -1175,7 +1197,8 @@ export default function Mascot({
         style={{
           transform: `scale(${spriteScale})`,
           transition: spriteTransition,
-          position: 'relative' // Added to position the hitbox correctly
+          position: 'relative', // Added to position the hitbox correctly
+          ...(isBigTreatment ? { transformOrigin: 'center bottom' } : {})
         }}
       >
         {/* Hover hit-box over the cat's head for petting */}

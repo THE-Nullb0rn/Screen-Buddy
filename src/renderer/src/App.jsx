@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import Mascot from './components/Mascot'
+import Mascot, { CAT_CY } from './components/Mascot'
 
 // ─── State machine constants ─────────────────────────────────────────────────
 const REMINDER_STATE = {
@@ -585,7 +585,7 @@ export default function App() {
         onNotificationAction={handleNotificationAction}
         initialPosition={{
           x: (settings.mascotPosition?.x ?? 0) + 175,
-          y: (settings.mascotPosition?.y ?? 0) + 175,
+          y: (settings.mascotPosition?.y ?? 0) + CAT_CY,
         }}
       />}
 

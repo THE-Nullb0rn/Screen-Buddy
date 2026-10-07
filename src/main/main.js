@@ -98,7 +98,16 @@ const HOTKEY_ACCELERATOR = 'Control+Alt+P'
 const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-toggle')
 const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-chat')
 
+// The floor overhang is ~66px. We add 100px so main.js doesn't artificially clip 
+// the window if the workAreaSize is slightly smaller than the renderer's full 1080 display.
+const BOTTOM_OVERHANG_PX = 100
+
+const CAT_CX = 175
+// Must match CAT_CY in Mascot.jsx (350 - 8 - 90)
+const CAT_CY = 252
+
 // ─── Click-through state ──────────────────────────────────────────────────────
+
 // Tracks whether the overlay is currently in interactive mode (cursor is over
 // the cat / a card). Used by the periodic safety reassertion (see below) to
 // avoid stomping an active hover/drag session.
@@ -699,7 +708,7 @@ function getSavedMascotPosition() {
   const saved = settings?.mascotPosition
   const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
   const maxX = Math.max(0, width - 350)
-  const maxY = Math.max(0, height - 350)
+  const maxY = Math.max(0, height - 350 + BOTTOM_OVERHANG_PX)
   const x = Number.isFinite(saved?.x) ? Math.round(saved.x) : 0
   const y = Number.isFinite(saved?.y) ? Math.round(saved.y) : 0
   return {
@@ -1096,10 +1105,14 @@ function registerIpcHandlers() {
     // on Wayland and will return stale fullscreen bounds immediately after a drag release.
     const { width: screenW, height: screenH } = require('electron').screen.getPrimaryDisplay().workAreaSize
 
-    let wx = Math.round(x - currentWinW / 2)
-    let wy = Math.round(y - currentWinH / 2)
+    let wx = Math.round(x - CAT_CX)
+    let wy = Math.round(y - CAT_CY)
     wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-    wy = Math.max(0, Math.min(wy, screenH - currentWinH))
+    let limitY = screenH - currentWinH
+    if (currentWinH === 350) {
+      limitY += BOTTOM_OVERHANG_PX
+    }
+    wy = Math.max(0, Math.min(wy, limitY))
 
     // 1. Standard Electron setPosition (fallback / X11)
     mainWindow?.setPosition(wx, wy)
@@ -1153,10 +1166,10 @@ function registerIpcHandlers() {
       try {
         if (catX !== undefined && catY !== undefined) {
           const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize
-          let wx = Math.round(catX - 350 / 2)
-          let wy = Math.round(catY - 350 / 2)
+          let wx = Math.round(catX - CAT_CX)
+          let wy = Math.round(catY - CAT_CY)
           wx = Math.max(0, Math.min(wx, screenW - 350))
-          wy = Math.max(0, Math.min(wy, screenH - 350))
+          wy = Math.max(0, Math.min(wy, screenH - 350 + BOTTOM_OVERHANG_PX))
 
           // Reposition first so that when the window shrinks, its top-left is already in the right spot,
           // avoiding the cat being clipped out by a 350x350 window stuck at 0,0.
@@ -1187,6 +1200,15 @@ function registerIpcHandlers() {
       return { applied: verify.applied, width: 350, height: 350, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
     }
   }
+
+  ipcMain.on('window:persist-position', (event, x, y) => {
+    const { width: screenW, height: screenH } = require('electron').screen.getPrimaryDisplay().workAreaSize
+    let wx = Math.round(x - CAT_CX)
+    let wy = Math.round(y - CAT_CY)
+    wx = Math.max(0, Math.min(wx, screenW - 350))
+    wy = Math.max(0, Math.min(wy, screenH - 350 + BOTTOM_OVERHANG_PX))
+    persistMascotPosition(wx, wy)
+  })
 
   // Remove old mouse hit-testing since we rely on natural small window bounds
   ipcMain.on('mouse:enter-interactive', () => {})
