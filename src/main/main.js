@@ -66,6 +66,9 @@ app.commandLine.appendSwitch('enable-transparent-visuals')
 // ─── Globals ─────────────────────────────────────────────────────────────────
 let mainWindow = null
 let settingsWindow = null
+let bubbleWindow = null
+let bubbleWindowReady = false
+let lastCardState = null // latest snapshot sent by App.jsx via bubble:card-state
 let tray = null
 let settings = null // loaded from disk at startup
 let notificationsManager = null
@@ -148,7 +151,7 @@ app.whenReady().then(async () => {
 
   createOverlayWindow()
 
-  notificationsManager = new NotificationsManager(mainWindow, settings)
+  notificationsManager = new NotificationsManager(mainWindow, settings, { onShow: showBubbleWindow, onHide: hideBubbleWindow })
   notificationsManager.start()
   createTray()
   registerIpcHandlers()
@@ -480,7 +483,7 @@ async function reconcileHyprlandFullscreen(reason) {
   try {
     const { stdout } = await execFileAsync('hyprctl', ['activewindow', '-j'])
     const activeWindow = JSON.parse(stdout)
-    const isOverlay = activeWindow?.title === WINDOW_TITLE
+    const isOverlay = activeWindow?.title === WINDOW_TITLE || activeWindow?.title === 'screen-buddy-bubbles'
     const fullscreen = !isOverlay && Number(activeWindow?.fullscreen || 0) > 0
     console.log(`[main] Hyprland fullscreen check (${reason}): title=${JSON.stringify(activeWindow?.title || '')} fullscreen=${activeWindow?.fullscreen ?? 0} autoPause=${fullscreen}`)
     setFullscreenAutoPause(fullscreen, `Hyprland ${reason}`)
@@ -509,7 +512,7 @@ function startHyprlandFullscreenMonitor() {
       for (const line of chunk.split('\n')) {
         const event = line.split('>>', 1)[0]
         if (event === 'fullscreen' || event === 'activewindow' || event === 'activewindowv2' || event === 'openwindow' || event === 'closewindow') {
-          scheduleFullscreenReconcile(`event:${event}`)
+          scheduleFullscreenReconcile(`event:${event}`); if (event === 'activewindowv2') positionBubbleWindow();
         }
       }
     })
@@ -542,6 +545,184 @@ function stopHyprlandFullscreenMonitor() {
   fullscreenReconcileTimer = null
   hyprlandEventSocket?.destroy()
   hyprlandEventSocket = null
+}
+
+
+// ─── Bubble Window ───────────────────────────────────────────────────────────
+
+async function getBubbleWindow() {
+  if (bubbleWindow) return bubbleWindow;
+
+  console.log('[bubble] creating window');
+  bubbleWindowReady = false;
+  bubbleWindow = new BrowserWindow({
+    title: 'screen-buddy-bubbles',
+    width: 300,
+    height: 120,
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: true,
+    focusable: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (process.env.VITE_DEV_SERVER_URL) {
+    bubbleWindow.loadURL(process.env.VITE_DEV_SERVER_URL + '/#bubbles');
+  } else {
+    bubbleWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'), { hash: 'bubbles' });
+  }
+
+  bubbleWindow.on('closed', () => {
+    bubbleWindow = null;
+    bubbleWindowReady = false;
+  });
+
+  bubbleWindow.on('page-title-updated', (e) => {
+    e.preventDefault();
+  });
+
+  // Wait for did-finish-load with a 3 s safety timeout
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn('[bubble] did-finish-load timed out after 3 s — continuing anyway');
+      bubbleWindowReady = true;
+      resolve();
+    }, 3000);
+    bubbleWindow.webContents.once('did-finish-load', () => {
+      clearTimeout(timer);
+      if (bubbleWindow) bubbleWindow.setTitle('screen-buddy-bubbles');
+      bubbleWindowReady = true;
+      // Forward the latest card state so the new window has current content
+      if (lastCardState && bubbleWindow) bubbleWindow.webContents.send('bubble:card-state', lastCardState);
+      console.log('[bubble] window ready');
+      resolve();
+    });
+  });
+
+  return bubbleWindow;
+}
+
+let lastBubbleX = null;
+let lastBubbleY = null;
+let bubblePositionInFlight = false;
+let bubblePositionPending = false;
+let bubblePositionGeneration = 0;
+
+// Tracks the cat overlay window top-left as known from Electron/hyprctl move commands.
+// Updated whenever we successfully dispatch a window move, so positionBubbleWindow()
+// never needs to query Hyprland for the cat position and cannot read stale/intermediate coords.
+let lastKnownCatWinX = null;
+let lastKnownCatWinY = null;
+
+let currentWinW = 350;
+let currentWinH = 350;
+let currentWindowMode = 'mascot';
+let mascotRepositionInProgress = false;
+
+async function positionBubbleWindow() {
+  if (!bubbleWindow || !bubbleWindowReady) return;
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return;
+  
+  // NO SPAM: do nothing unless there is active content (notification OR card) AND window is shown.
+  const hasCard = !!(lastCardState && lastCardState.hasContent);
+  if (!bubbleWindow.isVisible() || (!notificationsManager?.activeNotification && !hasCard)) {
+    return;
+  }
+  
+  const myGen = ++bubblePositionGeneration;
+
+  if (bubblePositionInFlight) {
+    bubblePositionPending = true;
+    return;
+  }
+  bubblePositionInFlight = true;
+  bubblePositionPending = false;
+
+  try {
+    // Use the saved mascot position as the bubble anchor. This is the STABLE position —
+    // updated only on drag-end (persistMascotPosition) and landing (persistPosition).
+    // Do NOT use lastKnownCatWinX/Y here: those track the live window position,
+    // which is wrong during movement-break center-screen treatment or any other
+    // transient animation where the overlay temporarily moves away from its home.
+    const savedPos = getSavedMascotPosition();
+    let catX = savedPos.x;
+    let catY = savedPos.y;
+
+    if (myGen !== bubblePositionGeneration) {
+      console.log('[bubble] aborting stale position request (generation mismatch)');
+      return;
+    }
+    if (currentWindowMode === 'drag' || mascotRepositionInProgress) {
+      console.log('[bubble] aborting position request (invalid window mode)');
+      bubblePositionPending = false; // Do not immediately retry against temporary coordinates
+      return;
+    }
+
+
+
+    const spriteTop = catY + 162;
+    const spriteBottom = catY + 342;
+    
+    let targetY = spriteTop - 8 - 120;
+    if (targetY < 0) {
+      targetY = spriteBottom + 8;
+    }
+    
+    const { width } = electronScreen.getPrimaryDisplay().workAreaSize;
+    let targetX = catX + 175 - 150;
+    targetX = Math.max(0, Math.min(targetX, width - 300));
+    
+    targetX = Math.round(targetX);
+    targetY = Math.round(targetY);
+
+    if (lastBubbleX === targetX && lastBubbleY === targetY) {
+      return; // Skip if position hasn't changed
+    }
+
+    console.log(`[bubble-pos] will move: catWin=(${catX},${catY}) target=(${targetX},${targetY}) lastBubble=(${lastBubbleX},${lastBubbleY}) mode=${currentWindowMode} drag=${mascotRepositionInProgress}`);
+    
+    const titleMatch = 'title:^(screen-buddy-bubbles)$';
+    
+    if (myGen !== bubblePositionGeneration) {
+      console.log('[bubble] aborting before move (generation mismatch)');
+      return;
+    }
+    if (currentWindowMode === 'drag' || mascotRepositionInProgress) {
+      bubblePositionPending = false;
+      return;
+    }
+
+    await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${targetX} ${targetY},${titleMatch}`]);
+    console.log(`[bubble] positioned at ${targetX},${targetY} (catWin=${lastKnownCatWinX},${lastKnownCatWinY} mode=${currentWindowMode} drag=${mascotRepositionInProgress} gen=${myGen}/${bubblePositionGeneration})`);
+    
+    if (myGen !== bubblePositionGeneration) {
+      console.log('[bubble] aborting before alterzorder (generation mismatch)');
+      return;
+    }
+
+    await execFileAsync('hyprctl', ['dispatch', 'alterzorder', `top,${titleMatch}`]);
+    console.log('[bubble] alterzorder done');
+    
+    if (myGen === bubblePositionGeneration) {
+      lastBubbleX = targetX;
+      lastBubbleY = targetY;
+    }
+  } catch (err) {
+    console.error('[bubble] hyprctl position error:', err.message);
+  } finally {
+    bubblePositionInFlight = false;
+    if (bubblePositionPending) {
+      positionBubbleWindow();
+    }
+  }
 }
 
 // ─── Overlay window ──────────────────────────────────────────────────────────
@@ -701,7 +882,11 @@ function createOverlayWindow() {
 
   // showInactive() prevents stealing focus from the user's active app on startup
   mainWindow.showInactive()
-  console.log(`[main] Overlay created at saved mascot position (${savedPosition.x}, ${savedPosition.y})`)
+  // Seed the cat window position tracker from the saved position so that
+  // positionBubbleWindow() has a valid anchor before the first cat move.
+  lastKnownCatWinX = savedPosition.x
+  lastKnownCatWinY = savedPosition.y
+  console.log(`[main] Overlay created at saved mascot position (${savedPosition.x}, ${savedPosition.y}); lastKnownCatWin seeded to (${lastKnownCatWinX},${lastKnownCatWinY})`)
 }
 
 function getSavedMascotPosition() {
@@ -721,6 +906,90 @@ function persistMascotPosition(x, y) {
   settings = { ...settings, mascotPosition: { x, y } }
   saveSettings(settings)
   console.log(`[main] Saved mascot position to settings: (${x}, ${y})`)
+}
+
+
+let isCreatingBubble = false;
+let pendingNotification = null;
+
+async function showBubbleWindow(notif) {
+  pendingNotification = notif;
+  mainWindow?.webContents.send('notification:visible', true);
+
+  try {
+    if (!bubbleWindow) {
+      if (isCreatingBubble) {
+        // Window is being created; pendingNotification is set, it will be sent once ready
+        return;
+      }
+      isCreatingBubble = true;
+      try {
+        await getBubbleWindow();
+      } finally {
+        isCreatingBubble = false;
+      }
+    }
+
+    if (!bubbleWindowReady) {
+      console.warn('[bubble] window not ready, skipping show');
+      return;
+    }
+
+    bubbleWindow.showInactive();
+    console.log('[bubble] showInactive called');
+
+    // Wait until Hyprland has mapped the window, with a 1 s timeout
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      const mapStart = Date.now();
+      let mapped = false;
+      for (let attempt = 0; attempt < 34 && !mapped; attempt++) {
+        await new Promise(r => setTimeout(r, 30));
+        try {
+          const { stdout } = await execFileAsync('hyprctl', ['clients', '-j']);
+          const clients = JSON.parse(stdout);
+          if (clients.some(c => c.title === 'screen-buddy-bubbles')) {
+            mapped = true;
+          }
+        } catch (_) { /* ignore */ }
+      }
+      if (mapped) {
+        console.log(`[bubble] mapped after ${Date.now() - mapStart} ms`);
+      } else {
+        console.warn(`[bubble] map-wait timed out after ${Date.now() - mapStart} ms — continuing`);
+      }
+    }
+
+    await positionBubbleWindow();
+
+    if (pendingNotification) {
+      bubbleWindow.webContents.send('notification:show', pendingNotification);
+      console.log('[bubble] notification:show sent');
+      pendingNotification = null;
+    }
+  } catch (err) {
+    console.error('[bubble] showBubbleWindow error:', err.message, err.stack);
+    isCreatingBubble = false; // ensure not stuck
+  }
+}
+
+function hideBubbleWindow(id) {
+  pendingNotification = null;
+  if (bubbleWindow) {
+    bubbleWindow.webContents.send('notification:close', id);
+    // Only physically hide the window if there is no active card content
+    const hasCard = !!(lastCardState && lastCardState.hasContent);
+    if (!hasCard) {
+      bubbleWindow.hide();
+      lastBubbleX = null;
+      lastBubbleY = null;
+      console.log('[bubble] hidden (no card content)');
+      mainWindow?.webContents.send('notification:visible', false);
+    } else {
+      console.log('[bubble] notification closed but card content still active — keeping visible');
+    }
+  } else {
+    mainWindow?.webContents.send('notification:visible', false);
+  }
 }
 
 // ─── System tray ─────────────────────────────────────────────────────────────
@@ -908,19 +1177,27 @@ function registerIpcHandlers() {
       const util = require('util')
       const execFile = util.promisify(require('child_process').execFile)
       await execFile('hyprctl', cmdArgs)
+      // Update the tracked cat window position so positionBubbleWindow() uses
+      // the coordinates we just confirmed to Hyprland, not a stale hyprctl query.
+      lastKnownCatWinX = Math.round(x)
+      lastKnownCatWinY = Math.round(y)
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        console.log(`[catwin] flushMove updated lastKnownCatWin=(${lastKnownCatWinX},${lastKnownCatWinY})`)
+      }
     } catch (err) {
       console.error('[main] hyprctl spawn error:', err)
     } finally {
       _moveInFlight = false
+      // Do NOT call positionBubbleWindow() here — the cat moves at 30fps and
+      // the bubble only needs to follow stable positions (drag-end, landing).
+      // Calling positionBubbleWindow() from here causes the bubble to chase
+      // center-screen reminder positions and other transient animation states.
       // If another position arrived while we were running, flush it now
       if (_movePending) flushMove()
     }
   }
 
-  let currentWinW = 350
-  let currentWinH = 350
-  let currentWindowMode = 'mascot'
-  let mascotRepositionInProgress = false
+
 
   async function logHyprlandClientBounds(tag) {
     if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) {
@@ -1140,8 +1417,14 @@ function registerIpcHandlers() {
     const modeEnteredAt = Date.now()
     const { screen } = require('electron')
     if (mode === 'drag') {
+      bubblePositionGeneration++;
       // Block roam/move immediately while we expand — this is the drag guard.
       currentWindowMode = 'drag'
+      if (bubbleWindow) {
+        bubbleWindow.hide()
+        lastBubbleX = null
+        lastBubbleY = null
+      }
       // Temporarily expand to full work area so pointer events stay inside
       const { width, height } = screen.getPrimaryDisplay().workAreaSize
       currentWinW = width
@@ -1155,6 +1438,7 @@ function registerIpcHandlers() {
       )
       return { applied: verify.applied, width, height, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
     } else {
+      bubblePositionGeneration++;
       // 'mascot' — keep currentWindowMode as 'drag' (or previous) until shrink +
       // reposition are done, so window:move / roaming cannot interrupt.
       mascotRepositionInProgress = true
@@ -1178,6 +1462,10 @@ function registerIpcHandlers() {
             _movePending = null
             try {
               await execFile('hyprctl', ['dispatch', 'movewindowpixel', `exact ${wx} ${wy},${HYPR_TITLE_MATCH}`])
+              // Track the newly confirmed cat window position so positionBubbleWindow()
+              // uses this exact coordinate rather than a potentially stale hyprctl query.
+              lastKnownCatWinX = wx
+              lastKnownCatWinY = wy
             } catch (err) {
               console.error('[main] hyprctl mascot move error:', err)
             }
@@ -1195,6 +1483,7 @@ function registerIpcHandlers() {
       } finally {
         mascotRepositionInProgress = false
         currentWindowMode = 'mascot'
+        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) { bubbleWindow.showInactive(); positionBubbleWindow(); }
         console.log(`[main] window:mode mascot handler finished in ${Date.now() - modeEnteredAt}ms; currentWindowMode now '${currentWindowMode}' applied=${verify.applied}`)
       }
       return { applied: verify.applied, width: 350, height: 350, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
@@ -1207,7 +1496,11 @@ function registerIpcHandlers() {
     let wy = Math.round(y - CAT_CY)
     wx = Math.max(0, Math.min(wx, screenW - 350))
     wy = Math.max(0, Math.min(wy, screenH - 350 + BOTTOM_OVERHANG_PX))
+    console.log(`[catwin] persist-position raw=(${x},${y}) win=(${wx},${wy}) mode=${currentWindowMode}`)
+    lastKnownCatWinX = wx
+    lastKnownCatWinY = wy
     persistMascotPosition(wx, wy)
+    positionBubbleWindow()
   })
 
   // Remove old mouse hit-testing since we rely on natural small window bounds
@@ -1221,6 +1514,61 @@ function registerIpcHandlers() {
    * We sync the main-process flag and rebuild the tray so it stays correct.
    */
   
+  // ── Bubble card state ───────────────────────────────────────────────────
+
+  // Overlay (App.jsx) pushes the current card-state snapshot whenever it changes.
+  // We store it locally (for new bubble windows) and forward to the bubble renderer.
+  ipcMain.on('bubble:card-state', async (_event, state) => {
+    lastCardState = state;
+    const hasContent = state && state.hasContent;
+
+    // If we have content but no window yet, create it lazily
+    if (hasContent && (!bubbleWindow || bubbleWindow.isDestroyed())) {
+      if (!isCreatingBubble) {
+        isCreatingBubble = true;
+        try {
+          await getBubbleWindow();
+        } finally {
+          isCreatingBubble = false;
+        }
+      }
+    }
+
+    if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+      if (hasContent) {
+        // Ensure window is visible when there is card content
+        if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
+          if (currentWindowMode !== 'drag' && !mascotRepositionInProgress) {
+            bubbleWindow.showInactive();
+            positionBubbleWindow();
+          } else {
+            console.log('[bubble] skipping show/reposition during drag');
+          }
+        }
+      } else if (!notificationsManager?.activeNotification) {
+        // No notification and no card — hide
+        if (bubbleWindow.isVisible()) {
+          bubbleWindow.hide();
+          lastBubbleX = null;
+          lastBubbleY = null;
+          mainWindow?.webContents.send('notification:visible', false);
+        }
+      }
+
+      if (bubbleWindowReady) {
+        bubbleWindow.webContents.send('bubble:card-state', state);
+      }
+    }
+  })
+
+  // Bubble renderer (BubbleApp.jsx) requests a business-logic action.
+  // Forward to the main overlay renderer (App.jsx) to handle state transitions.
+  ipcMain.on('bubble:action', (_event, type) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('bubble:action', type);
+    }
+  })
+
   ipcMain.on('notification:dismiss', (_event, id, reason) => {
     notificationsManager?.handleNotificationDismiss(id, reason)
   })

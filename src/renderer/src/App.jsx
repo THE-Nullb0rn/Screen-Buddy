@@ -70,7 +70,7 @@ export default function App() {
   // ── Chat state ─────────────────────────────────────────────────────────────
   const [chatState, setChatState] = useState('idle') // 'idle' | 'input' | 'waiting' | 'reply'
   const [chatReply, setChatReply] = useState('')
-  const [activeNotification, setActiveNotification] = useState(null)
+  const [notificationVisible, setNotificationVisible] = useState(false)
 
   // Whether reminders/timers are paused
   const [paused, setPaused] = useState(false)
@@ -401,18 +401,60 @@ export default function App() {
 
   // ── IPC: desktop notifications ────────────────────────────────────────────
   useEffect(() => {
-    const offNotifShow = window.api.on('notification:show', (notif) => {
-      setActiveNotification(notif)
-    })
-    const offNotifClose = window.api.on('notification:close', (id) => {
-      // CloseNotification(id) from a D-Bus caller — just hide without emitting closed again
-      setActiveNotification((prev) => (prev && prev.id === id ? null : prev))
+    const offNotifVisible = window.api.on('notification:visible', (visible) => {
+      setNotificationVisible(visible)
     })
     return () => {
-      offNotifShow()
-      offNotifClose()
+      offNotifVisible()
     }
   }, [])
+
+  // ── Push card-state snapshot to bubble window ─────────────────────────────
+  // Computed once and sent whenever any relevant state changes.
+  // hasContent drives the bubble window visibility decision in main.js.
+  useEffect(() => {
+    const isReminderActive =
+      reminderState === REMINDER_STATE.ENTRANCE ||
+      reminderState === REMINDER_STATE.ACTIVE ||
+      reminderState === REMINDER_STATE.EXIT
+
+    const showTimer = timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE
+    const showHunger = hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE
+    const showNowPlaying = nowPlayingVisible && !!(mediaStatus.title || mediaStatus.artist) && !isReminderActive
+
+    const hasContent = isReminderActive || showTimer || showHunger || showNowPlaying
+
+    window.api.bubble?.sendCardState({
+      hasContent,
+      // Reminder
+      reminderState,
+      reminderType,
+      isReminderActive,
+      // Hunger
+      showHunger,
+      // Timer
+      showTimer,
+      timerMode,
+      timerFormatted: formatTime(timerSeconds),
+      // Now Playing
+      showNowPlaying,
+      mediaTitle: mediaStatus.title,
+      mediaArtist: mediaStatus.artist,
+    })
+  }, [reminderState, reminderType, hungerState, timerMode, timerSeconds, nowPlayingVisible, mediaStatus])
+
+  // ── Handle actions forwarded from the bubble renderer (BubbleApp.jsx) ─────
+  useEffect(() => {
+    const offAction = window.api.on('bubble:action', (type) => {
+      if (type === 'reminder:dismiss') {
+        dismissReminder()
+      } else if (type === 'hunger:feed') {
+        handleFeed()
+      }
+    })
+    return () => offAction()
+  }, [dismissReminder, handleFeed])
+
 
   // ── IPC: media playback status ────────────────────────────────────────────
   const lastPlayingTrackRef = useRef({ artist: '', title: '' })
@@ -537,21 +579,6 @@ export default function App() {
   }, [])
 
   
-  const handleNotificationDismiss = useCallback((id, reason) => {
-    setActiveNotification(prev => {
-      if (prev && prev.id === id) {
-        window.api.notifications.dismiss(id, reason)
-        return null
-      }
-      return prev
-    })
-  }, [])
-
-  const handleNotificationAction = useCallback((id, actionKey) => {
-    window.api.notifications.action(id, actionKey)
-    handleNotificationDismiss(id, 2) // Action implies dismissal
-  }, [handleNotificationDismiss])
-
   const handleChatDismiss = useCallback(() => {
     setChatState('idle')
   }, [])
@@ -566,23 +593,14 @@ export default function App() {
         onFeed={handleFeed}
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}
-        timerSeconds={timerSeconds}
-        timerRunning={timerRunning}
-        timerFormatted={formatTime(timerSeconds)}
-        onDismiss={dismissReminder}
         REMINDER_STATE={REMINDER_STATE}
         mediaPlaying={mediaStatus.playing}
-        mediaArtist={mediaStatus.artist}
-        mediaTitle={mediaStatus.title}
-        nowPlayingVisible={nowPlayingVisible}
         chatState={chatState}
         chatReply={chatReply}
         onChatSend={handleChatSend}
         onChatDismiss={handleChatDismiss}
         onChatActivity={resetChatInputTimer}
-        activeNotification={activeNotification}
-        onNotificationDismiss={handleNotificationDismiss}
-        onNotificationAction={handleNotificationAction}
+        notificationVisible={notificationVisible}
         initialPosition={{
           x: (settings.mascotPosition?.x ?? 0) + 175,
           y: (settings.mascotPosition?.y ?? 0) + CAT_CY,

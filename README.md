@@ -55,6 +55,17 @@ windowrulev2 = noborder, title:^(screen-buddy-overlay)$
 windowrulev2 = rounding 0, title:^(screen-buddy-overlay)$
 windowrulev2 = noanim, title:^(screen-buddy-overlay)$
 windowrulev2 = opacity 1.0 override 1.0 override, title:^(screen-buddy-overlay)$
+
+# Screen-Buddy Bubbles Rules
+windowrulev2 = float, title:^(screen-buddy-bubbles)$
+windowrulev2 = pin, title:^(screen-buddy-bubbles)$
+windowrulev2 = noblur, title:^(screen-buddy-bubbles)$
+windowrulev2 = noshadow, title:^(screen-buddy-bubbles)$
+windowrulev2 = noborder, title:^(screen-buddy-bubbles)$
+windowrulev2 = rounding 0, title:^(screen-buddy-bubbles)$
+windowrulev2 = noanim, title:^(screen-buddy-bubbles)$
+windowrulev2 = opacity 1.0 override 1.0 override, title:^(screen-buddy-bubbles)$
+windowrulev2 = noinitialfocus, title:^(screen-buddy-bubbles)$
 ```
 
 > **Note on Focus**: We intentionally do *not* use the `nofocus` window rule here. While a true "click-through" overlay usually shouldn't steal focus, Screen-Buddy requires focus to allow you to drag the cat or click buttons on the reminder cards. The tradeoff is that when you click the cat, your active window will temporarily lose focus. When you're just working and not interacting with the cat, clicks pass right through to your desktop.

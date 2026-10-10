@@ -1,0 +1,164 @@
+/*
+ * BubbleCards.css — shared card styles for the bubble window renderer.
+ * These rules are copied from Mascot.css so the bubble window can
+ * render reminder, hunger, timer and now-playing cards independently.
+ * When updating visual styles, keep this file and Mascot.css in sync.
+ */
+
+@import url('./NotificationBubble.css');
+
+/* ── Shared Reminder / Hunger Card ───────────────────────────────── */
+.mascot-reminder-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(24, 24, 37, 0.94);
+  border: 1px solid rgba(243, 139, 168, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+  padding: 6px 10px;
+  color: #cdd6f4;
+  pointer-events: auto;
+  animation: reminder-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+.mascot-reminder-card.is-big {
+  border-color: rgba(137, 180, 250, 0.5);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+  padding: 10px 14px;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+@keyframes reminder-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.92); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.mascot-reminder-card__content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mascot-reminder-card__icon { font-size: 1.2rem; line-height: 1; }
+.mascot-reminder-card.is-big .mascot-reminder-card__icon { font-size: 1.55rem; }
+
+.mascot-reminder-card__text-wrap { display: flex; flex-direction: column; gap: 2px; }
+
+.mascot-reminder-card__title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #f38ba8;
+}
+.mascot-reminder-card.is-big .mascot-reminder-card__title { color: #89b4fa; font-size: 0.82rem; }
+
+.mascot-reminder-card__message { font-size: 0.85rem; color: #cdd6f4; font-weight: 500; }
+.mascot-reminder-card.is-big .mascot-reminder-card__message { font-size: 0.92rem; font-weight: 600; }
+
+.mascot-dismiss {
+  background: rgba(243, 139, 168, 0.15);
+  border: 1px solid rgba(243, 139, 168, 0.4);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  font-size: 0.75rem;
+  color: #f38ba8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.mascot-dismiss:hover { background: rgba(243, 139, 168, 0.4); transform: scale(1.1); }
+
+/* ── Persistent Timer Badge ───────────────────────────────────────── */
+.mascot-timer-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(24, 24, 37, 0.9);
+  border: 1px solid rgba(205, 214, 244, 0.18);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 20px;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+  font-family: monospace;
+  font-weight: 600;
+  color: #cdd6f4;
+  pointer-events: none;
+  animation: badge-fade-in 0.2s ease both;
+  white-space: nowrap;
+}
+
+@keyframes badge-fade-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.mascot-timer-badge__icon { font-size: 0.85rem; line-height: 1; }
+.mascot-timer-badge__time { letter-spacing: 0.05em; color: #a6e3a1; }
+
+/* ── Now Playing Card ─────────────────────────────────────────────── */
+.mascot-now-playing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(24, 24, 37, 0.92);
+  border: 1px solid rgba(203, 166, 247, 0.38);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 12px rgba(203, 166, 247, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 10px;
+  padding: 5px 10px;
+  max-width: 220px;
+  color: #cdd6f4;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: now-playing-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  z-index: 10;
+}
+
+@keyframes now-playing-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.94); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.mascot-now-playing__icon {
+  font-size: 0.9rem;
+  line-height: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mascot-now-playing__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden; }
+.mascot-now-playing__title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #cba6f7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+.mascot-now-playing__artist {
+  font-size: 0.64rem;
+  font-weight: 400;
+  color: #a6adc8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}

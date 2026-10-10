@@ -59,7 +59,8 @@ function stripTags(text) {
 }
 
 class NotificationsManager {
-  constructor(mainWindow, settings) {
+  constructor(mainWindow, settings, callbacks = {}) {
+    this.callbacks = callbacks
     this.mainWindow = mainWindow
     this.settings = settings
     
@@ -144,12 +145,16 @@ class NotificationsManager {
     return this.chatState !== 'idle' || this.reminderActive || this.activeNotification !== null
   }
 
-  flushQueueIfNeeded() {
+  flushQueueIfNeeded(closedId = null) {
     if (this.isPaused) {
       // Drop all queued when paused
       while (this.queue.length > 0) {
         const dropped = this.queue.shift()
         this.emitClosed(dropped.id, 4)
+      }
+      if (closedId && this.mainWindow && !this.mainWindow.isDestroyed()) {
+        if (this.callbacks.onHide) this.callbacks.onHide(closedId)
+        else this.mainWindow.webContents.send('notification:close', closedId)
       }
       return
     }
@@ -157,6 +162,11 @@ class NotificationsManager {
     if (!this.isBusy() && this.queue.length > 0) {
       const next = this.queue.shift()
       this.showNotification(next)
+    } else if (closedId && this.activeNotification === null) {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        if (this.callbacks.onHide) this.callbacks.onHide(closedId)
+        else this.mainWindow.webContents.send('notification:close', closedId)
+      }
     }
   }
 
@@ -237,13 +247,9 @@ class NotificationsManager {
 
   onCloseNotification(id) {
     if (this.activeNotification && this.activeNotification.id === id) {
-      // Tell the renderer to hide it (no reason needed — main already owns the signal)
-      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-        this.mainWindow.webContents.send('notification:close', id)
-      }
       this.activeNotification = null
       this.emitClosed(id, 3) // 3 = closed via CloseNotification
-      this.flushQueueIfNeeded()
+      this.flushQueueIfNeeded(id)
     } else {
       // Remove from queue if present
       const index = this.queue.findIndex(n => n.id === id)
@@ -257,7 +263,8 @@ class NotificationsManager {
   showNotification(notif) {
     this.activeNotification = notif
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('notification:show', notif)
+      if (this.callbacks.onShow) this.callbacks.onShow(notif)
+      else this.mainWindow.webContents.send('notification:show', notif)
     }
   }
 
@@ -266,7 +273,7 @@ class NotificationsManager {
     if (this.activeNotification && this.activeNotification.id === id) {
       this.activeNotification = null
       this.emitClosed(id, reason)
-      this.flushQueueIfNeeded()
+      this.flushQueueIfNeeded(id)
     }
   }
 

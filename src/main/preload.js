@@ -118,9 +118,13 @@ contextBridge.exposeInMainWorld('api', {
       'media:status',
       'typing:activity',
       'chat:open',
+      'notification:visible',
       'notification:show',
       'notification:close',
       'chat:dismiss',
+      'bubble:card-state',
+      'tray:test-hunger',
+      'bubble:action',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)
@@ -130,5 +134,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on(channel, wrapped)
     // Return an unsubscribe function for use in useEffect cleanup
     return () => ipcRenderer.removeListener(channel, wrapped)
+  },
+
+  // ── Bubble card state (overlay → bubble window) ──────────────────
+  bubble: {
+    sendCardState: (state) => ipcRenderer.send('bubble:card-state', state),
+    action: (type) => ipcRenderer.send('bubble:action', type),
   },
 })

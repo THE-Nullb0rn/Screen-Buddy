@@ -32,33 +32,6 @@ const PLAY_MAX_MS = 6000
 const CLICK_MAX_DISTANCE = 5     // pixels
 const CLICK_MAX_DURATION = 300   // ms
 
-const REMINDER_MESSAGES = {
-  water: {
-    title: 'Water Break',
-    text: 'Time to hydrate!',
-    icon: '💧',
-  },
-  eyeRest: {
-    title: 'Eye Rest',
-    text: 'Rest your eyes — look at something 20ft away',
-    icon: '👀',
-  },
-  movementBreak: {
-    title: 'Movement Break',
-    text: 'Time to get up and move!!',
-    icon: '🤸',
-  },
-  pomodoroWorkEnd: {
-    title: 'Pomodoro Done!',
-    text: 'Pomodoro complete — take a 5 min break!',
-    icon: '🍅',
-  },
-  pomodoroBreakEnd: {
-    title: "Break's Over",
-    text: "Break's over — back to work!",
-    icon: '💼',
-  },
-}
 
 function randBetween(min, max) {
   return min + Math.random() * (max - min)
@@ -81,81 +54,7 @@ function defaultPosition() {
 const LISTENING_ANIMATIONS = ['idle', 'walk', 'talk', 'eat', 'pet', 'typing', 'typingfast', 'play']
 
 
-// ── Clamp expire_timeout to valid range ──────────────────────────────────────
-function calcNotifDuration(notif) {
-  const urgency = notif.urgency ?? 1
-  const timeout = notif.expireTimeout ?? -1
 
-  // urgency critical (2) or expire_timeout === 0 => stay until dismissed
-  if (urgency === 2 || timeout === 0) return null
-  // urgency low (0) => 4s
-  if (urgency === 0) return 4000
-  // expire_timeout > 0 => clamp between 3s and 15s
-  if (timeout > 0) return Math.min(Math.max(timeout, 3000), 15000)
-  // default
-  return 6000
-}
-
-// ── Notification Bubble component ────────────────────────────────────────────
-function NotificationBubble({ notification, onDismiss, onAction }) {
-  const { id, appName, summary, body, actions } = notification
-  const hasDefault = Array.isArray(actions) && actions.includes('default')
-  const duration = calcNotifDuration(notification)
-
-  const onDismissRef = useRef(onDismiss)
-  useEffect(() => { onDismissRef.current = onDismiss }, [onDismiss])
-
-  useEffect(() => {
-    if (duration === null) return // persist until dismissed
-    const timer = setTimeout(() => {
-      if (onDismissRef.current) onDismissRef.current(id, 1) // reason 1 = expired
-    }, duration)
-    return () => clearTimeout(timer)
-  }, [id, duration, notification.rev])
-
-  const handleBodyClick = (e) => {
-    e.stopPropagation()
-    if (hasDefault && onAction) {
-      onAction(id, 'default')
-    } else if (onDismiss) {
-      onDismiss(id, 2) // reason 2 = dismissed by user
-    }
-  }
-
-  const handleXClick = (e) => {
-    e.stopPropagation()
-    if (onDismiss) onDismiss(id, 2)
-  }
-
-  return (
-    <div
-      className="mascot-notif-bubble"
-      onClick={handleBodyClick}
-      onPointerDown={(e) => e.stopPropagation()}
-      role="alertdialog"
-      aria-label={summary || 'Notification'}
-    >
-      <div className="mascot-notif-bubble__content">
-        {appName && (
-          <div className="mascot-notif-bubble__app-name">{appName}</div>
-        )}
-        {summary && (
-          <div className="mascot-notif-bubble__summary">{summary}</div>
-        )}
-        {body && (
-          <div className="mascot-notif-bubble__body">{body}</div>
-        )}
-      </div>
-      <button
-        className="mascot-dismiss"
-        onClick={handleXClick}
-        aria-label="Dismiss notification"
-      >
-        ✕
-      </button>
-    </div>
-  )
-}
 
 export default function Mascot({
   reminderState,
@@ -163,22 +62,14 @@ export default function Mascot({
   hungerState = 'IDLE',
   onFeed,
   pomodoroCelebrating = false,
-  timerMode = 'none',
-  timerFormatted = '',
   REMINDER_STATE,
-  onDismiss,
   mediaPlaying = false,
-  mediaArtist = '',
-  mediaTitle = '',
-  nowPlayingVisible = false,
   chatState = 'idle',
   chatReply = '',
   onChatSend,
   onChatDismiss,
   onChatActivity,
-  activeNotification = null,
-  onNotificationDismiss,
-  onNotificationAction,
+  notificationVisible = false,
   // Coordinates are the global cat centre; App converts the persisted
   // BrowserWindow top-left position before passing this value.
   initialPosition = null,
@@ -518,7 +409,7 @@ export default function Mascot({
       roamTimeoutRef.current = setTimeout(fn, ms)
     }
 
-    if (isReminder || pomodoroCelebrating || chatState !== 'idle' || activeNotification) {
+    if (isReminder || pomodoroCelebrating || chatState !== 'idle' || notificationVisible) {
       walkTweenRef.current = null
       clearTimeout(roamTimeoutRef.current)
       clearTimeout(idleBehaviorTimeoutRef.current)
@@ -643,7 +534,7 @@ export default function Mascot({
       clearTimeout(roamTimeoutRef.current)
       clearTimeout(idleBehaviorTimeoutRef.current)
     }
-  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, activeNotification])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible])
 
   // ── Keep the cat on-screen if the overlay is resized ──────────────────────
   useEffect(() => {
@@ -974,6 +865,7 @@ export default function Mascot({
           setPose('idle')
           triggerAccentRef.current('is-squash')
           setRoamEpoch((n) => n + 1)
+          window.api?.persistPosition?.(posRef.current.x, newY)
           if (fallRafRef.current) cancelAnimationFrame(fallRafRef.current)
           fallRafRef.current = null
         } else {
@@ -1108,21 +1000,6 @@ export default function Mascot({
     }
   }
 
-  let containerTransition = 'transform 0.15s ease-out'
-  if (dragging) {
-    containerTransition = 'none'
-  } else if (moving) {
-    containerTransition = 'none' // rAF tween drives position directly
-  } else if (isBigTreatment) {
-    if (reminderState === REMINDER_STATE.ENTRANCE) {
-      containerTransition = 'transform 0.8s cubic-bezier(0.34, 1.2, 0.64, 1)'
-    } else if (reminderState === REMINDER_STATE.ACTIVE) {
-      containerTransition = 'transform 0.15s ease-out'
-    } else if (reminderState === REMINDER_STATE.EXIT) {
-      containerTransition = 'transform 0.75s ease-in-out'
-    }
-  }
-
   const isScaleBig =
     isBigTreatment &&
     (reminderState === REMINDER_STATE.ENTRANCE || reminderState === REMINDER_STATE.ACTIVE)
@@ -1145,7 +1022,6 @@ export default function Mascot({
   // Only flip the stack order if dragging (full-screen window), as mascot window
   // has a fixed 162px of empty space above the sprite that bubbles must stack into.
   const isNearTop = targetY < 120 && dragging
-  const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
   // ── Sync physical window position with logical coordinates ──────────────
   // During drag the window is fullscreen and the cat is positioned via CSS
@@ -1226,78 +1102,6 @@ export default function Mascot({
         />
       </div>
 
-      {/* Persistent Timer / Stopwatch indicator near the cat */}
-      {timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE && (
-        <div className="mascot-timer-badge">
-          <span className="mascot-timer-badge__icon">
-            {timerMode.startsWith('pomodoro') ? '🍅' : '⏱️'}
-          </span>
-          <span className="mascot-timer-badge__time">{timerFormatted}</span>
-        </div>
-      )}
-
-      {/* Now Playing card — shown briefly on track changes, hidden during reminders */}
-      {nowPlayingVisible && (mediaTitle || mediaArtist) && !isReminder && (
-        <div className="mascot-now-playing">
-          <span className="mascot-now-playing__icon">🎵</span>
-          <div className="mascot-now-playing__text">
-            {mediaTitle && <div className="mascot-now-playing__title">{mediaTitle}</div>}
-            {mediaArtist && <div className="mascot-now-playing__artist">{mediaArtist}</div>}
-          </div>
-        </div>
-      )}
-
-      {/* Active Hunger Card (hidden if a regular reminder is active to prevent overlapping cards) */}
-      {hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE && (
-        <div
-          className="mascot-reminder-card is-small"
-          onClick={(e) => {
-            e.stopPropagation()
-            handleFeedTrigger()
-          }}
-        >
-          <div className="mascot-reminder-card__content">
-            <span className="mascot-reminder-card__icon">🐟</span>
-            <div className="mascot-reminder-card__text-wrap">
-              <div className="mascot-reminder-card__title">Hungry!</div>
-              <div className="mascot-reminder-card__message">Time to eat.</div>
-            </div>
-          </div>
-          <button
-            className="mascot-dismiss"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleFeedTrigger()
-            }}
-            aria-label="Feed cat"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Active Reminder Dismiss Card */}
-      {reminderState === REMINDER_STATE.ACTIVE && (
-        <div
-          className={`mascot-reminder-card ${isBigTreatment ? 'is-big' : 'is-small'}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="mascot-reminder-card__content">
-            <span className="mascot-reminder-card__icon">{reminderInfo.icon}</span>
-            <div className="mascot-reminder-card__text-wrap">
-              <div className="mascot-reminder-card__title">{reminderInfo.title}</div>
-              <div className="mascot-reminder-card__message">{reminderInfo.text}</div>
-            </div>
-          </div>
-          <button
-            className="mascot-dismiss"
-            onClick={onDismiss}
-            aria-label="Dismiss reminder"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Chat Input */}
       {chatState === 'input' && (
@@ -1335,14 +1139,6 @@ export default function Mascot({
       )}
 
 
-      {/* Desktop Notification Bubble */}
-      {activeNotification && (
-        <NotificationBubble
-          notification={activeNotification}
-          onDismiss={onNotificationDismiss}
-          onAction={onNotificationAction}
-        />
-      )}
 
       {/* Chat Reply Bubble */}
       {chatState === 'reply' && (
