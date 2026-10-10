@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import NotificationBubble from './components/NotificationBubble'
 import './components/NotificationBubble.css'
 import './components/BubbleCards.css'
@@ -51,6 +51,32 @@ export default function BubbleApp() {
     window.api.bubble.action('reminder:dismiss')
   }, [])
 
+  
+  const chatInputRef = useRef(null)
+
+  useEffect(() => {
+    if (cardState?.chatState === 'input' && chatInputRef.current) {
+      chatInputRef.current.focus()
+      // Notify main that the input is mounted and DOM-focused.
+      // Main will respond with OS-level window focus (focusChatWindow) now
+      // that it knows the element is ready to receive keystrokes.
+      window.api.bubble.action('chat:ready')
+    }
+  }, [cardState?.chatState])
+
+  const handleChatSend = useCallback((text) => {
+    window.api.bubble.action('chat:send', text)
+  }, [])
+
+  const handleChatDismiss = useCallback(() => {
+    window.api.bubble.action('chat:dismiss')
+  }, [])
+
+  const handleChatActivity = useCallback(() => {
+    window.api.bubble.action('chat:activity')
+  }, [])
+
+
   const handleFeed = useCallback(() => {
     window.api.bubble.action('hunger:feed')
   }, [])
@@ -60,7 +86,7 @@ export default function BubbleApp() {
     return <div style={{ width: '100%', height: '100%' }} />
   }
 
-  const { isReminderActive, reminderState, reminderType, showHunger, showTimer, timerMode, timerFormatted, showNowPlaying, mediaTitle, mediaArtist } = cardState || {}
+  const { isReminderActive, reminderState, reminderType, showHunger, showTimer, timerMode, timerFormatted, showNowPlaying, mediaTitle, mediaArtist, chatState, chatReply } = cardState || {}
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
   const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
@@ -142,6 +168,73 @@ export default function BubbleApp() {
           </button>
         </div>
       )}
+
+
+      {/* Chat Input */}
+      {chatState === 'input' && (
+        <div className="mascot-chat-input-wrap">
+          <input
+            ref={chatInputRef}
+            className="mascot-chat-input"
+            type="text"
+            placeholder="Talk to me..."
+            onKeyDown={(e) => {
+              if (handleChatActivity) handleChatActivity()
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                if (e.target.value.trim() && handleChatSend) {
+                  handleChatSend(e.target.value)
+                }
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                if (handleChatDismiss) handleChatDismiss()
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
+      {/* Chat Waiting Bubble */}
+      {chatState === 'waiting' && (
+        <div className="mascot-chat-bubble mascot-chat-bubble--waiting">
+          <div className="mascot-chat-bubble__dots">
+            <span>.</span><span>.</span><span>.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Chat Reply Bubble */}
+      {chatState === 'reply' && (
+        <div
+          className="mascot-reminder-card mascot-chat-bubble--reply"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (handleChatDismiss) handleChatDismiss()
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="mascot-reminder-card__content">
+            <div className="mascot-reminder-card__text-wrap">
+              <div className="mascot-reminder-card__message" style={{ whiteSpace: 'pre-wrap' }}>
+                {chatReply}
+              </div>
+            </div>
+          </div>
+          <button
+            className="mascot-dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (handleChatDismiss) handleChatDismiss()
+            }}
+            aria-label="Dismiss chat"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
     </div>
   )
 }

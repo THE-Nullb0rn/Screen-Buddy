@@ -422,10 +422,12 @@ export default function App() {
     const showHunger = hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE
     const showNowPlaying = nowPlayingVisible && !!(mediaStatus.title || mediaStatus.artist) && !isReminderActive
 
-    const hasContent = isReminderActive || showTimer || showHunger || showNowPlaying
+    const hasContent = isReminderActive || showTimer || showHunger || showNowPlaying || chatState !== 'idle'
 
     window.api.bubble?.sendCardState({
       hasContent,
+      chatState,
+      chatReply,
       // Reminder
       reminderState,
       reminderType,
@@ -441,15 +443,21 @@ export default function App() {
       mediaTitle: mediaStatus.title,
       mediaArtist: mediaStatus.artist,
     })
-  }, [reminderState, reminderType, hungerState, timerMode, timerSeconds, nowPlayingVisible, mediaStatus])
+  }, [reminderState, reminderType, hungerState, timerMode, timerSeconds, nowPlayingVisible, mediaStatus, chatState, chatReply])
 
   // ── Handle actions forwarded from the bubble renderer (BubbleApp.jsx) ─────
   useEffect(() => {
-    const offAction = window.api.on('bubble:action', (type) => {
+    const offAction = window.api.on('bubble:action', (type, payload) => {
       if (type === 'reminder:dismiss') {
         dismissReminder()
       } else if (type === 'hunger:feed') {
         handleFeed()
+      } else if (type === 'chat:send') {
+        handleChatSend(payload)
+      } else if (type === 'chat:dismiss') {
+        handleChatDismiss()
+      } else if (type === 'chat:activity') {
+        resetChatInputTimer()
       }
     })
     return () => offAction()

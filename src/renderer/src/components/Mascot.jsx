@@ -75,7 +75,7 @@ export default function Mascot({
   initialPosition = null,
 }) {
   const containerRef = useRef(null)
-  const chatInputRef = useRef(null)
+  
 
   const [pose, setPose] = useState('idle')
   const [x, setX] = useState(() => Number.isFinite(initialPosition?.x) ? initialPosition.x : defaultPosition().x)
@@ -124,11 +124,7 @@ export default function Mascot({
   const triggerAccentRef = useRef(triggerAccent)
   triggerAccentRef.current = triggerAccent
 
-  useEffect(() => {
-    if (chatState === 'input' && chatInputRef.current) {
-      chatInputRef.current.focus()
-    }
-  }, [chatState])
+  
 
   const poseRef = useRef(pose)
   const posRef = useRef({ x, y })
@@ -1103,72 +1099,6 @@ export default function Mascot({
       </div>
 
 
-      {/* Chat Input */}
-      {chatState === 'input' && (
-        <div className="mascot-chat-input-wrap">
-          <input
-            ref={chatInputRef}
-            className="mascot-chat-input"
-            type="text"
-            placeholder="Talk to me..."
-            onKeyDown={(e) => {
-              if (onChatActivity) onChatActivity()
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                if (e.target.value.trim() && onChatSend) {
-                  onChatSend(e.target.value)
-                }
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                if (onChatDismiss) onChatDismiss()
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
-
-      {/* Chat Waiting Bubble */}
-      {chatState === 'waiting' && (
-        <div className="mascot-chat-bubble mascot-chat-bubble--waiting">
-          <div className="mascot-chat-bubble__dots">
-            <span>.</span><span>.</span><span>.</span>
-          </div>
-        </div>
-      )}
-
-
-
-      {/* Chat Reply Bubble */}
-      {chatState === 'reply' && (
-        <div
-          className="mascot-reminder-card mascot-chat-bubble--reply"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (onChatDismiss) onChatDismiss()
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <div className="mascot-reminder-card__content">
-            <div className="mascot-reminder-card__text-wrap">
-              <div className="mascot-reminder-card__message" style={{ whiteSpace: 'pre-wrap' }}>
-                {chatReply}
-              </div>
-            </div>
-          </div>
-          <button
-            className="mascot-dismiss"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (onChatDismiss) onChatDismiss()
-            }}
-            aria-label="Dismiss chat"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-    </div>
+      </div>
   )
 }

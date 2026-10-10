@@ -139,6 +139,6 @@ contextBridge.exposeInMainWorld('api', {
   // ── Bubble card state (overlay → bubble window) ──────────────────
   bubble: {
     sendCardState: (state) => ipcRenderer.send('bubble:card-state', state),
-    action: (type) => ipcRenderer.send('bubble:action', type),
+    action: (type, payload) => ipcRenderer.send('bubble:action', type, payload),
   },
 })

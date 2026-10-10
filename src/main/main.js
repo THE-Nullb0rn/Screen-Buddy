@@ -308,9 +308,7 @@ function installChatHotkeyFallback() {
 
       // Focus only when opening the input (not when toggling a reply off).
       // When chatInputOpen is 'reply' the renderer will dismiss it; no focus needed.
-      if (chatInputOpen !== 'reply') {
-        focusChatWindow()
-      }
+      // Focus is now handled asynchronously when chat:state reaches main process
     })
     console.log(`[main] Chat hotkey fallback ready; control file: ${CHAT_HOTKEY_CONTROL_FILE}`)
   } catch (err) {
@@ -335,7 +333,7 @@ function removeChatHotkeyFallback() {
 async function focusChatWindow() {
   // Fast path / X11 / XWayland
   try {
-    mainWindow?.focus()
+    bubbleWindow?.focus()
   } catch (err) {
     console.warn('[main] mainWindow.focus() error:', err.message)
   }
@@ -343,7 +341,7 @@ async function focusChatWindow() {
   // Ask the Hyprland compositor to grant focus — required on native Wayland
   if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
     try {
-      await execFileAsync('hyprctl', ['dispatch', 'focuswindow', HYPR_TITLE_MATCH])
+      await execFileAsync('hyprctl', ['dispatch', 'focuswindow', 'title:^(screen-buddy-bubbles)$'])
       console.log('[main] hyprctl focuswindow sent for chat input')
     } catch (err) {
       // Not fatal — Wayland focus is best-effort for overlays.
@@ -966,6 +964,9 @@ async function showBubbleWindow(notif) {
       console.log('[bubble] notification:show sent');
       pendingNotification = null;
     }
+    if (chatInputOpen === 'input') {
+      bubbleWindow.setFocusable(true);
+    }
   } catch (err) {
     console.error('[bubble] showBubbleWindow error:', err.message, err.stack);
     isCreatingBubble = false; // ensure not stuck
@@ -1563,9 +1564,15 @@ function registerIpcHandlers() {
 
   // Bubble renderer (BubbleApp.jsx) requests a business-logic action.
   // Forward to the main overlay renderer (App.jsx) to handle state transitions.
-  ipcMain.on('bubble:action', (_event, type) => {
+  ipcMain.on('bubble:action', (_event, type, payload) => {
+    // chat:ready: BubbleApp has mounted and DOM-focused the input.
+    // Apply OS-level window focus now -- this is the correct moment.
+    if (type === 'chat:ready') {
+      focusChatWindow();
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('bubble:action', type);
+      mainWindow.webContents.send('bubble:action', type, payload);
     }
   })
 
@@ -1597,21 +1604,17 @@ function registerIpcHandlers() {
     notificationsManager?.setChatState(state)
     chatInputOpen = state
     console.log('[main] chat state updated to:', state)
-
-    // When the input is open, disable click-through so key events reach the input.
-    // When it is closed (idle / reply), the input element is gone so we can
-    // restore the normal pointer-events-auto state (small window, natural bounds).
-    // setIgnoreMouseEvents is not used here — the window is small and physical
-    // bounds already give correct hit-testing; enabling/disabling is about focus.
     if (state === 'input') {
-      // Ensure the window is interactive and focused
       try {
-        mainWindow?.setIgnoreMouseEvents(false)
+        if (bubbleWindow) {
+          bubbleWindow.setFocusable(true);
+        }
       } catch (_) {}
-    } else if (state === 'idle') {
-      // Re-enable normal passthrough when input is fully closed
+    } else {
       try {
-        mainWindow?.setIgnoreMouseEvents(false)
+        if (bubbleWindow) {
+          bubbleWindow.setFocusable(false);
+        }
       } catch (_) {}
     }
   })
