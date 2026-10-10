@@ -581,6 +581,10 @@ async function getBubbleWindow() {
   bubbleWindow.on('closed', () => {
     bubbleWindow = null;
     bubbleWindowReady = false;
+    currentBubbleW = 300;
+    currentBubbleH = 120;
+    lastBubbleX = null;
+    lastBubbleY = null;
   });
 
   bubbleWindow.on('page-title-updated', (e) => {
@@ -624,6 +628,11 @@ let currentWinW = 350;
 let currentWinH = 350;
 let currentWindowMode = 'mascot';
 let mascotRepositionInProgress = false;
+
+// Tracks the bubble window's measured content dimensions (reported via bubble:size).
+// Initialized to the BrowserWindow creation defaults.
+let currentBubbleW = 300;
+let currentBubbleH = 120;
 
 async function positionBubbleWindow() {
   if (!bubbleWindow || !bubbleWindowReady) return;
@@ -669,14 +678,19 @@ async function positionBubbleWindow() {
     const spriteTop = catY + 162;
     const spriteBottom = catY + 342;
     
-    let targetY = spriteTop - 8 - 120;
+    const { width, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize;
+    const bw = currentBubbleW;
+    const bh = currentBubbleH;
+
+    // Position bubble above the sprite; fall back to below if it would go off-screen.
+    let targetY = spriteTop - 8 - bh;
     if (targetY < 0) {
-      targetY = spriteBottom + 8;
+      targetY = Math.min(spriteBottom + 8, screenH - bh);
     }
-    
-    const { width } = electronScreen.getPrimaryDisplay().workAreaSize;
-    let targetX = catX + 175 - 150;
-    targetX = Math.max(0, Math.min(targetX, width - 300));
+
+    // Horizontal center aligned with the mascot sprite center (catX + 175).
+    let targetX = catX + 175 - Math.round(bw / 2);
+    targetX = Math.max(0, Math.min(targetX, width - bw));
     
     targetX = Math.round(targetX);
     targetY = Math.round(targetY);
@@ -1484,7 +1498,7 @@ function registerIpcHandlers() {
       } finally {
         mascotRepositionInProgress = false
         currentWindowMode = 'mascot'
-        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) { bubbleWindow.showInactive(); positionBubbleWindow(); }
+        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) { try { bubbleWindow.setSize(currentBubbleW, currentBubbleH); } catch(e){} bubbleWindow.showInactive(); positionBubbleWindow(); }
         console.log(`[main] window:mode mascot handler finished in ${Date.now() - modeEnteredAt}ms; currentWindowMode now '${currentWindowMode}' applied=${verify.applied}`)
       }
       return { applied: verify.applied, width: 350, height: 350, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
@@ -1540,6 +1554,7 @@ function registerIpcHandlers() {
         // Ensure window is visible when there is card content
         if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
           if (currentWindowMode !== 'drag' && !mascotRepositionInProgress) {
+            try { bubbleWindow.setSize(currentBubbleW, currentBubbleH); } catch(e){}
             bubbleWindow.showInactive();
             positionBubbleWindow();
           } else {
@@ -1558,6 +1573,29 @@ function registerIpcHandlers() {
 
       if (bubbleWindowReady) {
         bubbleWindow.webContents.send('bubble:card-state', state);
+      }
+    }
+  })
+
+  // Bubble renderer reports rendered content dimensions; resize and reposition.
+  ipcMain.on('bubble:size', (_event, w, h) => {
+    if (typeof w !== 'number' || typeof h !== 'number') return;
+    w = Math.max(160, Math.min(600, Math.round(w)));
+    h = Math.max(40,  Math.min(500, Math.round(h)));
+    if (w === currentBubbleW && h === currentBubbleH) return;
+    console.log(`[bubble-size] ${currentBubbleW}x${currentBubbleH} -> ${w}x${h}`);
+    currentBubbleW = w;
+    currentBubbleH = h;
+    if (currentWindowMode === 'drag' || mascotRepositionInProgress) {
+      console.log('[bubble-size] saving size but skipping setSize during drag/reposition');
+      return;
+    }
+    if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+      try { bubbleWindow.setSize(w, h); } catch (err) {
+        console.warn('[bubble-size] setSize error:', err.message);
+      }
+      if (bubbleWindow.isVisible()) {
+        positionBubbleWindow();
       }
     }
   })

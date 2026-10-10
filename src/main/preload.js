@@ -140,5 +140,6 @@ contextBridge.exposeInMainWorld('api', {
   bubble: {
     sendCardState: (state) => ipcRenderer.send('bubble:card-state', state),
     action: (type, payload) => ipcRenderer.send('bubble:action', type, payload),
+    reportSize: (w, h) => ipcRenderer.send('bubble:size', w, h),
   },
 })

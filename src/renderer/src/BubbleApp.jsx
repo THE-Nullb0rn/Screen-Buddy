@@ -81,6 +81,50 @@ export default function BubbleApp() {
     window.api.bubble.action('hunger:feed')
   }, [])
 
+  // ── Dynamic resize: observe the root content div and report dimensions ──
+  const contentRef = useRef(null)
+  const lastReportedSize = useRef({ w: 0, h: 0 })
+
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) {
+      console.log('[bubble-resize] contentRef is null, skipping ResizeObserver setup')
+      return
+    }
+    console.log('[bubble-resize] ResizeObserver attached to content element')
+
+    let rafId = null
+    const MIN_W = 160
+    const MIN_H = 40
+
+    const report = () => {
+      const rect = el.getBoundingClientRect()
+      const w = Math.max(MIN_W, Math.ceil(rect.width))
+      const h = Math.max(MIN_H, Math.ceil(rect.height))
+      console.log(`[bubble-resize] Measured content: ${rect.width}x${rect.height} (sending ${w}x${h})`)
+      if (w !== lastReportedSize.current.w || h !== lastReportedSize.current.h) {
+        lastReportedSize.current = { w, h }
+        window.api.bubble.reportSize(w, h)
+      } else {
+        console.log('[bubble-resize] Dimensions unchanged, skipping IPC send')
+      }
+    }
+
+    const ro = new ResizeObserver(() => {
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(report)
+    })
+    ro.observe(el)
+
+    // Report initial size after first paint
+    rafId = requestAnimationFrame(report)
+
+    return () => {
+      ro.disconnect()
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [activeNotification, cardState?.hasContent])
+
 
   if (!activeNotification && (!cardState || !cardState.hasContent)) {
     return <div style={{ width: '100%', height: '100%' }} />
@@ -91,7 +135,8 @@ export default function BubbleApp() {
   const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', paddingBottom: '4px' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' }}>
+      <div ref={contentRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', paddingBottom: '4px', width: 'max-content', height: 'max-content' }}>
 
       {/* Desktop Notification */}
       {activeNotification && (
@@ -235,6 +280,7 @@ export default function BubbleApp() {
         </div>
       )}
 
+      </div>
     </div>
   )
 }
