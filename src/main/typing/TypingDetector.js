@@ -96,6 +96,19 @@ class TypingDetector {
       this.activeProvider = null
     }
   }
+
+  /**
+   * Public, idempotent dispose method.
+   * Stops the active provider (killing any /dev/input child processes),
+   * clears the active provider reference, and nulls the IPC sender so that
+   * late-arriving events from the provider thread are silently dropped rather
+   * than thrown as "Object has been destroyed" errors.
+   */
+  async stop() {
+    this.ipcSender = null  // Drop sender first — prevents any in-flight callback from sending
+    this.isEnabled = false
+    await this._stopDetection()
+  }
 }
 
 module.exports = TypingDetector

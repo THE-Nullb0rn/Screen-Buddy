@@ -156,7 +156,11 @@ app.whenReady().then(async () => {
   settings = loadSettings()
 
   typingDetector = new TypingDetector((channel, event) => {
-    mainWindow?.webContents.send(channel, event)
+    // Optional chaining alone is insufficient: a closed BrowserWindow is still
+    // a non-null object whose webContents.send() throws "Object has been destroyed".
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send(channel, event)
+    }
   })
 
   createOverlayWindow()
@@ -207,6 +211,10 @@ app.on('window-all-closed', () => {
 // Clean up child processes before exit
 app.on('will-quit', () => {
   isShuttingDown = true
+  // Stop typing detection first — kills any /dev/input 'cat' child processes
+  // and nulls the IPC sender so no destroyed-webContents errors can fire.
+  // stop() is idempotent; safe to call even if never started.
+  typingDetector?.stop()
   mediaMonitor.stop()
   notificationsManager?.stop()
   if (passthruInterval) {
@@ -981,6 +989,24 @@ function createOverlayWindow() {
   lastKnownCatWinX = savedPosition.x
   lastKnownCatWinY = savedPosition.y
   console.log(`[main] Overlay created at saved mascot position (${savedPosition.x}, ${savedPosition.y}); lastKnownCatWin seeded to (${lastKnownCatWinX},${lastKnownCatWinY})`)
+
+  // ── Primary-window close → quit the whole application ───────────────────
+  // Without this handler:
+  //  1. mainWindow reference stays as a destroyed (non-null) BrowserWindow.
+  //  2. Optional chaining (mainWindow?.webContents) returns the destroyed
+  //     webContents and .send() throws "Object has been destroyed".
+  //  3. The bubbleWindow can keep the Electron process alive indefinitely
+  //     because window-all-closed only fires when *all* windows are gone.
+  //
+  // Calling app.quit() here triggers will-quit → cleanup → process.exit.
+  // Guard isShuttingDown so we don't recurse if app.quit() was already called.
+  mainWindow.on('closed', () => {
+    mainWindow = null  // Null immediately so the IPC guard drops any in-flight events
+    if (!isShuttingDown) {
+      console.log('[main] Primary overlay window closed — quitting application')
+      app.quit()
+    }
+  })
 }
 
 function getSavedMascotPosition() {
