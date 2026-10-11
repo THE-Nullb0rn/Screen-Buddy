@@ -105,9 +105,19 @@ const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp'
 // the window if the workAreaSize is slightly smaller than the renderer's full 1080 display.
 const BOTTOM_OVERHANG_PX = 100
 
-const CAT_CX = 175
-// Must match CAT_CY in Mascot.jsx (350 - 8 - 90)
-const CAT_CY = 252
+const NORMAL_WIN_W = 160
+const NORMAL_WIN_H = 220
+const NORMAL_CAT_CX = 80
+const NORMAL_CAT_CY = 122
+
+const TREATMENT_WIN_W = 350
+const TREATMENT_WIN_H = 380
+const TREATMENT_CAT_CX = 175
+const TREATMENT_CAT_CY = 192
+
+// Bubble window size confirmation poll — same timeout as the cat window.
+const BUBBLE_SIZE_POLL_TIMEOUT_MS = 1000
+const BUBBLE_SIZE_POLL_INTERVAL_MS = 20
 
 // ─── Click-through state ──────────────────────────────────────────────────────
 
@@ -624,8 +634,8 @@ let bubblePositionGeneration = 0;
 let lastKnownCatWinX = null;
 let lastKnownCatWinY = null;
 
-let currentWinW = 350;
-let currentWinH = 350;
+let currentWinW = NORMAL_WIN_W;
+let currentWinH = NORMAL_WIN_H;
 let currentWindowMode = 'mascot';
 let mascotRepositionInProgress = false;
 
@@ -644,7 +654,7 @@ async function positionBubbleWindow() {
     return;
   }
   
-  const myGen = ++bubblePositionGeneration;
+  const myGen = bubblePositionGeneration;
 
   if (bubblePositionInFlight) {
     bubblePositionPending = true;
@@ -654,14 +664,15 @@ async function positionBubbleWindow() {
   bubblePositionPending = false;
 
   try {
-    // Use the saved mascot position as the bubble anchor. This is the STABLE position —
-    // updated only on drag-end (persistMascotPosition) and landing (persistPosition).
-    // Do NOT use lastKnownCatWinX/Y here: those track the live window position,
-    // which is wrong during movement-break center-screen treatment or any other
-    // transient animation where the overlay temporarily moves away from its home.
-    const savedPos = getSavedMascotPosition();
-    let catX = savedPos.x;
-    let catY = savedPos.y;
+    let catX = lastKnownCatWinX;
+    let catY = lastKnownCatWinY;
+    
+    // Fallback if not initialized
+    if (catX === null || catY === null) {
+      const savedPos = getSavedMascotPosition();
+      catX = savedPos.x;
+      catY = savedPos.y;
+    }
 
     if (myGen !== bubblePositionGeneration) {
       console.log('[bubble] aborting stale position request (generation mismatch)');
@@ -675,8 +686,16 @@ async function positionBubbleWindow() {
 
 
 
-    const spriteTop = catY + 162;
-    const spriteBottom = catY + 342;
+    const cx = currentWindowMode === 'treatment' ? TREATMENT_CAT_CX : NORMAL_CAT_CX;
+    const cy = currentWindowMode === 'treatment' ? TREATMENT_CAT_CY : NORMAL_CAT_CY;
+    
+    // In treatment mode, the sprite is scaled by 2 (126x180 -> 252x360).
+    // The visual height is 360, but the origin is center bottom.
+    // So the top is cy - 180, and the bottom is cy + 180.
+    const halfHeight = currentWindowMode === 'treatment' ? 180 : 90;
+    
+    const spriteTop = catY + cy - halfHeight;
+    const spriteBottom = catY + cy + halfHeight;
     
     const { width, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize;
     const bw = currentBubbleW;
@@ -688,8 +707,8 @@ async function positionBubbleWindow() {
       targetY = Math.min(spriteBottom + 8, screenH - bh);
     }
 
-    // Horizontal center aligned with the mascot sprite center (catX + 175).
-    let targetX = catX + 175 - Math.round(bw / 2);
+    // Horizontal center aligned with the mascot sprite center.
+    let targetX = catX + cx - Math.round(bw / 2);
     targetX = Math.max(0, Math.min(targetX, width - bw));
     
     targetX = Math.round(targetX);
@@ -736,6 +755,69 @@ async function positionBubbleWindow() {
     }
   }
 }
+let bubbleSizeInFlight = false;
+let bubbleSizePendingW = null;
+let bubbleSizePendingH = null;
+
+async function applyBubbleWindowSize(w, h) {
+  if (bubbleSizeInFlight) {
+    bubbleSizePendingW = w;
+    bubbleSizePendingH = h;
+    return;
+  }
+  bubbleSizeInFlight = true;
+  bubbleSizePendingW = null;
+  bubbleSizePendingH = null;
+
+  try {
+    if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+      try { bubbleWindow.setSize(w, h); } catch (e) {}
+    }
+    
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      const titleMatch = 'title:^(screen-buddy-bubbles)$';
+      try {
+        await execFileAsync('hyprctl', ['dispatch', 'resizewindowpixel', `exact ${Math.round(w)} ${Math.round(h)},${titleMatch}`]);
+        
+        const started = Date.now();
+        let attempt = 0;
+        let confirmed = false;
+        let lastCompositorSize = null;
+        while (Date.now() - started < BUBBLE_SIZE_POLL_TIMEOUT_MS) {
+          attempt++;
+          try {
+            const { stdout } = await execFileAsync('hyprctl', ['clients', '-j']);
+            const clients = JSON.parse(stdout);
+            const overlay = clients.find(c => c.title === 'screen-buddy-bubbles');
+            lastCompositorSize = overlay?.size;
+            if (overlay && Array.isArray(lastCompositorSize) && lastCompositorSize[0] === w && lastCompositorSize[1] === h) {
+              console.log(`[bubble-size] hyprland native=${w}x${h} requested=${w}x${h} confirmed=true elapsed=${Date.now() - started}ms attempts=${attempt}`);
+              confirmed = true;
+              break;
+            }
+          } catch (err) {}
+          await new Promise(r => setTimeout(r, BUBBLE_SIZE_POLL_INTERVAL_MS));
+        }
+        if (!confirmed) {
+          const cs = Array.isArray(lastCompositorSize) ? `${lastCompositorSize[0]}x${lastCompositorSize[1]}` : 'unknown';
+          console.warn(`[bubble-size] hyprland native=${cs} requested=${w}x${h} confirmed=false timed_out=true elapsed=${BUBBLE_SIZE_POLL_TIMEOUT_MS}ms`);
+        }
+      } catch (err) {
+        console.error(`[bubble-size] hyprctl resize error:`, err.message);
+      }
+    }
+    
+    if (bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible()) {
+      positionBubbleWindow();
+    }
+  } finally {
+    bubbleSizeInFlight = false;
+    if (bubbleSizePendingW !== null && bubbleSizePendingH !== null) {
+      applyBubbleWindowSize(bubbleSizePendingW, bubbleSizePendingH);
+    }
+  }
+}
+
 
 // ─── Overlay window ──────────────────────────────────────────────────────────
 /**
@@ -786,8 +868,8 @@ function createOverlayWindow() {
   const savedPosition = getSavedMascotPosition()
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
-    width: 350,  // Enough to fit cat and reminder cards
-    height: 350,
+    width: NORMAL_WIN_W,
+    height: NORMAL_WIN_H,
     x: savedPosition.x,
     y: savedPosition.y,
     transparent: true,
@@ -904,8 +986,8 @@ function createOverlayWindow() {
 function getSavedMascotPosition() {
   const saved = settings?.mascotPosition
   const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
-  const maxX = Math.max(0, width - 350)
-  const maxY = Math.max(0, height - 350 + BOTTOM_OVERHANG_PX)
+  const maxX = Math.max(0, width - NORMAL_WIN_W)
+  const maxY = Math.max(0, height - NORMAL_WIN_H + BOTTOM_OVERHANG_PX)
   const x = Number.isFinite(saved?.x) ? Math.round(saved.x) : 0
   const y = Number.isFinite(saved?.y) ? Math.round(saved.y) : 0
   return {
@@ -1362,22 +1444,22 @@ function registerIpcHandlers() {
     const sizeBefore = mainWindow?.getSize?.()
     const boundsBefore = mainWindow?.getBounds?.()
     console.log(
-      `[main] window:mode mascot calling setSize(350, 350) (${tag}); ` +
+      `[main] window:mode mascot calling setSize(${currentWinW}, ${currentWinH}) (${tag}); ` +
       `resizable=${mainWindow?.isResizable?.()} ` +
       `electron getSize before=${JSON.stringify(sizeBefore)} ` +
       `getBounds before=${JSON.stringify(boundsBefore)}`
     )
-    mainWindow?.setSize(350, 350)
+    mainWindow?.setSize(currentWinW, currentWinH)
     const sizeAfter = mainWindow?.getSize?.()
     const boundsAfter = mainWindow?.getBounds?.()
     console.log(
-      `[main] window:mode mascot setSize(350, 350) RETURNED (${tag}); ` +
+      `[main] window:mode mascot setSize(${currentWinW}, ${currentWinH}) RETURNED (${tag}); ` +
       `electron getSize after=${JSON.stringify(sizeAfter)} ` +
       `getBounds after=${JSON.stringify(boundsAfter)} ` +
       `(Electron size is not used to gate the renderer)`
     )
-    await resizeHyprlandWindow(350, 350, `window:mode mascot ${tag}`)
-    return waitForHyprlandSize(350, 350, `window:mode mascot ${tag}`)
+    await resizeHyprlandWindow(currentWinW, currentWinH, `window:mode mascot ${tag}`)
+    return waitForHyprlandSize(currentWinW, currentWinH, `window:mode mascot ${tag}`)
   }
 
   ipcMain.on('window:move', (event, x, y) => {
@@ -1397,8 +1479,8 @@ function registerIpcHandlers() {
     // on Wayland and will return stale fullscreen bounds immediately after a drag release.
     const { width: screenW, height: screenH } = require('electron').screen.getPrimaryDisplay().workAreaSize
 
-    let wx = Math.round(x - CAT_CX)
-    let wy = Math.round(y - CAT_CY)
+    let wx = Math.round(x - NORMAL_CAT_CX)
+    let wy = Math.round(y - NORMAL_CAT_CY)
     wx = Math.max(0, Math.min(wx, screenW - currentWinW))
     let limitY = screenH - currentWinH
     if (currentWinH === 350) {
@@ -1454,31 +1536,28 @@ function registerIpcHandlers() {
       return { applied: verify.applied, width, height, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
     } else {
       bubblePositionGeneration++;
-      // 'mascot' — keep currentWindowMode as 'drag' (or previous) until shrink +
-      // reposition are done, so window:move / roaming cannot interrupt.
       mascotRepositionInProgress = true
-      currentWinW = 350
-      currentWinH = 350
+      const isTreatment = mode === 'treatment'
+      currentWinW = isTreatment ? TREATMENT_WIN_W : NORMAL_WIN_W
+      currentWinH = isTreatment ? TREATMENT_WIN_H : NORMAL_WIN_H
+      const cx = isTreatment ? TREATMENT_CAT_CX : NORMAL_CAT_CX
+      const cy = isTreatment ? TREATMENT_CAT_CY : NORMAL_CAT_CY
 
       const [catX, catY] = args
       let verify = { applied: false, compositorSize: null, attempts: 0, elapsedMs: 0 }
       try {
         if (catX !== undefined && catY !== undefined) {
           const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize
-          let wx = Math.round(catX - CAT_CX)
-          let wy = Math.round(catY - CAT_CY)
-          wx = Math.max(0, Math.min(wx, screenW - 350))
-          wy = Math.max(0, Math.min(wy, screenH - 350 + BOTTOM_OVERHANG_PX))
+          let wx = Math.round(catX - cx)
+          let wy = Math.round(catY - cy)
+          wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+          wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
 
-          // Reposition first so that when the window shrinks, its top-left is already in the right spot,
-          // avoiding the cat being clipped out by a 350x350 window stuck at 0,0.
           mainWindow?.setPosition(wx, wy)
           if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
             _movePending = null
             try {
-              await execFile('hyprctl', ['dispatch', 'movewindowpixel', `exact ${wx} ${wy},${HYPR_TITLE_MATCH}`])
-              // Track the newly confirmed cat window position so positionBubbleWindow()
-              // uses this exact coordinate rather than a potentially stale hyprctl query.
+              await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${wx} ${wy},${HYPR_TITLE_MATCH}`])
               lastKnownCatWinX = wx
               lastKnownCatWinY = wy
             } catch (err) {
@@ -1486,31 +1565,30 @@ function registerIpcHandlers() {
             }
           }
 
-          // Shrink after the reposition is confirmed
-          verify = await applyMascotWindowSize('drag-end')
-          // Save only after the existing drag settle/resize path completes, so
-          // persistence never records an in-flight fullscreen drag coordinate.
-          persistMascotPosition(wx, wy)
-          console.log(`[main] window:mode -> mascot at window (${wx}, ${wy}) from cat center (${catX}, ${catY}) electronTitle="${mainWindow?.getTitle?.()}" hyprMatch=${HYPR_TITLE_MATCH} applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)}`)
+          verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'drag-end')
+          if (!isTreatment) {
+            persistMascotPosition(wx, wy)
+          }
+          console.log(`[main] window:mode -> ${mode} at window (${wx}, ${wy}) from cat center (${catX}, ${catY}) electronTitle="${mainWindow?.getTitle?.()}" hyprMatch=${HYPR_TITLE_MATCH} applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)}`)
         } else {
-          verify = await applyMascotWindowSize('no-coords')
+          verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'no-coords')
         }
       } finally {
         mascotRepositionInProgress = false
-        currentWindowMode = 'mascot'
-        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) { try { bubbleWindow.setSize(currentBubbleW, currentBubbleH); } catch(e){} bubbleWindow.showInactive(); positionBubbleWindow(); }
-        console.log(`[main] window:mode mascot handler finished in ${Date.now() - modeEnteredAt}ms; currentWindowMode now '${currentWindowMode}' applied=${verify.applied}`)
+        currentWindowMode = mode
+        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) { bubbleWindow.showInactive(); applyBubbleWindowSize(currentBubbleW, currentBubbleH); }
+        console.log(`[main] window:mode ${mode} handler finished in ${Date.now() - modeEnteredAt}ms; currentWindowMode now '${currentWindowMode}' applied=${verify.applied}`)
       }
-      return { applied: verify.applied, width: 350, height: 350, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
+      return { applied: verify.applied, width: currentWinW, height: currentWinH, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
     }
   }
 
   ipcMain.on('window:persist-position', (event, x, y) => {
     const { width: screenW, height: screenH } = require('electron').screen.getPrimaryDisplay().workAreaSize
-    let wx = Math.round(x - CAT_CX)
-    let wy = Math.round(y - CAT_CY)
-    wx = Math.max(0, Math.min(wx, screenW - 350))
-    wy = Math.max(0, Math.min(wy, screenH - 350 + BOTTOM_OVERHANG_PX))
+    let wx = Math.round(x - NORMAL_CAT_CX)
+    let wy = Math.round(y - NORMAL_CAT_CY)
+    wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+    wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
     console.log(`[catwin] persist-position raw=(${x},${y}) win=(${wx},${wy}) mode=${currentWindowMode}`)
     lastKnownCatWinX = wx
     lastKnownCatWinY = wy
@@ -1554,9 +1632,8 @@ function registerIpcHandlers() {
         // Ensure window is visible when there is card content
         if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
           if (currentWindowMode !== 'drag' && !mascotRepositionInProgress) {
-            try { bubbleWindow.setSize(currentBubbleW, currentBubbleH); } catch(e){}
             bubbleWindow.showInactive();
-            positionBubbleWindow();
+            applyBubbleWindowSize(currentBubbleW, currentBubbleH);
           } else {
             console.log('[bubble] skipping show/reposition during drag');
           }
@@ -1591,12 +1668,7 @@ function registerIpcHandlers() {
       return;
     }
     if (bubbleWindow && !bubbleWindow.isDestroyed()) {
-      try { bubbleWindow.setSize(w, h); } catch (err) {
-        console.warn('[bubble-size] setSize error:', err.message);
-      }
-      if (bubbleWindow.isVisible()) {
-        positionBubbleWindow();
-      }
+      applyBubbleWindowSize(w, h);
     }
   })
 

@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import Mascot, { CAT_CY } from './components/Mascot'
+import Mascot, { NORMAL_CAT_CX, NORMAL_CAT_CY } from './components/Mascot'
 
 // ─── State machine constants ─────────────────────────────────────────────────
 const REMINDER_STATE = {
@@ -610,8 +610,8 @@ export default function App() {
         onChatActivity={resetChatInputTimer}
         notificationVisible={notificationVisible}
         initialPosition={{
-          x: (settings.mascotPosition?.x ?? 0) + 175,
-          y: (settings.mascotPosition?.y ?? 0) + CAT_CY,
+          x: (settings.mascotPosition?.x ?? 0) + NORMAL_CAT_CX,
+          y: (settings.mascotPosition?.y ?? 0) + NORMAL_CAT_CY,
         }}
       />}
 

@@ -242,6 +242,10 @@
   -webkit-backdrop-filter: blur(10px);
   border-radius: 10px;
   padding: 5px 10px;
+  /* max-width caps very long titles; min-width prevents flex-collapse from
+     narrowing the card below its rendered text when the parent measures
+     via width:max-content (ResizeObserver anchor in BubbleApp). */
+  min-width: 160px;
   max-width: 220px;
   color: #cdd6f4;
   pointer-events: none;

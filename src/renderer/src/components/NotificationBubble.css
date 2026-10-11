@@ -35,7 +35,9 @@
   flex-direction: column;
   gap: 2px;
   flex: 1;
-  min-width: 0;
+  /* Do not set min-width:0 here: the parent uses max-width:280px to cap growth,
+     but BubbleApp measures the card via width:max-content. min-width:0 would
+     collapse the text below its intrinsic size and report an incorrect 160px. */
 }
 
 .mascot-notif-bubble__app-name {

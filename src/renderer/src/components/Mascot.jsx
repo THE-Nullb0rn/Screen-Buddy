@@ -9,9 +9,12 @@ const SPRITE_WIDTH = 126
 const SPRITE_HEIGHT = 180
 const FLOOR_GAP_PX = 24
 const FOOT_PAD_PX = 5
-const SPRITE_BOTTOM_INSET_PX = 8
+
 // Cat-centre Y inside the 350×350 window.  Must match CAT_CY in main.js.
-export const CAT_CY = 350 - SPRITE_BOTTOM_INSET_PX - SPRITE_HEIGHT / 2  // 252
+export const NORMAL_CAT_CX = 80
+export const NORMAL_CAT_CY = 122
+export const TREATMENT_CAT_CX = 175
+export const TREATMENT_CAT_CY = 192
 const FALLBACK_WIDTH = SPRITE_WIDTH
 const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
@@ -82,6 +85,7 @@ export default function Mascot({
   const [y, setY] = useState(() => Number.isFinite(initialPosition?.y) ? initialPosition.y : defaultPosition().y)
   const [walkMs, setWalkMs] = useState(0)
   const [dragging, setDragging] = useState(false)
+  const [treatmentWindowReady, setTreatmentWindowReady] = useState(false)
   const [falling, setFalling] = useState(false)
   const fallRafRef = useRef(null)
   const fallVelocityRef = useRef(0)
@@ -160,16 +164,18 @@ export default function Mascot({
 
   const clampToViewport = useCallback(
     (nx, ny) => {
-      const { width, height } = measure()
-      // Use logical screen size instead of the (now small) window innerWidth
       const screenW = window.screen.availWidth || window.screen.width || 1920
       const screenH = window.screen.availHeight || window.screen.height || 1080
+      const minX = NORMAL_CAT_CX
+      const maxX = Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
+      const minY = NORMAL_CAT_CY
+      const maxY = Math.max(minY, screenH - (SPRITE_HEIGHT / 2) - FLOOR_GAP_PX + FOOT_PAD_PX)
       return {
-        x: clamp(nx, MARGIN, Math.max(MARGIN, screenW - width - MARGIN)),
-        y: clamp(ny, MARGIN, Math.max(MARGIN, screenH - height / 2 - FLOOR_GAP_PX + FOOT_PAD_PX)),
+        x: clamp(nx, minX, maxX),
+        y: clamp(ny, minY, maxY),
       }
     },
-    [measure]
+    []
   )
 
   const snapVisualPosition = useCallback(() => {
@@ -385,15 +391,32 @@ export default function Mascot({
           savedPosRef.current = { x: posRef.current.x, y: posRef.current.y }
         }
         setWalkMs(0)
+        const screenW = window.screen.availWidth || window.screen.width || 1920
+        const screenH = window.screen.availHeight || window.screen.height || 1080
+        const cX = Math.round(screenW / 2)
+        const cY = Math.round(screenH / 2)
+        if (window.api?.setWindowMode) {
+          window.api.setWindowMode('treatment', cX, cY).then(() => {
+            setTreatmentWindowReady(true)
+          })
+        } else {
+          setTreatmentWindowReady(true)
+        }
       }
-    } else if (reminderState === REMINDER_STATE.IDLE_COUNTING && savedPosRef.current) {
-      // Returned from big treatment: resume at saved position
-      const saved = savedPosRef.current
-      savedPosRef.current = null
-      posRef.current = saved
-      setX(saved.x)
-      setY(saved.y)
-      dragTargetRef.current = saved
+    } else {
+      setTreatmentWindowReady(false)
+      if (reminderState === REMINDER_STATE.IDLE_COUNTING && savedPosRef.current) {
+        // Returned from big treatment: resume at saved position
+        const saved = savedPosRef.current
+        savedPosRef.current = null
+        posRef.current = saved
+        setX(saved.x)
+        setY(saved.y)
+        dragTargetRef.current = saved
+        if (window.api?.setWindowMode) {
+          window.api.setWindowMode('mascot', saved.x, saved.y)
+        }
+      }
     }
   }, [reminderState, isBigTreatment, REMINDER_STATE])
 
@@ -598,10 +621,10 @@ export default function Mascot({
     let targetY
 
     if (dragExpandingRef.current) {
-      // Window is still 350x350. clientX is local to the small window.
+      // Window is still 160x220. clientX is local to the small window.
       // Global mouse = window cat center (posRef) + local offset from cat center.
       const globalMouseX = posRef.current.x + (event.clientX - (window.innerWidth / 2))
-      const globalMouseY = posRef.current.y + (event.clientY - CAT_CY)
+      const globalMouseY = posRef.current.y + (event.clientY - NORMAL_CAT_CY)
       targetX = globalMouseX - dragOffsetRef.current.x
       targetY = globalMouseY - dragOffsetRef.current.y
     } else {
@@ -659,11 +682,11 @@ export default function Mascot({
     snapVisualPosition()
     markInteraction()
 
-    // Cat is horizontally centered, but vertically pinned at CAT_CY in the 350x350 window.
+    // Cat is horizontally centered, but vertically pinned at CAT_CY in the 160x220 window.
     // The offset of the cursor from the cat's center.
     dragOffsetRef.current = {
       x: event.clientX - (window.innerWidth / 2),
-      y: event.clientY - CAT_CY,
+      y: event.clientY - NORMAL_CAT_CY,
     }
     dragTargetRef.current = { x: posRef.current.x, y: posRef.current.y }
 
@@ -774,15 +797,15 @@ export default function Mascot({
       const innerH = window.innerHeight
       const catW = el?.offsetWidth || FALLBACK_WIDTH
       const catH = el?.offsetHeight || FALLBACK_HEIGHT
-      const dragCssInside350 = finalPos.x >= 0 && finalPos.x <= 350 && finalPos.y >= 0 && finalPos.y <= 350
+      const dragCssInside160x220 = finalPos.x >= 0 && finalPos.x <= 160 && finalPos.y >= 0 && finalPos.y <= 220
       const dragCssInsideInner = finalPos.x >= 0 && finalPos.x <= innerW && finalPos.y >= 0 && finalPos.y <= innerH
       const centeredCssInsideInner = innerW >= catW && innerH >= catH
       console.log(
-        `[Renderer] ${tag} inner=${innerW}x${innerH} catBox=${catW}x${catH} css left=${cs?.left} top=${cs?.top} transform=${cs?.transform} draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current} finalPos=(${finalPos.x}, ${finalPos.y}) dragCssInside350=${dragCssInside350} dragCssInsideInner=${dragCssInsideInner} centeredCssFitsInner=${centeredCssInsideInner}`
+        `[Renderer] ${tag} inner=${innerW}x${innerH} catBox=${catW}x${catH} css left=${cs?.left} top=${cs?.top} transform=${cs?.transform} draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current} finalPos=(${finalPos.x}, ${finalPos.y}) dragCssInside160x220=${dragCssInside160x220} dragCssInsideInner=${dragCssInsideInner} centeredCssFitsInner=${centeredCssInsideInner}`
       )
     }
 
-    // Shrink window back to 350x350 and reposition at the cat's final center.
+    // Shrink window back to 160x220 and reposition at the cat's final center.
     // AWAIT this transition so the window fully moves to the right spot
     // before we turn off drag mode (which switches CSS back to centered)
     // and before we resume the roaming loop.
@@ -795,7 +818,7 @@ export default function Mascot({
       mascotResizeApplied = mascotResult?.applied === true
       console.log(`[Renderer] onDragEnd setWindowMode(mascot) resolved ${JSON.stringify(mascotResult)}`)
       if (!mascotResizeApplied) {
-        console.error('[Renderer] onDragEnd hyprctl did not confirm 350x350 before roam resume')
+        console.error('[Renderer] onDragEnd hyprctl did not confirm 160x220 before roam resume')
       }
     }
     console.log('[Renderer] onDragEnd AFTER await setWindowMode mascot — about to set draggingRef=false and resume roam')
@@ -980,8 +1003,8 @@ export default function Mascot({
   // ── Coordinates and Transitions for Center-Screen MovementBreak ───────────
   const screenW = window.screen.availWidth || window.screen.width || 1920
   const screenH = window.screen.availHeight || window.screen.height || 1080
-  const centerX = Math.max(MARGIN, Math.round((screenW - SPRITE_WIDTH) / 2))
-  const centerY = Math.max(MARGIN, Math.round((screenH - SPRITE_HEIGHT) / 2))
+  const centerX = Math.round(screenW / 2)
+  const centerY = Math.round(screenH / 2)
 
   let targetX = x
   let targetY = y
@@ -997,7 +1020,7 @@ export default function Mascot({
   }
 
   const isScaleBig =
-    isBigTreatment &&
+    isBigTreatment && treatmentWindowReady &&
     (reminderState === REMINDER_STATE.ENTRANCE || reminderState === REMINDER_STATE.ACTIVE)
   const spriteScale = isScaleBig ? 2 : 1
 
@@ -1048,7 +1071,7 @@ export default function Mascot({
         transform: `translate3d(${targetX}px, ${targetY}px, 0) translate(-50%, calc(-100% + ${SPRITE_HEIGHT / 2}px))`,
         transition: 'none',
       } : {
-        // Normal mode: cat is centered in the 350x350 window via Mascot.css.
+        // Normal mode: cat is centered in the 160x220 window via Mascot.css.
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
