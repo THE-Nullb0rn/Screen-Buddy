@@ -17,6 +17,7 @@ export default function BubbleApp() {
 
   useEffect(() => {
     const offNotifShow = window.api.on('notification:show', (notif) => {
+      lastReportedSize.current = { w: 0, h: 0 }
       setActiveNotification(notif)
     })
     const offNotifClose = window.api.on('notification:close', (id) => {

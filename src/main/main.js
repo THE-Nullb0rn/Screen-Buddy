@@ -106,13 +106,18 @@ const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp'
 const BOTTOM_OVERHANG_PX = 100
 
 const NORMAL_WIN_W = 160
-const NORMAL_WIN_H = 204
+const NORMAL_WIN_H = 128
 const NORMAL_CAT_CX = 80
 // NORMAL_CAT_CY = window height − CSS bottom inset (8, must match Mascot.css) − sprite half-height (90).
 // Mascot.jsx has a copy that must change with this. The 8 must match Mascot.css `bottom: 8px`.
 const NORMAL_BOTTOM_INSET_PX = 8
 const NORMAL_SPRITE_H = 180
-const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - NORMAL_SPRITE_H / 2 // 204 - 8 - 90 = 106
+const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - NORMAL_SPRITE_H / 2 // 128 - 8 - 90 = 30
+
+// Top of visible idle art inside the 126x180 sprite box (measured from sprite-box top).
+// In normal mode, sprite box extends above the window; this calculates the visible art top inside window.
+const NORMAL_ART_TOP_IN_BOX = 89
+const NORMAL_VISIBLE_TOP_IN_WIN = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - NORMAL_SPRITE_H + NORMAL_ART_TOP_IN_BOX // 128 - 8 - 180 + 89 = 29
 
 const TREATMENT_WIN_W = 350
 const TREATMENT_WIN_H = 380
@@ -713,8 +718,14 @@ async function positionBubbleWindow() {
     const bw = currentBubbleW;
     const bh = currentBubbleH;
 
+    // In normal mode, anchor to the visible idle art top inside the window.
+    // In treatment mode, anchor to the treatment sprite box top.
+    const anchorTop = currentWindowMode === 'treatment'
+      ? spriteTop
+      : catY + NORMAL_VISIBLE_TOP_IN_WIN;
+
     // Position bubble above the sprite; fall back to below if it would go off-screen.
-    let targetY = spriteTop - 8 - bh;
+    let targetY = anchorTop - 8 - bh;
     if (targetY < 0) {
       targetY = Math.min(spriteBottom + 8, screenH - bh);
     }
@@ -1083,7 +1094,15 @@ async function showBubbleWindow(notif) {
       }
     }
 
-    await positionBubbleWindow();
+    // Re-apply the last known size after every show/map so Hyprland doesn't
+    // keep its default 300x120 on the 2nd+ notification.  applyBubbleWindowSize
+    // calls positionBubbleWindow() at its end, so we skip the direct call below.
+    if (currentBubbleW !== 300 || currentBubbleH !== 120) {
+      console.log(`[bubble] re-applied size ${currentBubbleW}x${currentBubbleH} after map`);
+      await applyBubbleWindowSize(currentBubbleW, currentBubbleH);
+    } else {
+      await positionBubbleWindow();
+    }
 
     if (pendingNotification) {
       bubbleWindow.webContents.send('notification:show', pendingNotification);
