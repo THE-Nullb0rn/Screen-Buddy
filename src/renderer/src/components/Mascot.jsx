@@ -10,9 +10,12 @@ const SPRITE_HEIGHT = 180
 const FLOOR_GAP_PX = 24
 const FOOT_PAD_PX = 5
 
-// Cat-centre Y inside the 350×350 window.  Must match CAT_CY in main.js.
+// NORMAL_CAT_CY = window height (204) − CSS bottom inset (8, must match Mascot.css) − sprite half-height (90).
+// main.js has a copy that must change with this. The 8 must match Mascot.css `bottom: 8px`.
+export const NORMAL_WIN_H = 204
+export const NORMAL_BOTTOM_INSET_PX = 8
 export const NORMAL_CAT_CX = 80
-export const NORMAL_CAT_CY = 122
+export const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - SPRITE_HEIGHT / 2 // 204 - 8 - 90 = 106
 export const TREATMENT_CAT_CX = 175
 export const TREATMENT_CAT_CY = 192
 const FALLBACK_WIDTH = SPRITE_WIDTH
@@ -621,7 +624,7 @@ export default function Mascot({
     let targetY
 
     if (dragExpandingRef.current) {
-      // Window is still 160x220. clientX is local to the small window.
+      // Window is still 160x204. clientX is local to the small window.
       // Global mouse = window cat center (posRef) + local offset from cat center.
       const globalMouseX = posRef.current.x + (event.clientX - (window.innerWidth / 2))
       const globalMouseY = posRef.current.y + (event.clientY - NORMAL_CAT_CY)
@@ -682,7 +685,7 @@ export default function Mascot({
     snapVisualPosition()
     markInteraction()
 
-    // Cat is horizontally centered, but vertically pinned at CAT_CY in the 160x220 window.
+    // Cat is horizontally centered, but vertically pinned at CAT_CY in the 160x204 window.
     // The offset of the cursor from the cat's center.
     dragOffsetRef.current = {
       x: event.clientX - (window.innerWidth / 2),
@@ -797,15 +800,15 @@ export default function Mascot({
       const innerH = window.innerHeight
       const catW = el?.offsetWidth || FALLBACK_WIDTH
       const catH = el?.offsetHeight || FALLBACK_HEIGHT
-      const dragCssInside160x220 = finalPos.x >= 0 && finalPos.x <= 160 && finalPos.y >= 0 && finalPos.y <= 220
+      const dragCssInside160x204 = finalPos.x >= 0 && finalPos.x <= 160 && finalPos.y >= 0 && finalPos.y <= 204
       const dragCssInsideInner = finalPos.x >= 0 && finalPos.x <= innerW && finalPos.y >= 0 && finalPos.y <= innerH
       const centeredCssInsideInner = innerW >= catW && innerH >= catH
       console.log(
-        `[Renderer] ${tag} inner=${innerW}x${innerH} catBox=${catW}x${catH} css left=${cs?.left} top=${cs?.top} transform=${cs?.transform} draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current} finalPos=(${finalPos.x}, ${finalPos.y}) dragCssInside160x220=${dragCssInside160x220} dragCssInsideInner=${dragCssInsideInner} centeredCssFitsInner=${centeredCssInsideInner}`
+        `[Renderer] ${tag} inner=${innerW}x${innerH} catBox=${catW}x${catH} css left=${cs?.left} top=${cs?.top} transform=${cs?.transform} draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current} finalPos=(${finalPos.x}, ${finalPos.y}) dragCssInside160x204=${dragCssInside160x204} dragCssInsideInner=${dragCssInsideInner} centeredCssFitsInner=${centeredCssInsideInner}`
       )
     }
 
-    // Shrink window back to 160x220 and reposition at the cat's final center.
+    // Shrink window back to 160x204 and reposition at the cat's final center.
     // AWAIT this transition so the window fully moves to the right spot
     // before we turn off drag mode (which switches CSS back to centered)
     // and before we resume the roaming loop.
@@ -818,7 +821,7 @@ export default function Mascot({
       mascotResizeApplied = mascotResult?.applied === true
       console.log(`[Renderer] onDragEnd setWindowMode(mascot) resolved ${JSON.stringify(mascotResult)}`)
       if (!mascotResizeApplied) {
-        console.error('[Renderer] onDragEnd hyprctl did not confirm 160x220 before roam resume')
+        console.error('[Renderer] onDragEnd hyprctl did not confirm 160x204 before roam resume')
       }
     }
     console.log('[Renderer] onDragEnd AFTER await setWindowMode mascot — about to set draggingRef=false and resume roam')
@@ -1071,7 +1074,7 @@ export default function Mascot({
         transform: `translate3d(${targetX}px, ${targetY}px, 0) translate(-50%, calc(-100% + ${SPRITE_HEIGHT / 2}px))`,
         transition: 'none',
       } : {
-        // Normal mode: cat is centered in the 160x220 window via Mascot.css.
+        // Normal mode: cat is centered in the 160x204 window via Mascot.css.
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}

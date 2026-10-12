@@ -106,9 +106,13 @@ const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp'
 const BOTTOM_OVERHANG_PX = 100
 
 const NORMAL_WIN_W = 160
-const NORMAL_WIN_H = 220
+const NORMAL_WIN_H = 204
 const NORMAL_CAT_CX = 80
-const NORMAL_CAT_CY = 122
+// NORMAL_CAT_CY = window height − CSS bottom inset (8, must match Mascot.css) − sprite half-height (90).
+// Mascot.jsx has a copy that must change with this. The 8 must match Mascot.css `bottom: 8px`.
+const NORMAL_BOTTOM_INSET_PX = 8
+const NORMAL_SPRITE_H = 180
+const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - NORMAL_SPRITE_H / 2 // 204 - 8 - 90 = 106
 
 const TREATMENT_WIN_W = 350
 const TREATMENT_WIN_H = 380
@@ -1508,10 +1512,7 @@ function registerIpcHandlers() {
     let wx = Math.round(x - NORMAL_CAT_CX)
     let wy = Math.round(y - NORMAL_CAT_CY)
     wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-    let limitY = screenH - currentWinH
-    if (currentWinH === 350) {
-      limitY += BOTTOM_OVERHANG_PX
-    }
+    const limitY = screenH - currentWinH
     wy = Math.max(0, Math.min(wy, limitY))
 
     // 1. Standard Electron setPosition (fallback / X11)
