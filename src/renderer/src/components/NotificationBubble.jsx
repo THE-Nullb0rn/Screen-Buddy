@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useState, useEffect, useLayoutEffect } from 'react'
 import './NotificationBubble.css'
 
 // ── Clamp expire_timeout to valid range ──────────────────────────────────────
@@ -21,23 +21,81 @@ export default function NotificationBubble({ notification, onDismiss, onAction }
   const hasDefault = Array.isArray(actions) && actions.includes('default')
   const duration = calcNotifDuration(notification)
 
+  const [expanded, setExpanded] = useState(false)
+  const [isTruncated, setIsTruncated] = useState(false)
+
+  const appNameRef = useRef(null)
+  const summaryRef = useRef(null)
+  const bodyRef = useRef(null)
+
+  // Reset expanded to false whenever notification id or rev changes
+  useEffect(() => {
+    setExpanded(false)
+  }, [id, notification.rev])
+
+  // Measure truncation in a layout effect with refs
+  useLayoutEffect(() => {
+    // If expanded, do not re-measure truncation to preserve isTruncated state
+    if (expanded) return
+
+    let truncated = false
+    if (bodyRef.current) {
+      if (bodyRef.current.scrollHeight > bodyRef.current.clientHeight) {
+        truncated = true
+      }
+    }
+    if (!truncated && summaryRef.current) {
+      if (summaryRef.current.scrollWidth > summaryRef.current.clientWidth) {
+        truncated = true
+      }
+    }
+    if (!truncated && appNameRef.current) {
+      if (appNameRef.current.scrollWidth > appNameRef.current.clientWidth) {
+        truncated = true
+      }
+    }
+    setIsTruncated(truncated)
+  }, [id, notification.rev, summary, body, appName, expanded])
+
   const onDismissRef = useRef(onDismiss)
   useEffect(() => { onDismissRef.current = onDismiss }, [onDismiss])
 
+  // Timer effect: pause expiry while expanded
   useEffect(() => {
-    if (duration === null) return // persist until dismissed
+    if (duration === null || expanded) return // persist until dismissed or paused while expanded
     const timer = setTimeout(() => {
       if (onDismissRef.current) onDismissRef.current(id, 1) // reason 1 = expired
     }, duration)
     return () => clearTimeout(timer)
-  }, [id, duration, notification.rev])
+  }, [id, duration, notification.rev, expanded])
 
-  const handleBodyClick = (e) => {
+  const handleCardClick = (e) => {
     e.stopPropagation()
-    if (hasDefault && onAction) {
+    if (!expanded) {
+      if (isTruncated) {
+        setExpanded(true)
+      } else {
+        if (hasDefault && onAction) {
+          onAction(id, 'default')
+        } else if (onDismiss) {
+          onDismiss(id, 2) // reason 2 = dismissed by user
+        }
+      }
+    }
+    // If expanded, clicking the card/body does nothing
+  }
+
+  const handleToggleClick = (e) => {
+    e.stopPropagation()
+    setExpanded(prev => !prev)
+  }
+
+  const handleOpenClick = (e) => {
+    e.stopPropagation()
+    if (onAction) {
       onAction(id, 'default')
     } else if (onDismiss) {
-      onDismiss(id, 2) // reason 2 = dismissed by user
+      onDismiss(id, 2)
     }
   }
 
@@ -48,21 +106,42 @@ export default function NotificationBubble({ notification, onDismiss, onAction }
 
   return (
     <div
-      className="mascot-notif-bubble"
-      onClick={handleBodyClick}
+      className={`mascot-notif-bubble${expanded ? ' is-expanded' : ''}`}
+      onClick={handleCardClick}
       onPointerDown={(e) => e.stopPropagation()}
       role="alertdialog"
       aria-label={summary || 'Notification'}
     >
       <div className="mascot-notif-bubble__content">
         {appName && (
-          <div className="mascot-notif-bubble__app-name">{appName}</div>
+          <div ref={appNameRef} className="mascot-notif-bubble__app-name">{appName}</div>
         )}
         {summary && (
-          <div className="mascot-notif-bubble__summary">{summary}</div>
+          <div ref={summaryRef} className="mascot-notif-bubble__summary">{summary}</div>
         )}
         {body && (
-          <div className="mascot-notif-bubble__body">{body}</div>
+          <div ref={bodyRef} className="mascot-notif-bubble__body">{body}</div>
+        )}
+        {isTruncated && !expanded && (
+          <div className="mascot-notif-bubble__toggle" onClick={handleToggleClick}>
+            Show more ▾
+          </div>
+        )}
+        {expanded && (
+          <>
+            {hasDefault && (
+              <button
+                type="button"
+                className="mascot-notif-bubble__open-btn"
+                onClick={handleOpenClick}
+              >
+                Open
+              </button>
+            )}
+            <div className="mascot-notif-bubble__toggle" onClick={handleToggleClick}>
+              Show less ▴
+            </div>
+          </>
         )}
       </div>
       <button

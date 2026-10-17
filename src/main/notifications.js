@@ -213,7 +213,7 @@ class NotificationsManager {
       summary: strippedSummary,
       body: strippedBody,
       actions: data.actions || [],
-      urgency: data.hints && data.hints.urgency ? data.hints.urgency.value : 1, // default normal
+      urgency: data.hints?.urgency?.value ?? 1, // default normal
       expireTimeout: data.expire_timeout
     }
 

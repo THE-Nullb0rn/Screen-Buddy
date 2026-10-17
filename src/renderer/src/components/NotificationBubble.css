@@ -30,14 +30,17 @@
   cursor: pointer;
 }
 
+.mascot-notif-bubble.is-expanded {
+  max-width: 340px;
+  max-height: 260px;
+}
+
 .mascot-notif-bubble__content {
   display: flex;
   flex-direction: column;
   gap: 2px;
   flex: 1;
-  /* Do not set min-width:0 here: the parent uses max-width:280px to cap growth,
-     but BubbleApp measures the card via width:max-content. min-width:0 would
-     collapse the text below its intrinsic size and report an incorrect 160px. */
+  min-width: 0;
 }
 
 .mascot-notif-bubble__app-name {
@@ -58,6 +61,11 @@
   text-overflow: ellipsis;
 }
 
+.mascot-notif-bubble.is-expanded .mascot-notif-bubble__summary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .mascot-notif-bubble__body {
   font-size: 0.78rem;
   color: #a6adc8;
@@ -67,6 +75,56 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.mascot-notif-bubble.is-expanded .mascot-notif-bubble__body {
+  display: block;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  max-height: 190px;
+  scrollbar-width: thin;
+}
+
+.mascot-notif-bubble.is-expanded .mascot-notif-bubble__body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.mascot-notif-bubble.is-expanded .mascot-notif-bubble__body::-webkit-scrollbar-thumb {
+  background: rgba(166, 227, 161, 0.3);
+  border-radius: 4px;
+}
+
+.mascot-notif-bubble__toggle {
+  font-size: 11px;
+  color: #a6adc8;
+  cursor: pointer;
+  margin-top: 2px;
+  user-select: none;
+  align-self: flex-start;
+}
+
+.mascot-notif-bubble__toggle:hover {
+  color: #cdd6f4;
+}
+
+.mascot-notif-bubble__open-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  background: rgba(166, 227, 161, 0.15);
+  border: 1px solid rgba(166, 227, 161, 0.4);
+  border-radius: 4px;
+  color: #a6e3a1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mascot-notif-bubble__open-btn:hover {
+  background: rgba(166, 227, 161, 0.3);
 }
 
 .mascot-dismiss {
@@ -82,7 +140,7 @@
   align-items: center;
   justify-content: center;
   transition: background 0.15s, transform 0.15s;
-  flex-shrink: 0;
+  flex: 0 0 24px;
   margin-left: 4px;
 }
 

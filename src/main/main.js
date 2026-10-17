@@ -68,6 +68,8 @@ let mainWindow = null
 let settingsWindow = null
 let bubbleWindow = null
 let bubbleWindowReady = false
+let bubbleMapped = false
+let bubbleSkipLogged = false
 let lastCardState = null // latest snapshot sent by App.jsx via bubble:card-state
 let tray = null
 let settings = null // loaded from disk at startup
@@ -608,6 +610,7 @@ async function getBubbleWindow() {
   bubbleWindow.on('closed', () => {
     bubbleWindow = null;
     bubbleWindowReady = false;
+    bubbleMapped = false;
     currentBubbleW = 300;
     currentBubbleH = 120;
     lastBubbleX = null;
@@ -664,6 +667,14 @@ let currentBubbleH = 120;
 async function positionBubbleWindow() {
   if (!bubbleWindow || !bubbleWindowReady) return;
   if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return;
+
+  if (!bubbleMapped) {
+    if (!bubbleSkipLogged) {
+      console.log('[bubble] skipped (not mapped)');
+      bubbleSkipLogged = true;
+    }
+    return;
+  }
   
   // NO SPAM: do nothing unless there is active content (notification OR card) AND window is shown.
   const hasCard = !!(lastCardState && lastCardState.hasContent);
@@ -783,6 +794,14 @@ let bubbleSizePendingW = null;
 let bubbleSizePendingH = null;
 
 async function applyBubbleWindowSize(w, h) {
+  if (!bubbleMapped) {
+    if (!bubbleSkipLogged) {
+      console.log('[bubble] skipped (not mapped)');
+      bubbleSkipLogged = true;
+    }
+    return;
+  }
+
   if (bubbleSizeInFlight) {
     bubbleSizePendingW = w;
     bubbleSizePendingH = h;
@@ -1047,6 +1066,32 @@ function persistMascotPosition(x, y) {
 let isCreatingBubble = false;
 let pendingNotification = null;
 
+async function waitForBubbleMapped() {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+    bubbleMapped = true;
+    return;
+  }
+  const mapStart = Date.now();
+  let mapped = false;
+  for (let attempt = 0; attempt < 34 && !mapped; attempt++) {
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      const { stdout } = await execFileAsync('hyprctl', ['clients', '-j']);
+      const clients = JSON.parse(stdout);
+      if (clients.some(c => c.title === 'screen-buddy-bubbles')) {
+        mapped = true;
+      }
+    } catch (_) { /* ignore */ }
+  }
+  if (mapped) {
+    bubbleMapped = true;
+    console.log(`[bubble] mapped after ${Date.now() - mapStart} ms`);
+  } else {
+    bubbleMapped = true;
+    console.warn(`[bubble] map-wait timed out after ${Date.now() - mapStart} ms — continuing`);
+  }
+}
+
 async function showBubbleWindow(notif) {
   pendingNotification = notif;
   mainWindow?.webContents.send('notification:visible', true);
@@ -1070,29 +1115,13 @@ async function showBubbleWindow(notif) {
       return;
     }
 
+    bubbleMapped = false;
+    bubbleSkipLogged = false;
     bubbleWindow.showInactive();
     console.log('[bubble] showInactive called');
 
     // Wait until Hyprland has mapped the window, with a 1 s timeout
-    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
-      const mapStart = Date.now();
-      let mapped = false;
-      for (let attempt = 0; attempt < 34 && !mapped; attempt++) {
-        await new Promise(r => setTimeout(r, 30));
-        try {
-          const { stdout } = await execFileAsync('hyprctl', ['clients', '-j']);
-          const clients = JSON.parse(stdout);
-          if (clients.some(c => c.title === 'screen-buddy-bubbles')) {
-            mapped = true;
-          }
-        } catch (_) { /* ignore */ }
-      }
-      if (mapped) {
-        console.log(`[bubble] mapped after ${Date.now() - mapStart} ms`);
-      } else {
-        console.warn(`[bubble] map-wait timed out after ${Date.now() - mapStart} ms — continuing`);
-      }
-    }
+    await waitForBubbleMapped();
 
     // Re-apply the last known size after every show/map so Hyprland doesn't
     // keep its default 300x120 on the 2nd+ notification.  applyBubbleWindowSize
@@ -1103,6 +1132,7 @@ async function showBubbleWindow(notif) {
     } else {
       await positionBubbleWindow();
     }
+    await positionBubbleWindow();
 
     if (pendingNotification) {
       bubbleWindow.webContents.send('notification:show', pendingNotification);
@@ -1125,6 +1155,7 @@ function hideBubbleWindow(id) {
     // Only physically hide the window if there is no active card content
     const hasCard = !!(lastCardState && lastCardState.hasContent);
     if (!hasCard) {
+      bubbleMapped = false;
       bubbleWindow.hide();
       lastBubbleX = null;
       lastBubbleY = null;
@@ -1564,6 +1595,7 @@ function registerIpcHandlers() {
       // Block roam/move immediately while we expand — this is the drag guard.
       currentWindowMode = 'drag'
       if (bubbleWindow) {
+        bubbleMapped = false
         bubbleWindow.hide()
         lastBubbleX = null
         lastBubbleY = null
@@ -1622,7 +1654,19 @@ function registerIpcHandlers() {
       } finally {
         mascotRepositionInProgress = false
         currentWindowMode = mode
-        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) { bubbleWindow.showInactive(); applyBubbleWindowSize(currentBubbleW, currentBubbleH); }
+        if (bubbleWindow && (notificationsManager?.activeNotification || (lastCardState && lastCardState.hasContent))) {
+          bubbleMapped = false;
+          bubbleSkipLogged = false;
+          bubbleWindow.showInactive();
+          waitForBubbleMapped().then(async () => {
+            if (currentBubbleW !== 300 || currentBubbleH !== 120) {
+              await applyBubbleWindowSize(currentBubbleW, currentBubbleH);
+            } else {
+              await positionBubbleWindow();
+            }
+            await positionBubbleWindow();
+          });
+        }
         console.log(`[main] window:mode ${mode} handler finished in ${Date.now() - modeEnteredAt}ms; currentWindowMode now '${currentWindowMode}' applied=${verify.applied}`)
       }
       return { applied: verify.applied, width: currentWinW, height: currentWinH, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
@@ -1678,8 +1722,16 @@ function registerIpcHandlers() {
         // Ensure window is visible when there is card content
         if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
           if (currentWindowMode !== 'drag' && !mascotRepositionInProgress) {
+            bubbleMapped = false;
+            bubbleSkipLogged = false;
             bubbleWindow.showInactive();
-            applyBubbleWindowSize(currentBubbleW, currentBubbleH);
+            await waitForBubbleMapped();
+            if (currentBubbleW !== 300 || currentBubbleH !== 120) {
+              await applyBubbleWindowSize(currentBubbleW, currentBubbleH);
+            } else {
+              await positionBubbleWindow();
+            }
+            await positionBubbleWindow();
           } else {
             console.log('[bubble] skipping show/reposition during drag');
           }
@@ -1687,6 +1739,7 @@ function registerIpcHandlers() {
       } else if (!notificationsManager?.activeNotification) {
         // No notification and no card — hide
         if (bubbleWindow.isVisible()) {
+          bubbleMapped = false;
           bubbleWindow.hide();
           lastBubbleX = null;
           lastBubbleY = null;
