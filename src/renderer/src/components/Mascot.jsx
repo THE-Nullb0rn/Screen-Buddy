@@ -79,6 +79,7 @@ export default function Mascot({
   // Coordinates are the global cat centre; App converts the persisted
   // BrowserWindow top-left position before passing this value.
   initialPosition = null,
+  onSleepChange,
 }) {
   const containerRef = useRef(null)
   
@@ -148,6 +149,11 @@ export default function Mascot({
   const dragEndingRef = useRef(false)
   const dragPointerIdRef = useRef(null)
 
+  const mediaPlayingRef = useRef(mediaPlaying)
+  useEffect(() => {
+    mediaPlayingRef.current = mediaPlaying
+  }, [mediaPlaying])
+
   poseRef.current = pose
   if (!draggingRef.current && !dragPointerDownRef.current) {
     posRef.current = { x, y }
@@ -187,13 +193,17 @@ export default function Mascot({
     return posRef.current
   }, [])
 
-  const markInteraction = useCallback(() => {
+  const wakeUp = useCallback(() => {
     lastInteractRef.current = Date.now()
     if (poseRef.current === 'sleep') {
       poseRef.current = 'idle'
       setPose('idle')
     }
   }, [])
+
+  const markInteraction = useCallback(() => {
+    wakeUp()
+  }, [wakeUp])
 
   // ── Helper: start an idle behavior pose for a duration, then return to idle ──
   const startIdleBehavior = useCallback((behaviorPose, durationMs) => {
@@ -224,12 +234,15 @@ export default function Mascot({
 
   // Wake cat from sleep when music starts playing
   useEffect(() => {
-    if (mediaPlaying && poseRef.current === 'sleep') {
-      poseRef.current = 'idle'
-      setPose('idle')
-      lastInteractRef.current = Date.now()
+    if (mediaPlaying) {
+      wakeUp()
     }
-  }, [mediaPlaying])
+  }, [mediaPlaying, wakeUp])
+
+  const isAsleep = pose === 'sleep'
+  useEffect(() => {
+    onSleepChange?.(isAsleep)
+  }, [isAsleep, onSleepChange])
 
   // Squash on jump/pomodoro celebration landing
   const prevCelebratingRef = useRef(pomodoroCelebrating)
@@ -326,10 +339,8 @@ export default function Mascot({
         walkTweenRef.current = null
         setWalkMs(0)
         clearTimeout(roamTimeoutRef.current)
-      } else if (poseRef.current === 'sleep') {
-        poseRef.current = 'idle'
-        setPose('idle')
       }
+      wakeUp()
 
       // Switch to typing or typingfast based on event frequency in the last 1000ms
       const rate = typingEventsRef.current.length
@@ -358,7 +369,7 @@ export default function Mascot({
       }, 800)
     })
     return unsub
-  }, [isReminder, pomodoroCelebrating])
+  }, [isReminder, pomodoroCelebrating, wakeUp])
 
   // Walk tween is idle-only. Active drag writes pointer coords 1:1 in onDragMove.
 
@@ -437,11 +448,15 @@ export default function Mascot({
       clearTimeout(idleBehaviorTimeoutRef.current)
       setWalkMs(0)
       if (isReminder) {
+        lastInteractRef.current = Date.now()
         poseRef.current = 'alert'
         setPose('alert')
-      } else if (poseRef.current !== 'idle') {
-        poseRef.current = 'idle'
-        setPose('idle')
+      } else {
+        wakeUp()
+        if (poseRef.current !== 'idle') {
+          poseRef.current = 'idle'
+          setPose('idle')
+        }
       }
       return () => {
         roamGenRef.current += 1
@@ -471,7 +486,7 @@ export default function Mascot({
       }
 
       const idleFor = Date.now() - lastInteractRef.current
-      if (idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
+      if (!mediaPlayingRef.current && idleFor >= SLEEP_AFTER_MS && Math.random() < SLEEP_CHANCE) {
         setWalkMs(0)
         poseRef.current = 'sleep'
         setPose('sleep')
@@ -556,7 +571,7 @@ export default function Mascot({
       clearTimeout(roamTimeoutRef.current)
       clearTimeout(idleBehaviorTimeoutRef.current)
     }
-  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible, wakeUp])
 
   // ── Keep the cat on-screen if the overlay is resized ──────────────────────
   useEffect(() => {
@@ -915,6 +930,7 @@ export default function Mascot({
 
   // ── Hitbox Hover (Pet) ────────────────────────────────────────────────────
   const handleHeadPointerEnter = () => {
+    if (poseRef.current === 'sleep') return
     if (draggingRef.current || isReminder || pomodoroCelebrating) return
     // Cancel walks and other idle behaviors while being pet
     walkTweenRef.current = null
@@ -925,6 +941,7 @@ export default function Mascot({
   }
 
   const handleHeadPointerLeave = () => {
+    if (poseRef.current === 'sleep') return
     if (isHoveringHead) {
       setIsHoveringHead(false)
       // Resume normal idle cycle
@@ -943,7 +960,7 @@ export default function Mascot({
   }, [])
 
   let currentPose = pose
-  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating) {
+  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep') {
     currentPose = 'pet'
   }
 

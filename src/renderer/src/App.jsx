@@ -61,6 +61,19 @@ export default function App() {
   const [hungerState, setHungerState] = useState('IDLE')
   const [hungerCountdown, setHungerCountdown] = useState(() => Math.floor((20 + Math.random() * 20) * 60))
 
+  // ── Sleep state ────────────────────────────────────────────────────────────
+  const [isAsleep, setIsAsleep] = useState(false)
+  const isAsleepRef = useRef(false)
+
+  const handleSleepChange = useCallback((asleep) => {
+    setIsAsleep(asleep)
+    isAsleepRef.current = asleep
+  }, [])
+
+  useEffect(() => {
+    isAsleepRef.current = isAsleep
+  }, [isAsleep])
+
   // ── Pomodoro & Stopwatch state ─────────────────────────────────────────────
   const [timerMode, setTimerMode] = useState('none') // 'none' | 'pomodoro-work' | 'pomodoro-break' | 'stopwatch'
   const [timerSeconds, setTimerSeconds] = useState(0)
@@ -191,9 +204,11 @@ export default function App() {
       if (pausedRef.current) return
       if (hungerStateRef.current === 'IDLE') {
         setHungerCountdown((prev) => {
-          const next = prev - 1
-          if (next <= 0) {
-            setHungerState('ACTIVE')
+          const next = Math.max(0, prev - 1)
+          if (next === 0) {
+            if (!isAsleepRef.current) {
+              setHungerState('ACTIVE')
+            }
             return 0
           }
           return next
@@ -599,6 +614,7 @@ export default function App() {
         reminderType={reminderType}
         hungerState={hungerState}
         onFeed={handleFeed}
+        onSleepChange={handleSleepChange}
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}
         REMINDER_STATE={REMINDER_STATE}
