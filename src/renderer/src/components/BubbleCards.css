@@ -80,6 +80,23 @@
 }
 .mascot-dismiss:hover { background: rgba(243, 139, 168, 0.4); transform: scale(1.1); }
 
+.mascot-hunger-feed-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  background: rgba(166, 227, 161, 0.15);
+  border: 1px solid rgba(166, 227, 161, 0.4);
+  border-radius: 4px;
+  color: #a6e3a1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mascot-hunger-feed-btn:hover {
+  background: rgba(166, 227, 161, 0.3);
+}
+
 /* ── Persistent Timer Badge ───────────────────────────────────────── */
 .mascot-timer-badge {
   display: flex;

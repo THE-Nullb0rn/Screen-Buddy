@@ -26,6 +26,7 @@ const IDLE_PAUSE_MIN_MS = 5000
 const IDLE_PAUSE_MAX_MS = 15000
 const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
+const EAT_DURATION_MS = 6000
 
 // Idle behavior chances (checked each idle pause between walks)
 const PLAY_CHANCE = 0.15         // Increased to compensate for removed typing roll
@@ -67,6 +68,7 @@ export default function Mascot({
   reminderType = 'water',
   hungerState = 'IDLE',
   onFeed,
+  feedSignal = 0,
   pomodoroCelebrating = false,
   REMINDER_STATE,
   mediaPlaying = false,
@@ -219,18 +221,31 @@ export default function Mascot({
     }, durationMs)
   }, [])
 
+  const startEating = useCallback(() => {
+    wakeUp()
+    // Interrupt whatever it was doing to eat
+    walkTweenRef.current = null
+    setWalkMs(0)
+    clearTimeout(roamTimeoutRef.current)
+    clearTimeout(idleBehaviorTimeoutRef.current)
+    setIsHoveringHead(false)
+    startIdleBehavior('eat', EAT_DURATION_MS)
+  }, [wakeUp, startIdleBehavior])
+
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
       if (onFeed) onFeed()
-      // Interrupt whatever it was doing to eat
-      walkTweenRef.current = null
-      setWalkMs(0)
-      clearTimeout(roamTimeoutRef.current)
-      clearTimeout(idleBehaviorTimeoutRef.current)
-      setIsHoveringHead(false)
-      startIdleBehavior('eat', 900)
+      startEating()
     }
-  }, [hungerState, onFeed, startIdleBehavior])
+  }, [hungerState, onFeed, startEating])
+
+  const prevFeedSignalRef = useRef(feedSignal)
+  useEffect(() => {
+    if (prevFeedSignalRef.current !== feedSignal) {
+      prevFeedSignalRef.current = feedSignal
+      startEating()
+    }
+  }, [feedSignal, startEating])
 
   // Wake cat from sleep when music starts playing
   useEffect(() => {

@@ -28,6 +28,7 @@ const EXIT_DURATION_MS = 800
 const POMODORO_WORK_SEC = 25 * 60
 const POMODORO_BREAK_SEC = 5 * 60
 const POMODORO_CELEBRATION_MS = 1200
+const HUNGER_SNOOZE_SECONDS = 10 * 60
 
 const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
 
@@ -60,6 +61,7 @@ export default function App() {
   // ── Hunger state ───────────────────────────────────────────────────────────
   const [hungerState, setHungerState] = useState('IDLE')
   const [hungerCountdown, setHungerCountdown] = useState(() => Math.floor((20 + Math.random() * 20) * 60))
+  const [feedSignal, setFeedSignal] = useState(0)
 
   // ── Sleep state ────────────────────────────────────────────────────────────
   const [isAsleep, setIsAsleep] = useState(false)
@@ -467,6 +469,10 @@ export default function App() {
         dismissReminder()
       } else if (type === 'hunger:feed') {
         handleFeed()
+        setFeedSignal((s) => s + 1)
+      } else if (type === 'hunger:later') {
+        setHungerState('IDLE')
+        setHungerCountdown(HUNGER_SNOOZE_SECONDS)
       } else if (type === 'chat:send') {
         handleChatSend(payload)
       } else if (type === 'chat:dismiss') {
@@ -614,6 +620,7 @@ export default function App() {
         reminderType={reminderType}
         hungerState={hungerState}
         onFeed={handleFeed}
+        feedSignal={feedSignal}
         onSleepChange={handleSleepChange}
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}

@@ -82,6 +82,10 @@ export default function BubbleApp() {
     window.api.bubble.action('hunger:feed')
   }, [])
 
+  const handleHungerLater = useCallback(() => {
+    window.api.bubble.action('hunger:later')
+  }, [])
+
   // ── Dynamic resize: observe the root content div and report dimensions ──
   const contentRef = useRef(null)
   const lastReportedSize = useRef({ w: 0, h: 0 })
@@ -171,21 +175,31 @@ export default function BubbleApp() {
 
       {/* Hunger card */}
       {showHunger && (
-        <div
-          className="mascot-reminder-card is-small"
-          onClick={handleFeed}
-        >
+        <div className="mascot-reminder-card is-small">
           <div className="mascot-reminder-card__content">
             <span className="mascot-reminder-card__icon">🐟</span>
             <div className="mascot-reminder-card__text-wrap">
               <div className="mascot-reminder-card__title">Hungry!</div>
               <div className="mascot-reminder-card__message">Time to eat.</div>
+              <button
+                className="mascot-hunger-feed-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleFeed()
+                }}
+              >
+                Feed
+              </button>
             </div>
           </div>
           <button
             className="mascot-dismiss"
-            onClick={(e) => { e.stopPropagation(); handleFeed() }}
-            aria-label="Feed cat"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleHungerLater()
+            }}
+            aria-label="Remind me later"
+            title="Later"
           >
             ✕
           </button>
