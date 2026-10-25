@@ -519,6 +519,31 @@ async function reconcileHyprlandFullscreen(reason) {
   }
 }
 
+const pinInFlight = new Set()
+
+async function ensurePinned(title, reason) {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
+  if (pinInFlight.has(title)) return
+  pinInFlight.add(title)
+  try {
+    const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
+    const clients = JSON.parse(stdout)
+    if (!Array.isArray(clients)) return
+    const client = clients.find((c) => c?.title === title)
+    if (!client) return
+    if (client.pinned === false) {
+      await execFileAsync('hyprctl', ['dispatch', 'pin', `title:^(${title})$`])
+      console.log(`[pin] re-pinned ${title} after ${reason}`)
+    }
+  } catch (err) {
+    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+      console.warn(`[pin] ensurePinned failed for ${title}:`, err.message || err)
+    }
+  } finally {
+    pinInFlight.delete(title)
+  }
+}
+
 function startHyprlandFullscreenMonitor() {
   const signature = process.env.HYPRLAND_INSTANCE_SIGNATURE
   const runtimeDir = process.env.XDG_RUNTIME_DIR
@@ -540,6 +565,19 @@ function startHyprlandFullscreenMonitor() {
         const event = line.split('>>', 1)[0]
         if (event === 'fullscreen' || event === 'activewindow' || event === 'activewindowv2' || event === 'openwindow' || event === 'closewindow') {
           scheduleFullscreenReconcile(`event:${event}`); if (event === 'activewindowv2') positionBubbleWindow();
+        }
+        if (event === 'openwindow') {
+          setTimeout(() => {
+            ensurePinned('screen-buddy-overlay', 'openwindow:150ms')
+            ensurePinned('screen-buddy-bubbles', 'openwindow:150ms')
+          }, 150)
+          setTimeout(() => {
+            ensurePinned('screen-buddy-overlay', 'openwindow:700ms')
+            ensurePinned('screen-buddy-bubbles', 'openwindow:700ms')
+          }, 700)
+        } else if (event === 'workspace' || event === 'workspacev2') {
+          ensurePinned('screen-buddy-overlay', `event:${event}`)
+          ensurePinned('screen-buddy-bubbles', `event:${event}`)
         }
       }
     })
