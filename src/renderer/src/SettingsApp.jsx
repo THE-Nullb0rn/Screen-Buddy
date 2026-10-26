@@ -10,12 +10,6 @@ export default function SettingsApp() {
     return off
   }, [])
 
-  const handleSave = async (updates) => {
-    const newSettings = await window.api.setSettings(updates)
-    setSettings(newSettings)
-    window.api.setPaused(newSettings.paused)
-  }
-
   const handleClose = () => {
     window.close()
   }
@@ -26,7 +20,6 @@ export default function SettingsApp() {
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <SettingsModal
         settings={settings}
-        onSave={handleSave}
         onClose={handleClose}
       />
     </div>

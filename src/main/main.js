@@ -1410,7 +1410,7 @@ function registerIpcHandlers() {
    */
   ipcMain.handle('settings:set', (_event, updatedSettings) => {
     const validated = validateSettingsUpdate(updatedSettings)
-    settings = { ...settings, ...validated }
+    settings = { ...settings, ...validated, ...(validated.reminders ? { reminders: { ...settings.reminders, ...validated.reminders } } : {}) }
     saveSettings(settings)
 
     // Toggle autostart .desktop file based on the new setting

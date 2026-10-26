@@ -1,249 +1,628 @@
 /**
- * Settings modal styles
- * Uses the same catppuccin-inspired dark palette as Mascot.css
+ * Settings window styles
+ * Uses Catppuccin Mocha / Macchiato dark palette:
+ *   Base:    #1e1e2e
+ *   Mantle:  #181825
+ *   Surface: #313244
+ *   Text:    #cdd6f4
+ *   Muted:   #a6adc8 / #6c7086
+ *   Green:   #a6e3a1
+ *   Blue:    #89b4fa
+ *   Red:     #f38ba8
  */
 
-/* ── Backdrop ──────────────────────────────────────────────────────────────── */
-.settings-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+/* ── Root Window Layout ─────────────────────────────────────────────────────── */
+.settings-window {
+  width: 100vw;
+  height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-  pointer-events: auto; /* Required to catch clicks over #root's pointer-events: none */
-  /* Fade the backdrop in */
-  animation: backdrop-fade 0.2s ease both;
-}
-
-@keyframes backdrop-fade {
-  from { opacity: 0 }
-  to   { opacity: 1 }
-}
-
-/* ── Modal card ─────────────────────────────────────────────────────────────── */
-.settings-modal {
-  background: #1e1e2e; /* catppuccin base */
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  border-radius: 12px;
   border: 1px solid rgba(205, 214, 244, 0.12);
-  border-radius: 16px;
-  width: min(420px, 92vw);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  box-sizing: border-box;
+  user-select: none;
+  pointer-events: auto;
+}
+
+/* ── Focus Rings ───────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid #89b4fa;
+  outline-offset: 2px;
+}
+
+/* ── Sidebar (Tabs) ────────────────────────────────────────────────────────── */
+.settings-sidebar {
+  width: 130px;
+  flex-shrink: 0;
+  background: #181825;
+  border-right: 1px solid rgba(205, 214, 244, 0.08);
   display: flex;
   flex-direction: column;
-  gap: 0;
-  /* Slide-up entrance */
-  animation: modal-enter 0.22s cubic-bezier(0.34, 1.3, 0.64, 1) both;
-  overflow: hidden;
+  padding: 12px 6px;
+  box-sizing: border-box;
 }
 
-@keyframes modal-enter {
-  from { transform: translateY(24px) scale(0.96); opacity: 0 }
-  to   { transform: translateY(0) scale(1); opacity: 1 }
+.settings-sidebar button,
+.settings-sidebar a {
+  -webkit-app-region: no-drag;
 }
 
-/* ── Header ─────────────────────────────────────────────────────────────────── */
-.settings-modal__header {
+.settings-sidebar__brand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 20px 24px 16px;
-  border-bottom: 1px solid rgba(205, 214, 244, 0.08);
+  gap: 6px;
+  padding: 6px 10px 14px;
+  border-bottom: 1px solid rgba(205, 214, 244, 0.06);
+  margin-bottom: 8px;
 }
 
-.settings-modal__title {
-  margin: 0;
+.settings-sidebar__brand-icon {
   font-size: 1.1rem;
-  font-weight: 700;
-  color: #cdd6f4;
-  letter-spacing: 0.02em;
 }
 
-.settings-modal__close {
+.settings-sidebar__brand-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+  color: #cdd6f4;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
   background: transparent;
   border: none;
-  color: #6c7086;
-  font-size: 1rem;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: color 0.15s, background 0.15s;
-}
-.settings-modal__close:hover {
-  color: #f38ba8;
-  background: rgba(243, 139, 168, 0.1);
-}
-
-/* ── Body / fields ──────────────────────────────────────────────────────────── */
-.settings-modal__body {
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.settings-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.settings-field__label {
-  font-size: 0.9rem;
-  color: #cdd6f4;
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.settings-field__hint {
-  color: #6c7086;
-  font-weight: 400;
-  font-size: 0.8rem;
-}
-
-/* Number input */
-.settings-field__input {
-  background: #181825;
-  border: 1px solid rgba(205, 214, 244, 0.15);
   border-radius: 8px;
+  color: #a6adc8;
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+  box-sizing: border-box;
+}
+
+.settings-tab-btn:hover {
+  background: rgba(205, 214, 244, 0.06);
   color: #cdd6f4;
-  font-size: 0.9rem;
-  padding: 6px 12px;
-  width: 72px;
-  text-align: right;
-  outline: none;
-  transition: border-color 0.15s;
-}
-.settings-field__input:focus {
-  border-color: rgba(166, 227, 161, 0.5);
 }
 
-/* ── Toggle switch ──────────────────────────────────────────────────────────── */
-.settings-field--toggle {
-  position: relative;
+.settings-tab-btn--active {
+  background: rgba(137, 180, 250, 0.15);
+  color: #89b4fa;
+  font-weight: 600;
 }
 
-/* Hide the real checkbox but keep it accessible */
-.settings-field__checkbox {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-/* Visual toggle track */
-.settings-field__toggle-track {
-  display: block;
-  width: 44px;
-  height: 24px;
-  border-radius: 12px;
-  background: #313244;
-  border: 1px solid rgba(205, 214, 244, 0.12);
+.settings-tab-icon {
+  font-size: 0.95rem;
   flex-shrink: 0;
-  transition: background 0.2s;
-  position: relative;
 }
 
-/* Thumb */
-.settings-field__toggle-track::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #6c7086;
-  transition: left 0.2s, background 0.2s;
-}
-
-/* Checked state via adjacent sibling */
-.settings-field__checkbox:checked + .settings-field__toggle-track {
-  background: rgba(166, 227, 161, 0.3);
-  border-color: rgba(166, 227, 161, 0.5);
-}
-.settings-field__checkbox:checked + .settings-field__toggle-track::after {
-  left: 23px;
-  background: #a6e3a1;
-}
-
-/* ── Reminder types group ───────────────────────────────────────────────────── */
-.settings-reminders-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  border-top: 1px solid rgba(205, 214, 244, 0.08);
-  padding-top: 16px;
-}
-
-.settings-reminders-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-/* ── Footer ─────────────────────────────────────────────────────────────────── */
-.settings-modal__footer {
-  padding: 16px 24px 20px;
-  border-top: 1px solid rgba(205, 214, 244, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.settings-modal__config-path {
-  margin: 0;
-  font-size: 0.72rem;
-  color: #45475a;
-  font-family: monospace;
+.settings-tab-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.settings-modal__actions {
+/* ── Main Content Area ─────────────────────────────────────────────────────── */
+.settings-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1e1e2e;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
+.settings-header {
+  height: 48px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(205, 214, 244, 0.08);
+  flex-shrink: 0;
+}
+
+.settings-header button,
+.settings-header input {
+  -webkit-app-region: no-drag;
+}
+
+.settings-header__title-area {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  justify-content: flex-end;
+  min-width: 0;
+}
+
+.settings-header__title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #cdd6f4;
+  white-space: nowrap;
+}
+
+.settings-close-btn {
+  background: transparent;
+  border: none;
+  color: #6c7086;
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.settings-close-btn:hover {
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.12);
+}
+
+/* ── Saved / Error indicator ────────────────────────────────────────────────── */
+.settings-save-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #a6e3a1;
+  background: rgba(166, 227, 161, 0.12);
+  border: 1px solid rgba(166, 227, 161, 0.3);
+  padding: 2px 8px;
+  border-radius: 12px;
+  animation: fade-out 1.2s ease forwards;
+}
+
+.settings-error-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.12);
+  border: 1px solid rgba(243, 139, 168, 0.3);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+@keyframes fade-out {
+  0%   { opacity: 0; transform: scale(0.9); }
+  15%  { opacity: 1; transform: scale(1); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── Content Scroll Area ───────────────────────────────────────────────────── */
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+/* Thin dark scrollbar */
+.settings-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-content::-webkit-scrollbar-thumb {
+  background: #313244;
+  border-radius: 3px;
+}
+
+.settings-content::-webkit-scrollbar-thumb:hover {
+  background: #45475a;
+}
+
+/* ── Settings Cards ────────────────────────────────────────────────────────── */
+.settings-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(205, 214, 244, 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* ── Fields ─────────────────────────────────────────────────────────────────── */
+.settings-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  user-select: none;
+  min-width: 0;
+}
+
+.settings-field--toggle {
+  cursor: pointer;
+}
+
+.settings-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-field-vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-field__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-field__label {
+  font-size: 0.88rem;
+  color: #cdd6f4;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.settings-field__hint {
+  color: #a6adc8;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.settings-field__error {
+  color: #f38ba8;
+  font-size: 0.76rem;
+}
+
+/* ── Inputs ─────────────────────────────────────────────────────────────────── */
+.settings-input {
+  background: #181825;
+  border: 1px solid rgba(205, 214, 244, 0.15);
+  border-radius: 8px;
+  color: #cdd6f4;
+  font-size: 0.86rem;
+  padding: 7px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.settings-input:focus {
+  border-color: #89b4fa;
+}
+
+.settings-input--number {
+  width: 68px;
+  text-align: right;
+  padding-right: 8px;
+}
+
+.settings-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Toggle Switch ──────────────────────────────────────────────────────────── */
+.settings-toggle-checkbox {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.settings-toggle-track {
+  display: block;
+  width: 42px;
+  height: 22px;
+  border-radius: 11px;
+  background: #313244;
+  border: 1px solid rgba(205, 214, 244, 0.12);
+  flex-shrink: 0;
+  transition: background 0.2s, border-color 0.2s;
+  position: relative;
+}
+
+.settings-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #a6adc8;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.settings-toggle-checkbox:checked + .settings-toggle-track {
+  background: rgba(166, 227, 161, 0.3);
+  border-color: rgba(166, 227, 161, 0.5);
+}
+
+.settings-toggle-checkbox:checked + .settings-toggle-track::after {
+  transform: translateX(20px);
+  background: #a6e3a1;
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
-.btn {
+.settings-btn {
   border: none;
   border-radius: 8px;
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  padding: 8px 20px;
+  padding: 6px 14px;
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
 }
 
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.btn--ghost {
-  background: transparent;
+.settings-btn--secondary {
+  background: #313244;
   border: 1px solid rgba(205, 214, 244, 0.15);
-  color: #6c7086;
-}
-.btn--ghost:hover:not(:disabled) {
-  background: rgba(205, 214, 244, 0.06);
   color: #cdd6f4;
 }
 
-.btn--primary {
-  background: rgba(166, 227, 161, 0.2);
-  border: 1px solid rgba(166, 227, 161, 0.4);
+.settings-btn--secondary:hover {
+  background: #45475a;
+  border-color: rgba(205, 214, 244, 0.25);
+}
+
+/* ── Notification Mode Radio Cards ─────────────────────────────────────────── */
+.settings-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-radio-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(205, 214, 244, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.settings-radio-card:hover:not(.settings-radio-card--disabled) {
+  background: rgba(205, 214, 244, 0.05);
+  border-color: rgba(205, 214, 244, 0.18);
+}
+
+.settings-radio-card--selected {
+  background: rgba(166, 227, 161, 0.08);
+  border-color: rgba(166, 227, 161, 0.4);
+}
+
+.settings-radio-card--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-radio-circle {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #6c7086;
+  margin-top: 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.settings-radio-card--selected .settings-radio-circle {
+  border-color: #a6e3a1;
+}
+
+.settings-radio-card--selected .settings-radio-circle::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a6e3a1;
+}
+
+.settings-radio-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-radio-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.settings-radio-desc {
+  font-size: 0.75rem;
+  color: #a6adc8;
+  line-height: 1.35;
+}
+
+/* ── Status line ───────────────────────────────────────────────────────────── */
+.settings-status-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(137, 180, 250, 0.08);
+  border: 1px solid rgba(137, 180, 250, 0.18);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #89b4fa;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+
+.settings-status-icon {
+  flex-shrink: 0;
+}
+
+/* ── Chips for Blocked Apps ────────────────────────────────────────────────── */
+.settings-chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 32px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #313244;
+  border: 1px solid rgba(205, 214, 244, 0.12);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #cdd6f4;
+}
+
+.settings-chip-text {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-chip-remove {
+  background: transparent;
+  border: none;
+  color: #a6adc8;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 0.82rem;
+  line-height: 1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-chip-remove:hover {
+  color: #f38ba8;
+  background: rgba(243, 139, 168, 0.15);
+}
+
+.settings-chips-empty {
+  font-size: 0.78rem;
+  color: #6c7086;
+  font-style: italic;
+}
+
+/* ── Permission Box ────────────────────────────────────────────────────────── */
+.settings-permission-box {
+  padding: 10px 12px;
+  background: rgba(249, 226, 175, 0.1);
+  border: 1px solid rgba(249, 226, 175, 0.25);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.settings-permission-text {
+  margin: 0 0 8px 0;
+  color: #f9e2af;
+  white-space: pre-line;
+  line-height: 1.4;
+}
+
+/* ── About Tab ─────────────────────────────────────────────────────────────── */
+.settings-about-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-about-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #cdd6f4;
+}
+
+.settings-about-subtitle {
+  font-size: 0.8rem;
+  color: #a6adc8;
+  line-height: 1.4;
+}
+
+.settings-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #181825;
+  border: 1px solid rgba(205, 214, 244, 0.1);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.settings-code-text {
+  font-family: monospace;
+  font-size: 0.74rem;
   color: #a6e3a1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
-.btn--primary:hover:not(:disabled) {
-  background: rgba(166, 227, 161, 0.3);
-  transform: translateY(-1px);
+
+.settings-binds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
 }
+
+.settings-bind-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-bind-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #cdd6f4;
+}
+
