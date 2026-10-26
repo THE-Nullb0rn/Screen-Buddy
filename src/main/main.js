@@ -38,6 +38,19 @@ const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
 
+// Electron single-instance guard — prevent duplicate processes.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.exit(0)
+} else {
+  app.on('second-instance', (_event, argv) => {
+    console.log('[main] second-instance launch detected; argv:', argv.slice(1).join(' '))
+    if (argv.includes('--settings')) {
+      openSettingsWindow()
+    }
+  })
+}
+
 // ─── Wayland / Ozone flags ───────────────────────────────────────────────────
 // Must be set before app.ready fires. Required for proper rendering under
 // Hyprland's Wayland compositor. Safe to set on X11 (ignored gracefully).
@@ -165,6 +178,7 @@ if (rendererOverride === 'swiftshader') {
 }
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  if (!gotLock) return
   settings = loadSettings()
 
   typingDetector = new TypingDetector((channel, event) => {
@@ -212,18 +226,6 @@ app.whenReady().then(async () => {
     openSettingsWindow()
   }
 })
-
-// Electron single-instance guard — prevent duplicate processes.
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-  app.quit()
-} else {
-  app.on('second-instance', (_event, argv) => {
-    if (argv.includes('--settings')) {
-      openSettingsWindow()
-    }
-  })
-}
 
 // Quit when all windows are closed (shouldn't normally happen for an overlay,
 // but keeps the app well-behaved during development).
