@@ -32,7 +32,7 @@ const { execFile: execFileCallback } = require('child_process')
 const execFileAsync = util.promisify(execFileCallback)
 
 
-const { loadSettings, saveSettings, getSettingsPath } = require('./settings')
+const { loadSettings, saveSettings, getSettingsPath, validateSettingsUpdate } = require('./settings')
 const { setAutostart, removeAutostart } = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
@@ -191,8 +191,8 @@ app.whenReady().then(async () => {
 
   createOverlayWindow()
 
-  notificationsManager = new NotificationsManager(mainWindow, settings, { onShow: showBubbleWindow, onHide: hideBubbleWindow })
-  notificationsManager.start()
+  notificationsManager = new NotificationsManager(() => settings, mainWindow, { onShow: showBubbleWindow, onHide: hideBubbleWindow })
+  notificationsManager.applySettings()
   createTray()
   registerIpcHandlers()
   registerPowerMonitor()
@@ -1409,7 +1409,8 @@ function registerIpcHandlers() {
    * Handles autostart side-effect automatically.
    */
   ipcMain.handle('settings:set', (_event, updatedSettings) => {
-    settings = { ...settings, ...updatedSettings }
+    const validated = validateSettingsUpdate(updatedSettings)
+    settings = { ...settings, ...validated }
     saveSettings(settings)
 
     // Toggle autostart .desktop file based on the new setting
@@ -1426,6 +1427,8 @@ function registerIpcHandlers() {
 
     mainWindow?.webContents.send('settings:updated', settings)
     settingsWindow?.webContents.send('settings:updated', settings)
+
+    notificationsManager?.applySettings()
 
     console.log('[main] Settings saved:', settings)
     return settings
@@ -1908,6 +1911,12 @@ function registerIpcHandlers() {
 
   ipcMain.on('notification:action', (_event, id, actionKey) => {
     notificationsManager?.handleActionInvoked(id, actionKey)
+  })
+
+  ipcMain.handle('notifications:status', () => {
+    return notificationsManager
+      ? notificationsManager.getStatus()
+      : { platform: process.platform, mode: 'system', running: false, nameTaken: false }
   })
 
   ipcMain.on('reminder:state', (_event, state) => {

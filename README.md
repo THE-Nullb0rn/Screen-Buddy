@@ -137,10 +137,19 @@ screen-buddy can act as your system's notification daemon, displaying desktop no
 
 When enabled, screen-buddy claims the `org.freedesktop.Notifications` D-Bus name on startup and implements the [freedesktop.org Notifications spec 1.2](https://specifications.freedesktop.org/notification-spec/latest/).
 
+### Notification mode
+
+Configured via `notificationMode` in `~/.config/screen-buddy/settings.json`:
+- `"system"` (default): screen-buddy does not claim the desktop notification name, leaving notifications to your desktop environment or external notification daemon.
+- `"cat"`: screen-buddy becomes the desktop's notification daemon on Linux; requires that no other notification daemon is running.
+
+Windows and macOS always behave as `"system"`. Existing installs without `notificationMode` configured are migrated to `"cat"` automatically to preserve previous behavior.
+
 ### Settings (`~/.config/screen-buddy/settings.json`)
 
 | Setting | Default | Description |
 |---|---|---|
+| `notificationMode` | `"system"` | Notification mode: `"system"` (default, screen-buddy does not claim the notification name) or `"cat"` (screen-buddy becomes desktop notification daemon on Linux). |
 | `notificationsEnabled` | `true` | Set to `false` to disable the notification daemon entirely. screen-buddy will not claim the D-Bus name. |
 | `notificationAppBlocklist` | `[]` | List of app names (case-insensitive) whose notifications should be silently dropped. e.g. `["discord", "slack"]` |
 

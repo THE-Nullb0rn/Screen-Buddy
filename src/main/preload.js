@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('api', {
   notifications: {
     dismiss: (id, reason) => ipcRenderer.send('notification:dismiss', id, reason),
     action: (id, actionKey) => ipcRenderer.send('notification:action', id, actionKey),
+    getStatus: () => ipcRenderer.invoke('notifications:status'),
   },
   sendReminderState: (state) => ipcRenderer.send('reminder:state', state),
 

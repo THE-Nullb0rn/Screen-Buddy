@@ -53,11 +53,17 @@ const DEFAULT_SETTINGS = {
   /** Whether screen-buddy should act as the desktop notification daemon */
   notificationsEnabled: true,
 
+  /** Notification daemon mode: 'system' (default) or 'cat' (desktop notification daemon) */
+  notificationMode: 'system',
+
   /** List of app names (case-insensitive) to block from showing notifications */
   notificationAppBlocklist: [],
 
   /** Gemini model to use for the AI chat */
   geminiModel: 'gemini-3.5-flash-lite',
+
+  /** Global typing activity detection */
+  systemTypingDetection: false,
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -83,6 +89,14 @@ function loadSettings() {
     const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8')
     const saved = JSON.parse(raw)
 
+    let needsSave = false
+
+    // Migration for existing installs: if notificationMode key is not present, set to 'cat' and persist
+    if (saved && typeof saved === 'object' && !('notificationMode' in saved)) {
+      saved.notificationMode = 'cat'
+      needsSave = true
+    }
+
     // Backwards compatibility migration: merge old 'posture' and 'stretch' into 'movementBreak'
     if (saved.reminders) {
       if (saved.reminders.movementBreak === undefined) {
@@ -98,6 +112,10 @@ function loadSettings() {
 
     // Deep merge: saved values override defaults, but new default keys are added
     const merged = deepMerge(DEFAULT_SETTINGS, saved)
+    if (needsSave) {
+      saveSettings(merged)
+      console.log('[settings] Migrated existing install: notificationMode set to "cat"')
+    }
     console.log('[settings] Loaded from', SETTINGS_FILE)
     return merged
   } catch (err) {
@@ -127,6 +145,165 @@ function saveSettings(settings) {
  */
 function getSettingsPath() {
   return SETTINGS_FILE
+}
+
+function debugLog(key, reason) {
+  if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+    console.debug(`[settings] Dropping invalid setting for "${key}": ${reason}`)
+  }
+}
+
+/**
+ * Validate and sanitize a settings update patch.
+ * Keys not in the defined validation list pass through unchanged.
+ * Drops invalid values silently (debug-log only when SCREEN_BUDDY_DEBUG=1).
+ * Never throws and never logs the value of geminiApiKey.
+ *
+ * @param {object} patch
+ * @returns {object} Sanitized copy of patch
+ */
+function validateSettingsUpdate(patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return {}
+  }
+
+  const sanitized = {}
+
+  for (const [key, value] of Object.entries(patch)) {
+    switch (key) {
+      case 'intervalMinutes': {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          const clamped = Math.min(120, Math.max(1, Math.round(value)))
+          sanitized.intervalMinutes = clamped
+        } else {
+          debugLog('intervalMinutes', 'must be a finite number')
+        }
+        break
+      }
+
+      case 'paused':
+      case 'autostart':
+      case 'notificationsEnabled':
+      case 'systemTypingDetection': {
+        if (typeof value === 'boolean') {
+          sanitized[key] = value
+        } else {
+          debugLog(key, 'must be a boolean')
+        }
+        break
+      }
+
+      case 'notificationMode': {
+        if (value === 'system' || value === 'cat') {
+          sanitized.notificationMode = value
+        } else {
+          debugLog('notificationMode', 'must be "system" or "cat"')
+        }
+        break
+      }
+
+      case 'notificationAppBlocklist': {
+        if (Array.isArray(value)) {
+          const cleaned = []
+          for (const item of value) {
+            if (typeof item === 'string') {
+              const trimmed = item.trim()
+              if (trimmed.length > 0 && trimmed.length <= 100) {
+                cleaned.push(trimmed)
+                if (cleaned.length === 100) break
+              }
+            }
+          }
+          sanitized.notificationAppBlocklist = cleaned
+        } else {
+          debugLog('notificationAppBlocklist', 'must be an array')
+        }
+        break
+      }
+
+      case 'reminders': {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          const cleanedReminders = {}
+          for (const rKey of ['water', 'eyeRest', 'movementBreak']) {
+            if (typeof value[rKey] === 'boolean') {
+              cleanedReminders[rKey] = value[rKey]
+            }
+          }
+          sanitized.reminders = cleanedReminders
+        } else {
+          debugLog('reminders', 'must be an object')
+        }
+        break
+      }
+
+      case 'geminiModel': {
+        if (typeof value === 'string') {
+          const trimmed = value.trim()
+          if (trimmed.length > 0 && trimmed.length <= 100) {
+            sanitized.geminiModel = trimmed
+          } else {
+            debugLog('geminiModel', 'must be non-empty and max 100 chars')
+          }
+        } else {
+          debugLog('geminiModel', 'must be a string')
+        }
+        break
+      }
+
+      case 'geminiApiKey': {
+        if (typeof value === 'string') {
+          const trimmed = value.trim()
+          if (trimmed.length <= 300) {
+            sanitized.geminiApiKey = trimmed
+          } else {
+            debugLog('geminiApiKey', 'exceeds max 300 chars')
+          }
+        } else {
+          debugLog('geminiApiKey', 'must be a string')
+        }
+        break
+      }
+
+      case 'mascotPosition': {
+        if (
+          value &&
+          typeof value === 'object' &&
+          !Array.isArray(value) &&
+          typeof value.x === 'number' &&
+          Number.isFinite(value.x) &&
+          typeof value.y === 'number' &&
+          Number.isFinite(value.y)
+        ) {
+          sanitized.mascotPosition = { x: value.x, y: value.y }
+        } else {
+          debugLog('mascotPosition', 'must be an object with finite numeric x and y')
+        }
+        break
+      }
+
+      default: {
+        sanitized[key] = value
+        break
+      }
+    }
+  }
+
+  return sanitized
+}
+
+/**
+ * Determine the effective notification mode.
+ * Returns 'cat' only on Linux when settings.notificationMode is 'cat';
+ * otherwise returns 'system'.
+ *
+ * @param {object} settings
+ * @returns {'system' | 'cat'}
+ */
+function getEffectiveNotificationMode(settings) {
+  if (process.platform === 'linux' && settings && settings.notificationMode === 'cat') {
+    return 'cat'
+  }
+  return 'system'
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -159,4 +336,10 @@ function deepMerge(defaults, override) {
   return result
 }
 
-module.exports = { loadSettings, saveSettings, getSettingsPath }
+module.exports = {
+  loadSettings,
+  saveSettings,
+  getSettingsPath,
+  validateSettingsUpdate,
+  getEffectiveNotificationMode,
+}
