@@ -111,6 +111,18 @@ Or set the `GEMINI_API_KEY` environment variable.
 
 *Note: The input box auto-closes after 8 seconds of no typing, and the reply bubble auto-dismisses after 12 seconds.*
 
+### Opening settings
+
+You can open the settings window in several ways:
+
+- **System tray**: Click the tray icon and select **⚙️ Settings**.
+- **Hyprland hotkey**: Bind a shortcut to touch the control file in `hyprland.conf`:
+  ```hyprlang
+  # Super+Shift+S opens settings (example keybind)
+  bind = SUPER SHIFT, S, exec, touch "$XDG_RUNTIME_DIR/screen-buddy-settings"
+  ```
+- **CLI command**: Run `electron . --settings` from the project folder when the app is already running (the running instance opens the settings window).
+
 ### Fullscreen behavior
 
 On Hyprland, Screen-Buddy listens to the compositor's `.socket2.sock` events and

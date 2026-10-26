@@ -102,6 +102,7 @@ const HYPR_TITLE_MATCH = `title:^(${WINDOW_TITLE})$`
 const HOTKEY_ACCELERATOR = 'Control+Alt+P'
 const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-toggle')
 const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-chat')
+const SETTINGS_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-settings')
 
 // The floor overhang is ~66px. We add 100px so main.js doesn't artificially clip 
 // the window if the workAreaSize is slightly smaller than the renderer's full 1080 display.
@@ -183,6 +184,7 @@ app.whenReady().then(async () => {
   registerPowerMonitor()
   installHyprlandHotkeyFallback()
   installChatHotkeyFallback()
+  installSettingsHotkeyFallback()
   registerGlobalPauseShortcut()
   startHyprlandFullscreenMonitor()
 
@@ -205,12 +207,22 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send('media:status', current)
     }
   })
+
+  if (process.argv.includes('--settings')) {
+    openSettingsWindow()
+  }
 })
 
 // Electron single-instance guard — prevent duplicate processes.
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--settings')) {
+      openSettingsWindow()
+    }
+  })
 }
 
 // Quit when all windows are closed (shouldn't normally happen for an overlay,
@@ -232,10 +244,15 @@ app.on('will-quit', () => {
     clearInterval(passthruInterval)
     passthruInterval = null
   }
+  if (trayRetryTimeout) {
+    clearTimeout(trayRetryTimeout)
+    trayRetryTimeout = null
+  }
   globalShortcut.unregisterAll()
   stopHyprlandFullscreenMonitor()
   removeHyprlandHotkeyFallback()
   removeChatHotkeyFallback()
+  removeSettingsHotkeyFallback()
 })
 
 // ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
@@ -351,6 +368,31 @@ function removeChatHotkeyFallback() {
     if (fs.existsSync(CHAT_HOTKEY_CONTROL_FILE)) fs.unlinkSync(CHAT_HOTKEY_CONTROL_FILE)
   } catch (err) {
     console.warn('[main] Could not remove chat hotkey control file:', err.message)
+  }
+}
+
+// ─── Settings hotkey (Hyprland control file) ────────────────────────────────
+
+function installSettingsHotkeyFallback() {
+  try {
+    fs.writeFileSync(SETTINGS_CONTROL_FILE, '', { mode: 0o600 })
+    fs.watchFile(SETTINGS_CONTROL_FILE, { interval: 250 }, (current, previous) => {
+      if (current.mtimeMs === previous.mtimeMs) return
+      console.log('[main] Settings control file triggered; opening settings window')
+      openSettingsWindow()
+    })
+    console.log(`[main] Settings fallback ready; control file: ${SETTINGS_CONTROL_FILE}`)
+  } catch (err) {
+    console.error('[main] Could not create settings control file:', err)
+  }
+}
+
+function removeSettingsHotkeyFallback() {
+  try {
+    fs.unwatchFile(SETTINGS_CONTROL_FILE)
+    if (fs.existsSync(SETTINGS_CONTROL_FILE)) fs.unlinkSync(SETTINGS_CONTROL_FILE)
+  } catch (err) {
+    console.warn('[main] Could not remove settings control file:', err.message)
   }
 }
 
@@ -936,7 +978,7 @@ function openSettingsWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     settingsWindow.loadURL(process.env.VITE_DEV_SERVER_URL + '/#settings')
   } else {
-    settingsWindow.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: 'settings' })
+    settingsWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'), { hash: 'settings' })
   }
 
   settingsWindow.on('closed', () => {
@@ -1208,23 +1250,57 @@ function hideBubbleWindow(id) {
 }
 
 // ─── System tray ─────────────────────────────────────────────────────────────
+let trayRetryTimeout = null
+let trayRetryCount = 0
+const MAX_TRAY_RETRIES = 24
+
+function getTrayIcon() {
+  const iconPath = path.join(app.getAppPath(), 'assets/tray-icon.png')
+  if (fs.existsSync(iconPath)) {
+    const icon = nativeImage.createFromPath(iconPath)
+    if (!icon.isEmpty()) {
+      return icon
+    }
+    console.warn('[tray] icon file at %s is empty, falling back to placeholder', iconPath)
+  } else {
+    console.warn('[tray] icon file missing at %s, falling back to placeholder', iconPath)
+  }
+  return nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACklEQVQ' +
+    'I12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=='
+  )
+}
+
 /**
  * Creates the system tray icon and its context menu.
  * Falls back to an empty/placeholder icon if the asset isn't present yet.
  */
 function createTray() {
-  // Placeholder 16×16 empty PNG (1×1 transparent pixel, base64-encoded)
-  // Replace with real tray icon later: nativeImage.createFromPath(iconPath)
-  const placeholderIcon = nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACklEQVQ' +
-    'I12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=='
-  )
+  if (tray) return
 
-  tray = new Tray(placeholderIcon)
-  tray.setToolTip('screen-buddy')
-  buildTrayMenu()
+  try {
+    const icon = getTrayIcon()
+    tray = new Tray(icon)
+    tray.setToolTip('screen-buddy')
+    buildTrayMenu()
 
-  console.log('[main] System tray initialised')
+    if (trayRetryTimeout) {
+      clearTimeout(trayRetryTimeout)
+      trayRetryTimeout = null
+    }
+    console.log('[main] System tray initialised')
+  } catch (err) {
+    console.log(`[tray] creation failed: ${err.message}`)
+    if (trayRetryCount < MAX_TRAY_RETRIES) {
+      trayRetryCount++
+      trayRetryTimeout = setTimeout(() => {
+        trayRetryTimeout = null
+        createTray()
+      }, 5000)
+    } else {
+      console.log('[tray] stopped retrying after 24 attempts')
+    }
+  }
 }
 
 const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
@@ -1251,6 +1327,7 @@ function getNextTestReminderType(s) {
  * Called on creation and whenever pause state changes.
  */
 function buildTrayMenu() {
+  if (!tray) return
   const menu = Menu.buildFromTemplate([
     {
       label: '🔔 Test Reminder',
