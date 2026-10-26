@@ -753,10 +753,6 @@ export default function Mascot({
     }
 
     recaptureDragPointer()
-    applyDragPointer({
-      clientX: lastDragPointerRef.current?.clientX ?? event.clientX,
-      clientY: lastDragPointerRef.current?.clientY ?? event.clientY,
-    })
     setDragging(true)
   }
 
