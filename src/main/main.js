@@ -701,6 +701,10 @@ async function getBubbleWindow() {
   }
 
   bubbleWindow.on('closed', () => {
+    if (bubbleFollowTrailingTimer) {
+      clearTimeout(bubbleFollowTrailingTimer);
+      bubbleFollowTrailingTimer = null;
+    }
     bubbleWindow = null;
     bubbleWindowReady = false;
     bubbleMapped = false;
@@ -756,6 +760,78 @@ let mascotRepositionInProgress = false;
 // Initialized to the BrowserWindow creation defaults.
 let currentBubbleW = 300;
 let currentBubbleH = 120;
+
+const BUBBLE_FOLLOW_THROTTLE_MS = 75;
+let lastBubbleFollowTime = 0;
+let bubbleFollowTrailingTimer = null;
+
+function isBubbleFollowActive() {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return false;
+  const hasCard = Boolean(lastCardState && lastCardState.hasContent);
+  const hasNotif = Boolean(notificationsManager?.activeNotification);
+  return Boolean(
+    bubbleMapped &&
+    bubbleWindow &&
+    !bubbleWindow.isDestroyed() &&
+    bubbleWindow.isVisible() &&
+    (hasNotif || hasCard) &&
+    currentWindowMode === 'mascot' &&
+    !mascotRepositionInProgress
+  );
+}
+
+function onCatWindowMoved() {
+  if (!isBubbleFollowActive()) {
+    if (bubbleFollowTrailingTimer) {
+      clearTimeout(bubbleFollowTrailingTimer);
+      bubbleFollowTrailingTimer = null;
+    }
+    return;
+  }
+
+  const now = Date.now();
+  const elapsed = now - lastBubbleFollowTime;
+
+  if (elapsed >= BUBBLE_FOLLOW_THROTTLE_MS) {
+    lastBubbleFollowTime = now;
+    if (bubbleFollowTrailingTimer) {
+      clearTimeout(bubbleFollowTrailingTimer);
+      bubbleFollowTrailingTimer = null;
+    }
+    positionBubbleWindow();
+  } else if (!bubbleFollowTrailingTimer) {
+    const delay = Math.max(10, BUBBLE_FOLLOW_THROTTLE_MS - elapsed);
+    bubbleFollowTrailingTimer = setTimeout(() => {
+      bubbleFollowTrailingTimer = null;
+      if (isBubbleFollowActive()) {
+        lastBubbleFollowTime = Date.now();
+        positionBubbleWindow();
+      }
+    }, delay);
+  }
+}
+
+function onCatMoveQueueDrained() {
+  if (!isBubbleFollowActive()) {
+    if (bubbleFollowTrailingTimer) {
+      clearTimeout(bubbleFollowTrailingTimer);
+      bubbleFollowTrailingTimer = null;
+    }
+    return;
+  }
+
+  if (!bubbleFollowTrailingTimer) {
+    const elapsed = Date.now() - lastBubbleFollowTime;
+    const delay = Math.max(10, BUBBLE_FOLLOW_THROTTLE_MS - elapsed);
+    bubbleFollowTrailingTimer = setTimeout(() => {
+      bubbleFollowTrailingTimer = null;
+      if (isBubbleFollowActive()) {
+        lastBubbleFollowTime = Date.now();
+        positionBubbleWindow();
+      }
+    }, delay);
+  }
+}
 
 async function positionBubbleWindow() {
   if (!bubbleWindow || !bubbleWindowReady) return;
@@ -878,6 +954,7 @@ async function positionBubbleWindow() {
   } finally {
     bubblePositionInFlight = false;
     if (bubblePositionPending) {
+      bubblePositionPending = false;
       positionBubbleWindow();
     }
   }
@@ -1248,6 +1325,10 @@ function hideBubbleWindow(id) {
     // Only physically hide the window if there is no active card content
     const hasCard = !!(lastCardState && lastCardState.hasContent);
     if (!hasCard) {
+      if (bubbleFollowTrailingTimer) {
+        clearTimeout(bubbleFollowTrailingTimer);
+        bubbleFollowTrailingTimer = null;
+      }
       bubbleMapped = false;
       bubbleWindow.hide();
       lastBubbleX = null;
@@ -1511,16 +1592,16 @@ function registerIpcHandlers() {
       if (process.env.SCREEN_BUDDY_DEBUG === '1') {
         console.log(`[catwin] flushMove updated lastKnownCatWin=(${lastKnownCatWinX},${lastKnownCatWinY})`)
       }
+      onCatWindowMoved()
     } catch (err) {
       console.error('[main] hyprctl spawn error:', err)
     } finally {
       _moveInFlight = false
-      // Do NOT call positionBubbleWindow() here — the cat moves at 30fps and
-      // the bubble only needs to follow stable positions (drag-end, landing).
-      // Calling positionBubbleWindow() from here causes the bubble to chase
-      // center-screen reminder positions and other transient animation states.
-      // If another position arrived while we were running, flush it now
-      if (_movePending) flushMove()
+      if (_movePending) {
+        flushMove()
+      } else {
+        onCatMoveQueueDrained()
+      }
     }
   }
 
@@ -1742,6 +1823,10 @@ function registerIpcHandlers() {
     const { screen } = require('electron')
     if (mode === 'drag') {
       bubblePositionGeneration++;
+      if (bubbleFollowTrailingTimer) {
+        clearTimeout(bubbleFollowTrailingTimer);
+        bubbleFollowTrailingTimer = null;
+      }
       // Block roam/move immediately while we expand — this is the drag guard.
       currentWindowMode = 'drag'
       if (bubbleWindow) {

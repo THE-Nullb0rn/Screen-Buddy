@@ -67,6 +67,7 @@ export default function Mascot({
   reminderState,
   reminderType = 'water',
   hungerState = 'IDLE',
+  showHunger = false,
   onFeed,
   feedSignal = 0,
   pomodoroCelebrating = false,
@@ -167,6 +168,18 @@ export default function Mascot({
     reminderState === REMINDER_STATE.EXIT
 
   const isBigTreatment = isReminder && reminderType === 'movementBreak'
+
+  const isEating = pose === 'eat'
+  const isRoamBlocked = Boolean(
+    isReminder ||
+    pomodoroCelebrating ||
+    chatState !== 'idle' ||
+    notificationVisible ||
+    showHunger ||
+    isEating
+  )
+  const roamBlockedRef = useRef(isRoamBlocked)
+  roamBlockedRef.current = isRoamBlocked
 
   const measure = useCallback(() => ({
     width: SPRITE_WIDTH,    // always the sprite, never the container
@@ -394,6 +407,9 @@ export default function Mascot({
     const easeInOut = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
 
     const step = (now) => {
+      if (roamBlockedRef.current) {
+        walkTweenRef.current = null
+      }
       const tween = walkTweenRef.current
       if (tween && !draggingRef.current && !dragPointerDownRef.current) {
         const elapsed = now - tween.startTime
@@ -457,15 +473,19 @@ export default function Mascot({
       roamTimeoutRef.current = setTimeout(fn, ms)
     }
 
-    if (isReminder || pomodoroCelebrating || chatState !== 'idle' || notificationVisible) {
+    if (isRoamBlocked) {
       walkTweenRef.current = null
       clearTimeout(roamTimeoutRef.current)
-      clearTimeout(idleBehaviorTimeoutRef.current)
+      if (!isEating) {
+        clearTimeout(idleBehaviorTimeoutRef.current)
+      }
       setWalkMs(0)
       if (isReminder) {
         lastInteractRef.current = Date.now()
         poseRef.current = 'alert'
         setPose('alert')
+      } else if (isEating) {
+        // preserve eating pose
       } else {
         wakeUp()
         if (poseRef.current !== 'idle') {
@@ -476,7 +496,9 @@ export default function Mascot({
       return () => {
         roamGenRef.current += 1
         clearTimeout(roamTimeoutRef.current)
-        clearTimeout(idleBehaviorTimeoutRef.current)
+        if (!isEating) {
+          clearTimeout(idleBehaviorTimeoutRef.current)
+        }
       }
     }
 
@@ -488,6 +510,7 @@ export default function Mascot({
 
     const walkOnce = () => {
       if (gen !== roamGenRef.current) return
+      if (roamBlockedRef.current) return
       if (draggingRef.current || dragPointerDownRef.current) {
         console.log(`[Renderer] walkOnce deferred (still dragging) gen=${gen}`)
         later(walkOnce, 400)
@@ -564,6 +587,15 @@ export default function Mascot({
 
       later(() => {
         if (gen !== roamGenRef.current) return
+        if (roamBlockedRef.current) {
+          walkTweenRef.current = null
+          setWalkMs(0)
+          if (poseRef.current.startsWith('walk')) {
+            poseRef.current = 'idle'
+            setPose('idle')
+          }
+          return
+        }
         walkTweenRef.current = null
         setWalkMs(0)
         if (poseRef.current.startsWith('walk')) {
@@ -584,9 +616,11 @@ export default function Mascot({
     return () => {
       roamGenRef.current += 1
       clearTimeout(roamTimeoutRef.current)
-      clearTimeout(idleBehaviorTimeoutRef.current)
+      if (!isEating) {
+        clearTimeout(idleBehaviorTimeoutRef.current)
+      }
     }
-  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible, wakeUp])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible, wakeUp, isRoamBlocked, isEating])
 
   // ── Keep the cat on-screen if the overlay is resized ──────────────────────
   useEffect(() => {

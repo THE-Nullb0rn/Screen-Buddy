@@ -429,6 +429,8 @@ export default function App() {
   // ── Push card-state snapshot to bubble window ─────────────────────────────
   // Computed once and sent whenever any relevant state changes.
   // hasContent drives the bubble window visibility decision in main.js.
+  const showHunger = hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE
+
   useEffect(() => {
     const isReminderActive =
       reminderState === REMINDER_STATE.ENTRANCE ||
@@ -436,7 +438,6 @@ export default function App() {
       reminderState === REMINDER_STATE.EXIT
 
     const showTimer = timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE
-    const showHunger = hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE
     const showNowPlaying = nowPlayingVisible && !!(mediaStatus.title || mediaStatus.artist) && !isReminderActive
 
     const hasContent = isReminderActive || showTimer || showHunger || showNowPlaying || chatState !== 'idle'
@@ -460,7 +461,7 @@ export default function App() {
       mediaTitle: mediaStatus.title,
       mediaArtist: mediaStatus.artist,
     })
-  }, [reminderState, reminderType, hungerState, timerMode, timerSeconds, nowPlayingVisible, mediaStatus, chatState, chatReply])
+  }, [reminderState, reminderType, showHunger, timerMode, timerSeconds, nowPlayingVisible, mediaStatus, chatState, chatReply])
 
   // ── Handle actions forwarded from the bubble renderer (BubbleApp.jsx) ─────
   useEffect(() => {
@@ -619,6 +620,7 @@ export default function App() {
         reminderState={reminderState}
         reminderType={reminderType}
         hungerState={hungerState}
+        showHunger={showHunger}
         onFeed={handleFeed}
         feedSignal={feedSignal}
         onSleepChange={handleSleepChange}
