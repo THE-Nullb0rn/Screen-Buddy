@@ -476,10 +476,23 @@ export default function App() {
         setHungerCountdown(HUNGER_SNOOZE_SECONDS)
       } else if (type === 'chat:send') {
         handleChatSend(payload)
+      } else if (type === 'chat:retry') {
+        const msg = (typeof payload === 'string' && payload.trim()) ? payload.trim() : lastUserMessageRef.current
+        if (msg) handleChatSend(msg)
       } else if (type === 'chat:dismiss') {
         handleChatDismiss()
       } else if (type === 'chat:activity') {
-        resetChatInputTimer()
+        const hasText = typeof payload === 'boolean'
+          ? payload
+          : (payload && typeof payload.hasText === 'boolean' ? payload.hasText : undefined)
+        resetChatInputTimer(hasText)
+      } else if (type === 'chat:reply-pause') {
+        if (replyDismissTimerRef.current) {
+          clearTimeout(replyDismissTimerRef.current)
+          replyDismissTimerRef.current = null
+        }
+      } else if (type === 'chat:reply-resume') {
+        startReplyDismissTimer(replyDismissDurationRef.current)
       }
     })
     return () => offAction()
@@ -574,41 +587,107 @@ export default function App() {
     }
   }, [])
 
+  const lastUserMessageRef = useRef('')
+  const chatSendRequestIdRef = useRef(0)
+  const chatWaitingTimerRef = useRef(null)
+
   const chatInputTimerRef = useRef(null)
-  const resetChatInputTimer = useCallback(() => {
+  const hasUnsentTextRef = useRef(false)
+
+  const resetChatInputTimer = useCallback((hasText) => {
+    if (typeof hasText === 'boolean') {
+      hasUnsentTextRef.current = hasText
+    }
     if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
+    const timeoutMs = hasUnsentTextRef.current ? 45000 : 15000
     chatInputTimerRef.current = setTimeout(() => {
       setChatState('idle')
-    }, 8000)
+    }, timeoutMs)
+  }, [])
+
+  const replyDismissTimerRef = useRef(null)
+  const replyDismissDurationRef = useRef(12000)
+
+  const startReplyDismissTimer = useCallback((duration) => {
+    if (replyDismissTimerRef.current) clearTimeout(replyDismissTimerRef.current)
+    replyDismissTimerRef.current = setTimeout(() => {
+      setChatState('idle')
+    }, duration)
   }, [])
 
   useEffect(() => {
     if (chatState === 'input') {
-      resetChatInputTimer()
+      hasUnsentTextRef.current = false
+      resetChatInputTimer(false)
       return () => {
         if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
       }
     } else if (chatState === 'reply') {
-      const timer = setTimeout(() => {
-        setChatState('idle')
-      }, 12000)
-      return () => clearTimeout(timer)
+      const text = typeof chatReply === 'string'
+        ? chatReply
+        : (chatReply?.text || chatReply?.error || '')
+      const duration = Math.min(60000, Math.max(12000, 40 * text.length))
+      replyDismissDurationRef.current = duration
+      startReplyDismissTimer(duration)
+      return () => {
+        if (replyDismissTimerRef.current) clearTimeout(replyDismissTimerRef.current)
+      }
+    } else if (chatState !== 'waiting') {
+      if (chatWaitingTimerRef.current) {
+        clearTimeout(chatWaitingTimerRef.current)
+        chatWaitingTimerRef.current = null
+      }
     }
-  }, [chatState, resetChatInputTimer])
+  }, [chatState, chatReply, resetChatInputTimer, startReplyDismissTimer])
 
   const handleChatSend = useCallback((message) => {
+    if (!message || typeof message !== 'string') return
+    const trimmed = message.trim()
+    if (!trimmed) return
+
+    lastUserMessageRef.current = trimmed
+    chatSendRequestIdRef.current += 1
+    const currentRequestId = chatSendRequestIdRef.current
+
     setChatState('waiting')
-    window.api.chat.send(message).then(({ reply }) => {
-      setChatReply(reply)
+
+    if (chatWaitingTimerRef.current) {
+      clearTimeout(chatWaitingTimerRef.current)
+    }
+
+    let timedOut = false
+    chatWaitingTimerRef.current = setTimeout(() => {
+      if (chatSendRequestIdRef.current === currentRequestId) {
+        timedOut = true
+        setChatReply({ ok: false, error: 'The AI did not answer in time' })
+        setChatState('reply')
+      }
+    }, 30000)
+
+    window.api.chat.send(trimmed).then((result) => {
+      if (timedOut || chatSendRequestIdRef.current !== currentRequestId) {
+        return
+      }
+      if (chatWaitingTimerRef.current) {
+        clearTimeout(chatWaitingTimerRef.current)
+        chatWaitingTimerRef.current = null
+      }
+      setChatReply(result && typeof result === 'object' ? result : { ok: true, text: String(result) })
       setChatState('reply')
-    }).catch(err => {
-      setChatReply("Meow... something broke.")
+    }).catch((err) => {
+      if (timedOut || chatSendRequestIdRef.current !== currentRequestId) {
+        return
+      }
+      if (chatWaitingTimerRef.current) {
+        clearTimeout(chatWaitingTimerRef.current)
+        chatWaitingTimerRef.current = null
+      }
+      setChatReply({ ok: false, error: 'The AI did not answer in time' })
       setChatState('reply')
       console.error(err)
     })
   }, [])
 
-  
   const handleChatDismiss = useCallback(() => {
     setChatState('idle')
   }, [])

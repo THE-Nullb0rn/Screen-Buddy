@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import NotificationBubble from './components/NotificationBubble'
+import ChatMarkdown from './components/ChatMarkdown'
 import './components/NotificationBubble.css'
 import './components/BubbleCards.css'
 
@@ -53,17 +54,37 @@ export default function BubbleApp() {
   }, [])
 
   
+  const [inputText, setInputText] = useState('')
+  const [copyStatus, setCopyStatus] = useState(null)
+  const copyStatusTimerRef = useRef(null)
   const chatInputRef = useRef(null)
+  const lastActivityReportRef = useRef(0)
+
+  const adjustTextareaHeight = useCallback(() => {
+    const el = chatInputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const borderOffset = el.offsetHeight - el.clientHeight
+    el.style.height = `${el.scrollHeight + borderOffset}px`
+  }, [])
 
   useEffect(() => {
-    if (cardState?.chatState === 'input' && chatInputRef.current) {
-      chatInputRef.current.focus()
-      // Notify main that the input is mounted and DOM-focused.
-      // Main will respond with OS-level window focus (focusChatWindow) now
-      // that it knows the element is ready to receive keystrokes.
-      window.api.bubble.action('chat:ready')
+    if (cardState?.chatState === 'input') {
+      if (chatInputRef.current) {
+        chatInputRef.current.focus()
+        adjustTextareaHeight()
+        window.api.bubble.action('chat:ready')
+      }
+    } else {
+      setInputText('')
     }
-  }, [cardState?.chatState])
+  }, [cardState?.chatState, adjustTextareaHeight])
+
+  useEffect(() => {
+    if (cardState?.chatState === 'input') {
+      adjustTextareaHeight()
+    }
+  }, [inputText, cardState?.chatState, adjustTextareaHeight])
 
   const handleChatSend = useCallback((text) => {
     window.api.bubble.action('chat:send', text)
@@ -73,8 +94,63 @@ export default function BubbleApp() {
     window.api.bubble.action('chat:dismiss')
   }, [])
 
-  const handleChatActivity = useCallback(() => {
-    window.api.bubble.action('chat:activity')
+  const handleChatActivity = useCallback((hasText, force = false) => {
+    const now = Date.now()
+    if (force || now - lastActivityReportRef.current > 300) {
+      lastActivityReportRef.current = now
+      window.api.bubble.action('chat:activity', { hasText: Boolean(hasText) })
+    }
+  }, [])
+
+  const handleRetry = useCallback(() => {
+    window.api.bubble.action('chat:retry')
+  }, [])
+
+  const handleReplyMouseEnter = useCallback(() => {
+    window.api.bubble.action('chat:reply-pause')
+  }, [])
+
+  const handleReplyMouseLeave = useCallback(() => {
+    window.api.bubble.action('chat:reply-resume')
+  }, [])
+
+  const handleCopy = useCallback(async (text) => {
+    let success = false
+    try {
+      if (window.api && typeof window.api.copyText === 'function') {
+        const res = await window.api.copyText(text)
+        success = Boolean(res && res.ok)
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text)
+        success = true
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        success = document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+    } catch (_err) {
+      success = false
+    }
+
+    if (copyStatusTimerRef.current) clearTimeout(copyStatusTimerRef.current)
+    if (success) {
+      setCopyStatus('copied')
+      copyStatusTimerRef.current = setTimeout(() => setCopyStatus(null), 1200)
+    } else {
+      setCopyStatus('failed')
+      copyStatusTimerRef.current = setTimeout(() => setCopyStatus(null), 1500)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (copyStatusTimerRef.current) clearTimeout(copyStatusTimerRef.current)
+    }
   }, [])
 
 
@@ -232,26 +308,40 @@ export default function BubbleApp() {
 
       {/* Chat Input */}
       {chatState === 'input' && (
-        <div className="mascot-chat-input-wrap">
-          <input
+        <div
+          className="mascot-chat-input-wrap"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleChatActivity(Boolean(inputText.trim()), true)
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseMove={() => handleChatActivity(Boolean(inputText.trim()), false)}
+        >
+          <textarea
             ref={chatInputRef}
             className="mascot-chat-input"
-            type="text"
+            rows={1}
             placeholder="Talk to me..."
+            value={inputText}
+            onChange={(e) => {
+              setInputText(e.target.value)
+              handleChatActivity(Boolean(e.target.value.trim()), true)
+            }}
             onKeyDown={(e) => {
-              if (handleChatActivity) handleChatActivity()
-              if (e.key === 'Enter') {
+              handleChatActivity(Boolean(inputText.trim()), true)
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                if (e.target.value.trim() && handleChatSend) {
-                  handleChatSend(e.target.value)
+                const trimmed = inputText.trim()
+                if (trimmed) {
+                  handleChatSend(trimmed)
+                  setInputText('')
                 }
               } else if (e.key === 'Escape') {
                 e.preventDefault()
-                if (handleChatDismiss) handleChatDismiss()
+                handleChatDismiss()
               }
             }}
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
+            onFocus={() => handleChatActivity(Boolean(inputText.trim()), true)}
           />
         </div>
       )}
@@ -259,41 +349,83 @@ export default function BubbleApp() {
       {/* Chat Waiting Bubble */}
       {chatState === 'waiting' && (
         <div className="mascot-chat-bubble mascot-chat-bubble--waiting">
-          <div className="mascot-chat-bubble__dots">
-            <span>.</span><span>.</span><span>.</span>
+          <div className="mascot-chat-bubble__dots" aria-label="Thinking...">
+            <span />
+            <span />
+            <span />
           </div>
         </div>
       )}
 
       {/* Chat Reply Bubble */}
-      {chatState === 'reply' && (
-        <div
-          className="mascot-reminder-card mascot-chat-bubble--reply"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (handleChatDismiss) handleChatDismiss()
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <div className="mascot-reminder-card__content">
-            <div className="mascot-reminder-card__text-wrap">
-              <div className="mascot-reminder-card__message" style={{ whiteSpace: 'pre-wrap' }}>
-                {chatReply}
+      {chatState === 'reply' && (() => {
+        const isError = Boolean(chatReply && (!chatReply.ok || chatReply.error))
+        const replyText = typeof chatReply === 'string' ? chatReply : (chatReply?.text || '')
+        const errorMessage = chatReply?.error || (typeof chatReply === 'string' && !chatReply.ok ? chatReply : 'Something went wrong.')
+
+        return (
+          <div
+            className={`mascot-reminder-card mascot-chat-bubble--reply ${isError ? 'mascot-chat-bubble--error' : ''}`}
+            onMouseEnter={handleReplyMouseEnter}
+            onMouseLeave={handleReplyMouseLeave}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="mascot-chat-bubble__actions">
+              {!isError && (
+                <button
+                  className="mascot-chat-copy-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleCopy(replyText)
+                  }}
+                  title="Copy text"
+                  aria-label="Copy text"
+                >
+                  {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'}
+                </button>
+              )}
+              <button
+                className="mascot-dismiss"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleChatDismiss()
+                }}
+                aria-label="Dismiss chat"
+                title="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mascot-chat-bubble__body">
+              <div className="mascot-chat-bubble__scroll-area">
+                <div
+                  className={`mascot-chat-bubble__top-spacer ${isError ? 'is-error' : ''}`}
+                  aria-hidden="true"
+                />
+                {isError ? (
+                  <div className="mascot-chat-error-text">
+                    {errorMessage}
+                  </div>
+                ) : (
+                  <ChatMarkdown text={replyText} />
+                )}
               </div>
+              {isError && (
+                <button
+                  className="mascot-chat-retry-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleRetry()
+                  }}
+                >
+                  ↻ Retry
+                </button>
+              )}
             </div>
           </div>
-          <button
-            className="mascot-dismiss"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (handleChatDismiss) handleChatDismiss()
-            }}
-            aria-label="Dismiss chat"
-          >
-            ✕
-          </button>
-        </div>
-      )}
+        )
+      })()}
 
       </div>
     </div>

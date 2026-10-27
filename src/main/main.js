@@ -22,12 +22,14 @@ const {
   powerMonitor,
   globalShortcut,
   screen: electronScreen,
+  shell,
+  clipboard,
 } = require('electron')
 const path = require('path')
 const net = require('net')
 const fs = require('fs')
 const util = require('util')
-const { execFile: execFileCallback } = require('child_process')
+const { execFile: execFileCallback, spawn } = require('child_process')
 
 const execFileAsync = util.promisify(execFileCallback)
 
@@ -446,44 +448,35 @@ const GEMINI_SYSTEM_INSTRUCTION =
 
 const GEMINI_TIMEOUT_MS = 25_000
 
-const CHAT_ERROR_MESSAGES = {
-  noKey:      "I need a Gemini API key in settings.json.",
-  timeout:    "That took too long, try again, meow.",
-  noInternet: "Meow... can't reach the internet.",
-  rateLimit:  "Too many questions, let me nap a bit.",
-  badKey:     "My API key doesn't work.",
-  generic:    "Something broke, meow.",
-}
-
 /**
  * Call the Gemini generateContent REST endpoint.
  * Session history is maintained in the module-level chatHistory array (never saved to disk).
  *
  * @param {string} userMessage
- * @returns {Promise<string>} Reply text — never throws; errors map to cat messages.
+ * @returns {Promise<{ ok: boolean, text?: string, error?: string }>} Structured result
  */
 async function callGemini(userMessage) {
   // Resolve API key in main process only — never logged, never returned to renderer
   const apiKey = settings?.geminiApiKey || process.env.GEMINI_API_KEY || ''
   if (!apiKey) {
-    return CHAT_ERROR_MESSAGES.noKey
+    return { ok: false, error: 'Add your Gemini API key in Settings → Chat (AI)' }
   }
 
   const model = (settings?.geminiModel && settings.geminiModel.trim())
     ? settings.geminiModel.trim()
     : 'gemini-2.5-flash-lite'
 
-  // Append new user turn to session history
-  chatHistory.push({ role: 'user', parts: [{ text: userMessage }] })
-  // Trim to last 10 messages (5 turns) before sending
-  if (chatHistory.length > 10) {
-    chatHistory = chatHistory.slice(chatHistory.length - 10)
-  }
+  // Construct request contents including history plus new user turn without mutating chatHistory yet
+  const contents = [
+    ...chatHistory,
+    { role: 'user', parts: [{ text: userMessage }] },
+  ]
+  const boundedContents = contents.length > 10 ? contents.slice(contents.length - 10) : contents
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
   const body = {
     systemInstruction: { parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }] },
-    contents: chatHistory,
+    contents: boundedContents,
   }
 
   const controller = new AbortController()
@@ -505,9 +498,10 @@ async function callGemini(userMessage) {
     clearTimeout(timer)
     const isAbort = fetchErr.name === 'AbortError'
     console.error('[main] Gemini fetch error:', isAbort ? 'timeout' : fetchErr.message)
-    // Roll back the user turn so the failed message doesn't poison history
-    chatHistory.pop()
-    return isAbort ? CHAT_ERROR_MESSAGES.timeout : CHAT_ERROR_MESSAGES.noInternet
+    if (isAbort) {
+      return { ok: false, error: 'Request timed out after 25s. Please try again.' }
+    }
+    return { ok: false, error: 'Network error: unable to reach Gemini.' }
   } finally {
     clearTimeout(timer)
   }
@@ -521,10 +515,19 @@ async function callGemini(userMessage) {
       // Ignore JSON parse errors on error responses
     }
     console.error(`[main] Gemini HTTP ${res.status}: ${errorMessage}`)
-    chatHistory.pop()
-    if (res.status === 429) return CHAT_ERROR_MESSAGES.rateLimit
-    if (res.status === 401 || res.status === 403) return CHAT_ERROR_MESSAGES.badKey
-    return CHAT_ERROR_MESSAGES.generic
+    if (res.status === 401) {
+      return { ok: false, error: 'HTTP 401: Invalid API key. Please check your key in Settings.' }
+    }
+    if (res.status === 403) {
+      return { ok: false, error: 'HTTP 403: Access forbidden. Please check your API key permissions.' }
+    }
+    if (res.status === 429) {
+      return { ok: false, error: 'HTTP 429: Rate limit exceeded. Please wait a moment and try again.' }
+    }
+    if (res.status >= 500) {
+      return { ok: false, error: `HTTP ${res.status}: Gemini service is temporarily unavailable.` }
+    }
+    return { ok: false, error: `HTTP ${res.status}: Request failed.` }
   }
 
   let data
@@ -532,24 +535,23 @@ async function callGemini(userMessage) {
     data = await res.json()
   } catch (parseErr) {
     console.error('[main] Gemini response parse error:', parseErr.message)
-    chatHistory.pop()
-    return CHAT_ERROR_MESSAGES.generic
+    return { ok: false, error: 'Failed to parse Gemini response.' }
   }
 
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
   if (!text) {
     console.error('[main] Gemini unexpected response shape:', JSON.stringify(data).slice(0, 200))
-    chatHistory.pop()
-    return CHAT_ERROR_MESSAGES.generic
+    return { ok: false, error: 'Received an empty or unexpected response from Gemini.' }
   }
 
-  // Commit the model turn and keep the ring buffer bounded
+  // Commit both user turn and model turn to chatHistory only on success
+  chatHistory.push({ role: 'user', parts: [{ text: userMessage }] })
   chatHistory.push({ role: 'model', parts: [{ text }] })
   if (chatHistory.length > 10) {
     chatHistory = chatHistory.slice(chatHistory.length - 10)
   }
 
-  return text
+  return { ok: true, text }
 }
 
 function scheduleFullscreenReconcile(reason) {
@@ -2075,10 +2077,93 @@ function registerIpcHandlers() {
    */
   ipcMain.handle('chat:send', async (_event, userMessage) => {
     if (typeof userMessage !== 'string' || !userMessage.trim()) {
-      return { reply: CHAT_ERROR_MESSAGES.generic }
+      return { ok: false, error: 'Message cannot be empty.' }
     }
-    const reply = await callGemini(userMessage.trim())
-    return { reply }
+    return await callGemini(userMessage.trim())
+  })
+
+  ipcMain.on('app:open-external', (_event, rawUrl) => {
+    if (typeof rawUrl !== 'string') return
+    try {
+      const parsed = new URL(rawUrl)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(rawUrl).catch((err) => {
+          console.warn('[main] openExternal failed:', err.message)
+        })
+      }
+    } catch (_) {
+      // Ignore invalid URLs
+    }
+  })
+
+  ipcMain.handle('app:copy-text', async (_e, text) => {
+    if (typeof text !== 'string' || !text || text.length > 100000) {
+      return { ok: false, error: 'Nothing to copy.' }
+    }
+
+    if (process.platform === 'linux' && process.env.WAYLAND_DISPLAY) {
+      const copiedViaWlCopy = await new Promise((resolve) => {
+        let settled = false
+        let timeoutId = null
+        const done = (val) => {
+          if (!settled) {
+            settled = true
+            if (timeoutId) clearTimeout(timeoutId)
+            resolve(val)
+          }
+        }
+
+        timeoutId = setTimeout(() => {
+          try {
+            if (child) child.kill()
+          } catch (err) {
+            void err
+          }
+          done(false)
+        }, 2000)
+
+        let child
+        try {
+          child = spawn('wl-copy', [], { stdio: ['pipe', 'ignore', 'ignore'] })
+        } catch (_) {
+          done(false)
+          return
+        }
+
+        child.on('error', () => {
+          done(false)
+        })
+
+        child.on('exit', (code) => {
+          done(code === 0)
+        })
+
+        child.stdin.on('error', () => {
+          done(false)
+        })
+
+        try {
+          child.stdin.write(text)
+          child.stdin.end()
+        } catch (_) {
+          done(false)
+        }
+      })
+
+      if (copiedViaWlCopy) {
+        console.log('[clipboard] copied via wl-copy')
+        return { ok: true }
+      }
+    }
+
+    try {
+      clipboard.writeText(text)
+      console.log('[clipboard] copied via electron')
+      return { ok: true }
+    } catch (err) {
+      console.log(`[clipboard] failed: ${err.message}`)
+      return { ok: false, error: err.message }
+    }
   })
 
   // ── Misc ──────────────────────────────────────────────────────────────────

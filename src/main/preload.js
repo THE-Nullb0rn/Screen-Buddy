@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('api', {
   moveWindow: (x, y) => ipcRenderer.send('window:move', x, y),
   persistPosition: (x, y) => ipcRenderer.send('window:persist-position', x, y),
   setWindowMode: (mode, ...args) => ipcRenderer.invoke('window:mode', mode, ...args),
+  openExternal: (url) => ipcRenderer.send('app:open-external', url),
+  copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
 
   // ── Pause / resume ────────────────────────────────────────────────────────
 
