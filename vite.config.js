@@ -84,6 +84,17 @@ export default defineConfig({
         },
       },
       {
+        entry: resolve(__dirname, 'src/main/trayHost.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron'),
+            rollupOptions: {
+              external: ['electron', 'dbus-next'],
+            },
+          },
+        },
+      },
+      {
         entry: resolve(__dirname, 'src/main/typing/TypingProvider.js'),
         vite: {
           build: {

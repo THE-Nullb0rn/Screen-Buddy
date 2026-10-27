@@ -37,6 +37,7 @@ const { setAutostart, removeAutostart } = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
+const { watchTrayHost } = require('./trayHost')
 
 // Electron single-instance guard — prevent duplicate processes.
 const gotLock = app.requestSingleInstanceLock()
@@ -85,6 +86,7 @@ let bubbleMapped = false
 let bubbleSkipLogged = false
 let lastCardState = null // latest snapshot sent by App.jsx via bubble:card-state
 let tray = null
+let trayHostWatcher = null
 let settings = null // loaded from disk at startup
 let notificationsManager = null
 // Manual pause is intentionally not persisted. Fullscreen pause is a separate
@@ -193,7 +195,15 @@ app.whenReady().then(async () => {
 
   notificationsManager = new NotificationsManager(() => settings, mainWindow, { onShow: showBubbleWindow, onHide: hideBubbleWindow })
   notificationsManager.applySettings()
-  createTray()
+  trayHostWatcher = watchTrayHost({
+    onReady: () => {
+      destroyTray()
+      createTray()
+    },
+    onLost: () => {
+      destroyTray()
+    },
+  })
   registerIpcHandlers()
   registerPowerMonitor()
   installHyprlandHotkeyFallback()
@@ -242,6 +252,7 @@ app.on('will-quit', () => {
   typingDetector?.stop()
   mediaMonitor.stop()
   notificationsManager?.stop()
+  trayHostWatcher?.stop()
   if (passthruInterval) {
     clearInterval(passthruInterval)
     passthruInterval = null
@@ -1271,6 +1282,25 @@ function getTrayIcon() {
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACklEQVQ' +
     'I12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=='
   )
+}
+
+/**
+ * Destroys the system tray icon and resets retry state.
+ */
+function destroyTray() {
+  if (trayRetryTimeout) {
+    clearTimeout(trayRetryTimeout)
+    trayRetryTimeout = null
+  }
+  if (tray) {
+    try {
+      tray.destroy()
+    } catch (_) {
+      /* ignore */
+    }
+    tray = null
+  }
+  trayRetryCount = 0
 }
 
 /**
