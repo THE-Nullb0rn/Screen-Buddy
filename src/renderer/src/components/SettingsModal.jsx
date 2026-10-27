@@ -161,13 +161,13 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
 
   useEffect(() => {
     if (activeTab !== 'notifications') return
-    if (notifStatus?.mode !== 'cat' || notifStatus?.running) return
+    if (notifStatus?.running !== false) return
 
     const timer = setInterval(() => {
       refreshNotifStatus()
-    }, 3000)
+    }, 4000)
     return () => clearInterval(timer)
-  }, [activeTab, notifStatus?.mode, notifStatus?.running, refreshNotifStatus])
+  }, [activeTab, notifStatus?.running, refreshNotifStatus])
 
   // ── Close on Escape ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -309,24 +309,46 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     }
   }
 
+  const getFriendlyDaemonName = (ownerName) => {
+    if (!ownerName) return ownerName
+    const map = {
+      qs: 'Quickshell',
+    }
+    return map[ownerName] || ownerName
+  }
+
   const getNotifStatusText = () => {
     if (!notifStatus) return 'Checking notification status…'
     if (notifStatus.platform !== 'linux') {
       return 'Windows and macOS always use the system notifications.'
     }
+    const friendly = getFriendlyDaemonName(notifStatus.ownerName)
     if (notifStatus.mode === 'cat') {
       if (notifStatus.running) {
         return 'Cat is your notification daemon.'
       }
       if (notifStatus.nameTaken) {
+        if (friendly) {
+          return `${friendly} is handling notifications. Stop it and the cat will take over automatically (retrying every 15 s).`
+        }
         return 'Another notification daemon is running. Stop it and the cat will take over automatically (retrying every 15 s).'
       }
       return 'Starting…'
+    }
+    if (notifStatus.systemDaemonPresent === false) {
+      return "No notification daemon is running, so desktop notifications will be lost. Switch to Cat, or start your desktop's notification daemon."
+    }
+    if (friendly) {
+      return `Notifications are handled by ${friendly}.`
     }
     return 'Your desktop handles notifications.'
   }
 
   const isLinux = notifStatus ? notifStatus.platform === 'linux' : true
+  const isNoDaemonWarn =
+    isLinux &&
+    notifStatus?.mode === 'system' &&
+    notifStatus?.systemDaemonPresent === false
   const notificationsEnabled = settings.notificationsEnabled !== false
   const radiosDisabled = !notificationsEnabled || !isLinux
   const currentTabObj = TABS.find((t) => t.id === activeTab)
@@ -655,8 +677,8 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                   </div>
 
                   {/* Status Line */}
-                  <div className="settings-status-line">
-                    <span className="settings-status-icon">ℹ️</span>
+                  <div className={`settings-status-line${isNoDaemonWarn ? ' settings-status-line--warn' : ''}`}>
+                    <span className="settings-status-icon">{isNoDaemonWarn ? '⚠️' : 'ℹ️'}</span>
                     <span className="settings-status-text">{getNotifStatusText()}</span>
                   </div>
                 </div>

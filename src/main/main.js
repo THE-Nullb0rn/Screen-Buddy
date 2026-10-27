@@ -2028,10 +2028,10 @@ function registerIpcHandlers() {
     notificationsManager?.handleActionInvoked(id, actionKey)
   })
 
-  ipcMain.handle('notifications:status', () => {
+  ipcMain.handle('notifications:status', async () => {
     return notificationsManager
-      ? notificationsManager.getStatus()
-      : { platform: process.platform, mode: 'system', running: false, nameTaken: false }
+      ? await notificationsManager.getStatus()
+      : { platform: process.platform, mode: 'system', running: false, nameTaken: false, ownerName: null, systemDaemonPresent: null }
   })
 
   ipcMain.on('reminder:state', (_event, state) => {

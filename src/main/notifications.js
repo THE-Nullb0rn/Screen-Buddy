@@ -1,5 +1,6 @@
 'use strict'
 
+const fs = require('fs')
 const { getEffectiveNotificationMode } = require('./settings')
 
 // DO_NOT_QUEUE (1) means we do not queue if the name is already owned,
@@ -130,6 +131,7 @@ class NotificationsManager {
     this.reminderActive = false
 
     this.activeNotification = null
+    this._statusCache = null
   }
 
   get settings() {
@@ -259,13 +261,132 @@ class NotificationsManager {
     console.log(`[notifications] applySettings: mode=${mode} shouldRun=${shouldRun} running=${this.daemonRunning}`)
   }
 
-  getStatus() {
+  async _lookupDbusOwner(mode) {
+    let shortLivedBus = null
+    try {
+      let bus = this.bus
+      if (!bus) {
+        const dbusInfo = loadDbus()
+        if (!dbusInfo) {
+          return { ownerName: null, systemDaemonPresent: null }
+        }
+        shortLivedBus = dbusInfo.dbusModule.sessionBus()
+        shortLivedBus.on('error', () => {})
+        bus = shortLivedBus
+      }
+
+      const obj = await bus.getProxyObject('org.freedesktop.DBus', '/org/freedesktop/DBus')
+      const iface = obj.getInterface('org.freedesktop.DBus')
+
+      const hasOwner = await iface.NameHasOwner('org.freedesktop.Notifications')
+      if (!hasOwner) {
+        return {
+          ownerName: null,
+          systemDaemonPresent: mode === 'system' ? false : null,
+        }
+      }
+
+      const owner = await iface.GetNameOwner('org.freedesktop.Notifications')
+      let pid = null
+      try {
+        pid = await iface.GetConnectionUnixProcessID(owner)
+      } catch (_) {
+        pid = null
+      }
+
+      if (!pid || pid === process.pid) {
+        return {
+          ownerName: null,
+          systemDaemonPresent: mode === 'system' ? false : null,
+        }
+      }
+
+      let ownerName = null
+      try {
+        const comm = await fs.promises.readFile(`/proc/${pid}/comm`, 'utf8')
+        ownerName = comm.trim() || null
+      } catch (_) {
+        ownerName = null
+      }
+
+      return {
+        ownerName,
+        systemDaemonPresent: mode === 'system' ? true : null,
+      }
+    } catch (_) {
+      return { ownerName: null, systemDaemonPresent: null }
+    } finally {
+      if (shortLivedBus) {
+        try {
+          shortLivedBus.disconnect()
+        } catch (_) {
+          /* ignore disconnect errors */
+        }
+      }
+    }
+  }
+
+  async getStatus() {
     const settings = this.getSettings() || {}
-    return {
+    const mode = getEffectiveNotificationMode(settings)
+    const baseStatus = {
       platform: process.platform,
-      mode: getEffectiveNotificationMode(settings),
+      mode,
       running: this.daemonRunning,
       nameTaken: this.nameTaken,
+    }
+
+    if (process.platform !== 'linux') {
+      return {
+        ...baseStatus,
+        ownerName: null,
+        systemDaemonPresent: null,
+      }
+    }
+
+    if (!this.nameTaken && mode !== 'system') {
+      return {
+        ...baseStatus,
+        ownerName: null,
+        systemDaemonPresent: null,
+      }
+    }
+
+    const now = Date.now()
+    const cacheKey = `${mode}:${this.nameTaken}`
+    if (this._statusCache && (now - this._statusCache.timestamp < 2000) && this._statusCache.key === cacheKey) {
+      return {
+        ...baseStatus,
+        ...this._statusCache.data,
+      }
+    }
+
+    let timer = null
+    const timeoutPromise = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ ownerName: null, systemDaemonPresent: null }), 1500)
+    })
+
+    let lookupResult
+    try {
+      lookupResult = await Promise.race([
+        this._lookupDbusOwner(mode),
+        timeoutPromise,
+      ])
+    } catch (_) {
+      lookupResult = { ownerName: null, systemDaemonPresent: null }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+
+    this._statusCache = {
+      timestamp: Date.now(),
+      data: lookupResult,
+      key: cacheKey,
+    }
+
+    return {
+      ...baseStatus,
+      ...lookupResult,
     }
   }
 
