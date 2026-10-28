@@ -9,6 +9,7 @@ import App from './App'
 import SettingsApp from './SettingsApp'
 import BubbleApp from './BubbleApp'
 import './index.css'
+import './styles/theme.css'
 
 if (window.location.hash === '#bubbles') {
   document.title = 'screen-buddy-bubbles'

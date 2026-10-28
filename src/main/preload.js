@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('api', {
   setWindowMode: (mode, ...args) => ipcRenderer.invoke('window:mode', mode, ...args),
   openExternal: (url) => ipcRenderer.send('app:open-external', url),
   copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
+  getVersion: () => ipcRenderer.invoke('app:get-version'),
+  updates: { check: () => ipcRenderer.invoke('updates:check') },
 
   // ── Pause / resume ────────────────────────────────────────────────────────
 
@@ -128,6 +130,7 @@ contextBridge.exposeInMainWorld('api', {
       'bubble:card-state',
       'tray:test-hunger',
       'bubble:action',
+      'chat:focus-input',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

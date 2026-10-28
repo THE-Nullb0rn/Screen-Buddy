@@ -40,6 +40,7 @@ const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
 const { watchTrayHost } = require('./trayHost')
+const { checkForUpdates } = require('./updater')
 
 // Electron single-instance guard — prevent duplicate processes.
 const gotLock = app.requestSingleInstanceLock()
@@ -414,25 +415,76 @@ function removeSettingsHotkeyFallback() {
 /**
  * Focus the overlay window so the chat input can receive key events.
  * On Hyprland/Wayland, hyprctl dispatch focuswindow is more reliable than
- * Electron's mainWindow.focus() alone.
+ * Electron's bubbleWindow.focus() alone.
  */
 async function focusChatWindow() {
-  // Fast path / X11 / XWayland
-  try {
-    bubbleWindow?.focus()
-  } catch (err) {
-    console.warn('[main] mainWindow.focus() error:', err.message)
+  if (!bubbleWindow || bubbleWindow.isDestroyed()) return
+
+  // Wait until bubble window is mapped and positioned
+  if (!bubbleMapped) {
+    await waitForBubbleMapped()
   }
 
-  // Ask the Hyprland compositor to grant focus — required on native Wayland
-  if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
-    try {
-      await execFileAsync('hyprctl', ['dispatch', 'focuswindow', 'title:^(screen-buddy-bubbles)$'])
-      console.log('[main] hyprctl focuswindow sent for chat input')
-    } catch (err) {
-      // Not fatal — Wayland focus is best-effort for overlays.
-      console.warn('[main] hyprctl focuswindow failed (Wayland focus may not be available for overlays):', err.message)
+  // Ensure focusable
+  try {
+    bubbleWindow.setFocusable(true)
+  } catch (err) {
+    void err
+  }
+
+  const delays = [0, 120, 300]
+  let success = false
+  let attemptsDone = 0
+
+  for (let i = 0; i < delays.length; i++) {
+    attemptsDone++
+    if (delays[i] > 0) {
+      await new Promise((r) => setTimeout(r, delays[i]))
     }
+
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      try {
+        await execFileAsync('hyprctl', ['dispatch', 'focuswindow', 'title:^(screen-buddy-bubbles)$'])
+      } catch (err) {
+        void err
+      }
+    }
+
+    try {
+      bubbleWindow.focus()
+      bubbleWindow.webContents.focus()
+    } catch (err) {
+      void err
+    }
+
+    try {
+      bubbleWindow.webContents.send('chat:focus-input')
+    } catch (err) {
+      void err
+    }
+
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      try {
+        const { stdout } = await execFileAsync('hyprctl', ['activewindow', '-j'])
+        const active = JSON.parse(stdout)
+        if (active?.title === 'screen-buddy-bubbles') {
+          success = true
+          break
+        }
+      } catch (err) {
+        void err
+      }
+    } else {
+      // Non-hyprland environments (or test)
+      success = true
+      break
+    }
+  }
+
+  if (success) {
+    console.log(`[chat] focus ok after ${attemptsDone} attempt(s)`)
+  } else {
+    console.log('[chat] focus failed')
   }
 }
 
@@ -2195,6 +2247,18 @@ function registerIpcHandlers() {
       lastTrayTooltipUpdateAt = 0
     }
   })
+
+  /** Check for app updates via GitHub releases */
+  ipcMain.handle('updates:check', async () => {
+    try {
+      return await checkForUpdates()
+    } catch (err) {
+      return { status: 'error', currentVersion: app.getVersion(), error: err.message || 'Unknown update check error' }
+    }
+  })
+
+  /** Get current application version */
+  ipcMain.handle('app:get-version', () => app.getVersion())
 
   /** Expose the resolved settings file path to the renderer for display */
   ipcMain.handle('settings:get-path', () => getSettingsPath())

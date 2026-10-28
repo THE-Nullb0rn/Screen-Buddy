@@ -64,6 +64,9 @@ const DEFAULT_SETTINGS = {
 
   /** Global typing activity detection */
   systemTypingDetection: false,
+
+  /** Check for updates when Settings opens */
+  autoCheckUpdates: true,
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -184,7 +187,8 @@ function validateSettingsUpdate(patch) {
       case 'paused':
       case 'autostart':
       case 'notificationsEnabled':
-      case 'systemTypingDetection': {
+      case 'systemTypingDetection':
+      case 'autoCheckUpdates': {
         if (typeof value === 'boolean') {
           sanitized[key] = value
         } else {

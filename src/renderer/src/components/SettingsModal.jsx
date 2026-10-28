@@ -6,20 +6,21 @@
  *   - Reminders: Water, eye rest, movement break toggles
  *   - Notifications: Daemon mode, live status, app blocklist
  *   - Chat (AI): Gemini model & API key configuration
- *   - About: App info, config file path, Hyprland binds
+ *   - About: App info, config file path, Hyprland binds, Updates
  *
  * Instant-apply: changes are saved immediately via window.api.setSettings.
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import PixelIcon from './PixelIcon'
 import './SettingsModal.css'
 
 const TABS = [
-  { id: 'general', label: 'General', icon: '⚙️' },
-  { id: 'reminders', label: 'Reminders', icon: '⏰' },
-  { id: 'notifications', label: 'Notifications', icon: '🔔' },
-  { id: 'chat', label: 'Chat (AI)', icon: '💬' },
-  { id: 'about', label: 'About', icon: 'ℹ️' },
+  { id: 'general', label: 'General', icon: 'gear' },
+  { id: 'reminders', label: 'Reminders', icon: 'clock' },
+  { id: 'notifications', label: 'Notifications', icon: 'bell' },
+  { id: 'chat', label: 'Chat (AI)', icon: 'speech-bubble' },
+  { id: 'about', label: 'About', icon: 'paw' },
 ]
 
 export default function SettingsModal({ settings: initialSettings, onClose }) {
@@ -51,6 +52,11 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
   const [settingsPath, setSettingsPath] = useState('')
   const [copiedId, setCopiedId] = useState(null)
   const [notifStatus, setNotifStatus] = useState(null)
+
+  // Updates state (About tab)
+  const [appVersion, setAppVersion] = useState('')
+  const [updateState, setUpdateState] = useState({ status: 'idle' })
+  const [hasNewUpdate, setHasNewUpdate] = useState(false)
 
   // ── Notification status fetcher ───────────────────────────────────────────
   const refreshNotifStatus = useCallback(async () => {
@@ -129,12 +135,45 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     return off
   }, [])
 
-  // ── Settings path ─────────────────────────────────────────────────────────
+  // ── App version & settings path ───────────────────────────────────────────
   useEffect(() => {
     if (window.api?.getSettingsPath) {
       window.api.getSettingsPath().then(setSettingsPath)
     }
+    if (window.api?.getVersion) {
+      window.api.getVersion().then(setAppVersion)
+    }
   }, [])
+
+  // ── Update check function ─────────────────────────────────────────────────
+  const runUpdateCheck = useCallback(async (isSilent = false) => {
+    if (!window.api?.updates?.check) return
+    if (!isSilent) {
+      setUpdateState({ status: 'checking' })
+    }
+    try {
+      const res = await window.api.updates.check()
+      if (res?.latestVersion && res?.status === 'available') {
+        setHasNewUpdate(true)
+      } else {
+        setHasNewUpdate(false)
+      }
+      if (!isSilent) {
+        setUpdateState(res)
+      }
+    } catch (err) {
+      if (!isSilent) {
+        setUpdateState({ status: 'error', error: err.message || 'Update check failed' })
+      }
+    }
+  }, [])
+
+  // Silent update check on mount if autoCheckUpdates is ON
+  useEffect(() => {
+    if (settings.autoCheckUpdates !== false) {
+      runUpdateCheck(true)
+    }
+  }, [settings.autoCheckUpdates, runUpdateCheck])
 
   // ── Typing permission checker ─────────────────────────────────────────────
   const checkTypingPerm = useCallback(async () => {
@@ -290,17 +329,10 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
 
   const copyToClipboard = async (text, id) => {
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
+      if (window.api?.copyText) {
+        await window.api.copyText(text)
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text)
-      } else {
-        const textarea = document.createElement('textarea')
-        textarea.value = text
-        textarea.style.position = 'fixed'
-        textarea.style.opacity = '0'
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
       }
       setCopiedId(id)
       setTimeout(() => setCopiedId(null), 1200)
@@ -358,12 +390,15 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
       {/* ── Left Sidebar (Tabs) ─────────────────────────────────────────── */}
       <aside className="settings-sidebar" role="tablist" aria-label="Settings categories">
         <div className="settings-sidebar__brand">
-          <span className="settings-sidebar__brand-icon">🐱</span>
+          <span className="settings-sidebar__brand-icon">
+            <PixelIcon name="cat-head" size={18} />
+          </span>
           <span className="settings-sidebar__brand-name">Buddy</span>
         </div>
         <nav className="settings-nav">
           {TABS.map((tab, idx) => {
             const isActive = activeTab === tab.id
+            const isAboutTab = tab.id === 'about'
             return (
               <button
                 key={tab.id}
@@ -381,9 +416,13 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                 onKeyDown={(e) => handleTabKeyDown(e, idx)}
               >
                 <span className="settings-tab-icon" aria-hidden="true">
-                  {tab.icon}
+                  <PixelIcon name={tab.icon} size={14} />
                 </span>
                 <span className="settings-tab-label">{tab.label}</span>
+                {isActive && <span className="settings-tab-marker">▶</span>}
+                {isAboutTab && hasNewUpdate && !isActive && (
+                  <span className="settings-tab-badge" title="New version available" />
+                )}
               </button>
             )
           })}
@@ -392,11 +431,16 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
 
       {/* ── Right Content Area ──────────────────────────────────────────── */}
       <main className="settings-main">
-        {/* Header (Drag Region) */}
+        {/* Header */}
         <header className="settings-header">
           <div className="settings-header__title-area">
             <h1 className="settings-header__title">
-              {currentTabObj ? `${currentTabObj.icon} ${currentTabObj.label}` : 'Settings'}
+              {currentTabObj && (
+                <>
+                  <PixelIcon name={currentTabObj.icon} size={16} />
+                  <span>{currentTabObj.label}</span>
+                </>
+              )}
             </h1>
             {saveStatus === 'saved' && (
               <span className="settings-save-pill" role="status" aria-live="polite">
@@ -415,7 +459,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
             onClick={onClose}
             aria-label="Close settings"
           >
-            ✕
+            <PixelIcon name="cross" size={12} />
           </button>
         </header>
 
@@ -536,7 +580,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
               <div className="settings-card">
                 <label className="settings-field settings-field--toggle">
                   <div className="settings-field__info">
-                    <span className="settings-field__label">💧 Water</span>
+                    <span className="settings-field__label">Water</span>
                     <span className="settings-field__hint">
                       Periodic prompts to drink water and stay hydrated
                     </span>
@@ -554,7 +598,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
               <div className="settings-card">
                 <label className="settings-field settings-field--toggle">
                   <div className="settings-field__info">
-                    <span className="settings-field__label">👀 Eye rest</span>
+                    <span className="settings-field__label">Eye rest</span>
                     <span className="settings-field__hint">
                       20-20-20 prompts to look 20 feet away and reduce digital eye strain
                     </span>
@@ -572,7 +616,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
               <div className="settings-card">
                 <label className="settings-field settings-field--toggle">
                   <div className="settings-field__info">
-                    <span className="settings-field__label">🤸 Movement break</span>
+                    <span className="settings-field__label">Movement break</span>
                     <span className="settings-field__hint">
                       Prompts to stretch, check your posture, and move around
                     </span>
@@ -636,7 +680,11 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                         }
                       }}
                     >
-                      <div className="settings-radio-circle" />
+                      <div className="settings-radio-box">
+                        {((settings.notificationMode || 'system') === 'system' || !isLinux) && (
+                          <PixelIcon name="check" size={10} />
+                        )}
+                      </div>
                       <div className="settings-radio-info">
                         <span className="settings-radio-title">System (default)</span>
                         <span className="settings-radio-desc">
@@ -665,7 +713,11 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                         }
                       }}
                     >
-                      <div className="settings-radio-circle" />
+                      <div className="settings-radio-box">
+                        {isLinux && settings.notificationMode === 'cat' && (
+                          <PixelIcon name="check" size={10} />
+                        )}
+                      </div>
                       <div className="settings-radio-info">
                         <span className="settings-radio-title">Cat</span>
                         <span className="settings-radio-desc">
@@ -677,8 +729,28 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                   </div>
 
                   {/* Status Line */}
-                  <div className={`settings-status-line${isNoDaemonWarn ? ' settings-status-line--warn' : ''}`}>
-                    <span className="settings-status-icon">{isNoDaemonWarn ? '⚠️' : 'ℹ️'}</span>
+                  <div
+                    className={`settings-status-line ${
+                      isNoDaemonWarn
+                        ? 'settings-status-line--warn'
+                        : notifStatus?.running
+                        ? 'settings-status-line--ok'
+                        : ''
+                    }`}
+                  >
+                    <span className="settings-status-icon">
+                      <PixelIcon
+                        name="dot"
+                        size={8}
+                        color={
+                          isNoDaemonWarn
+                            ? 'var(--warn)'
+                            : notifStatus?.running
+                            ? 'var(--ok)'
+                            : 'var(--info)'
+                        }
+                      />
+                    </span>
                     <span className="settings-status-text">{getNotifStatusText()}</span>
                   </div>
                 </div>
@@ -727,7 +799,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                           onClick={() => handleRemoveBlockedApp(index)}
                           aria-label={`Remove ${app}`}
                         >
-                          ✕
+                          <PixelIcon name="cross" size={10} />
                         </button>
                       </span>
                     ))}
@@ -822,10 +894,120 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
             <>
               <div className="settings-card">
                 <div className="settings-about-header">
-                  <span className="settings-about-title">🟢 Screen Buddy</span>
+                  <span className="settings-about-title">
+                    <PixelIcon name="cat-head" size={20} />
+                    <span>Screen Buddy</span>
+                  </span>
                   <span className="settings-about-subtitle">
                     A desktop companion that nudges you to take care of yourself while you work.
                   </span>
+                  <span className="settings-about-version">
+                    Version v{appVersion || '0.1.0'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Updates Section */}
+              <div className="settings-card">
+                <div className="settings-field-vertical">
+                  <span className="settings-field__label">Updates</span>
+                  <span className="settings-field__hint">
+                    Check GitHub releases for the latest versions and fixes.
+                  </span>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn--primary"
+                      disabled={updateState.status === 'checking'}
+                      onClick={() => runUpdateCheck(false)}
+                    >
+                      {updateState.status === 'checking' ? (
+                        <>
+                          <span className="px-spinner">
+                            <PixelIcon name="refresh" size={12} />
+                          </span>
+                          <span>Checking…</span>
+                        </>
+                      ) : (
+                        'Check for updates'
+                      )}
+                    </button>
+
+                    {updateState.status === 'up-to-date' && (
+                      <span className="settings-status-line--ok" style={{ fontFamily: 'var(--font-body)', fontSize: '13px' }}>
+                        You&apos;re on the latest version v{appVersion || updateState.currentVersion}
+                      </span>
+                    )}
+
+                    {updateState.status === 'no-releases' && (
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-muted)' }}>
+                        No releases published yet
+                      </span>
+                    )}
+
+                    {updateState.status === 'offline' && (
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--danger)' }}>
+                        Can&apos;t reach GitHub. Check your connection.
+                      </span>
+                    )}
+
+                    {updateState.status === 'error' && (
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--danger)' }}>
+                        {updateState.error || 'Failed to check updates.'}{' '}
+                        <button
+                          type="button"
+                          className="settings-btn settings-btn--secondary settings-btn--small"
+                          onClick={() => runUpdateCheck(false)}
+                          style={{ marginLeft: '6px' }}
+                        >
+                          Try again
+                        </button>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Available update details card */}
+                  {updateState.status === 'available' && (
+                    <div className="settings-update-card settings-update-card--available">
+                      <div className="settings-update-title">
+                        <PixelIcon name="paw" size={14} color="var(--accent)" />
+                        <span>New version v{updateState.latestVersion} is out!</span>
+                      </div>
+                      {updateState.notes && (
+                        <pre className="settings-update-notes">{updateState.notes}</pre>
+                      )}
+                      <div>
+                        <button
+                          type="button"
+                          className="settings-btn settings-btn--primary settings-btn--small"
+                          onClick={() => {
+                            if (window.api?.openExternal) {
+                              window.api.openExternal(updateState.htmlUrl || 'https://github.com/THE-Nullb0rn/Screen-Buddy/releases')
+                            }
+                          }}
+                        >
+                          <PixelIcon name="external-link" size={12} />
+                          <span>Open on GitHub</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <label className="settings-field settings-field--toggle" style={{ marginTop: '6px' }}>
+                    <div className="settings-field__info">
+                      <span className="settings-field__label" style={{ fontSize: '13px' }}>
+                        Check for updates when Settings opens
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="settings-toggle-checkbox"
+                      checked={settings.autoCheckUpdates !== false}
+                      onChange={(e) => saveSettingsPatch({ autoCheckUpdates: e.target.checked })}
+                    />
+                    <span className="settings-toggle-track" aria-hidden="true" />
+                  </label>
                 </div>
               </div>
 
@@ -841,7 +1023,14 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                       className="settings-btn settings-btn--secondary"
                       onClick={() => copyToClipboard(settingsPath, 'path')}
                     >
-                      {copiedId === 'path' ? 'Copied' : 'Copy'}
+                      {copiedId === 'path' ? (
+                        <>
+                          <PixelIcon name="check" size={10} color="var(--ok)" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        'Copy'
+                      )}
                     </button>
                   </div>
                 </div>
@@ -871,7 +1060,14 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                             )
                           }
                         >
-                          {copiedId === 'bind-settings' ? 'Copied' : 'Copy'}
+                          {copiedId === 'bind-settings' ? (
+                            <>
+                              <PixelIcon name="check" size={10} color="var(--ok)" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            'Copy'
+                          )}
                         </button>
                       </div>
                     </div>
@@ -892,7 +1088,14 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                             )
                           }
                         >
-                          {copiedId === 'bind-pause' ? 'Copied' : 'Copy'}
+                          {copiedId === 'bind-pause' ? (
+                            <>
+                              <PixelIcon name="check" size={10} color="var(--ok)" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            'Copy'
+                          )}
                         </button>
                       </div>
                     </div>
@@ -913,7 +1116,14 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                             )
                           }
                         >
-                          {copiedId === 'bind-chat' ? 'Copied' : 'Copy'}
+                          {copiedId === 'bind-chat' ? (
+                            <>
+                              <PixelIcon name="check" size={10} color="var(--ok)" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            'Copy'
+                          )}
                         </button>
                       </div>
                     </div>
@@ -927,4 +1137,3 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     </div>
   )
 }
-

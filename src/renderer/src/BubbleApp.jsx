@@ -27,10 +27,19 @@ export default function BubbleApp() {
     const offCardState = window.api.on('bubble:card-state', (state) => {
       setCardState(state)
     })
+    const offFocusInput = window.api.on('chat:focus-input', () => {
+      const el = chatInputRef.current
+      if (el) {
+        el.focus()
+        const len = el.value.length
+        el.setSelectionRange(len, len)
+      }
+    })
     return () => {
       offNotifShow()
       offNotifClose()
       offCardState()
+      offFocusInput()
     }
   }, [])
 
