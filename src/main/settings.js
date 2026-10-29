@@ -341,6 +341,7 @@ function deepMerge(defaults, override) {
 }
 
 module.exports = {
+  DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
   getSettingsPath,

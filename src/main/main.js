@@ -34,7 +34,7 @@ const { execFile: execFileCallback, spawn } = require('child_process')
 const execFileAsync = util.promisify(execFileCallback)
 
 
-const { loadSettings, saveSettings, getSettingsPath, validateSettingsUpdate } = require('./settings')
+const { DEFAULT_SETTINGS, loadSettings, saveSettings, getSettingsPath, validateSettingsUpdate } = require('./settings')
 const { setAutostart, removeAutostart } = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
@@ -1106,10 +1106,12 @@ function openSettingsWindow() {
   }
   settingsWindow = new BrowserWindow({
     title: 'Screen Buddy Settings',
-    width: 500,
-    height: 700,
-    transparent: true,
-    backgroundColor: '#00000000',
+    width: 1120,
+    height: 740,
+    minWidth: 900,
+    minHeight: 600,
+    resizable: true,
+    backgroundColor: '#14111b',
     frame: false,
     alwaysOnTop: true,
     webPreferences: {
@@ -1569,13 +1571,8 @@ function registerIpcHandlers() {
     return settings
   })
 
-  /**
-   * Persist updated settings sent from the renderer.
-   * Handles autostart side-effect automatically.
-   */
-  ipcMain.handle('settings:set', (_event, updatedSettings) => {
-    const validated = validateSettingsUpdate(updatedSettings)
-    settings = { ...settings, ...validated, ...(validated.reminders ? { reminders: { ...settings.reminders, ...validated.reminders } } : {}) }
+  function applySettingsPipeline(nextSettings) {
+    settings = nextSettings
     saveSettings(settings)
 
     // Toggle autostart .desktop file based on the new setting
@@ -1584,19 +1581,39 @@ function registerIpcHandlers() {
     } else {
       removeAutostart()
     }
-    
+
     // Update typing detector settings
     if (typingDetector) {
       typingDetector.updateSettings(settings)
     }
+
+    setManualPaused(Boolean(settings.paused), 'settings')
 
     mainWindow?.webContents.send('settings:updated', settings)
     settingsWindow?.webContents.send('settings:updated', settings)
 
     notificationsManager?.applySettings()
 
-    console.log('[main] Settings saved:', settings)
+    console.log('[main] Settings applied:', settings)
     return settings
+  }
+
+  /**
+   * Persist updated settings sent from the renderer.
+   * Handles autostart side-effect automatically.
+   */
+  ipcMain.handle('settings:set', (_event, updatedSettings) => {
+    const validated = validateSettingsUpdate(updatedSettings)
+    const nextSettings = { ...settings, ...validated, ...(validated.reminders ? { reminders: { ...settings.reminders, ...validated.reminders } } : {}) }
+    return applySettingsPipeline(nextSettings)
+  })
+
+  ipcMain.handle('settings:reset', () => {
+    const nextSettings = {
+      ...DEFAULT_SETTINGS,
+      mascotPosition: settings.mascotPosition ?? DEFAULT_SETTINGS.mascotPosition,
+    }
+    return applySettingsPipeline(nextSettings)
   })
 
   // ── Typing ────────────────────────────────────────────────────────────────
@@ -2134,6 +2151,91 @@ function registerIpcHandlers() {
     return await callGemini(userMessage.trim())
   })
 
+  ipcMain.handle('chat:test-connection', async () => {
+    const apiKey = settings?.geminiApiKey || process.env.GEMINI_API_KEY || ''
+    if (!apiKey) {
+      return { ok: false, error: 'Add your Gemini API key in Settings → Chat & AI' }
+    }
+
+    const model = (settings?.geminiModel && settings.geminiModel.trim())
+      ? settings.geminiModel.trim()
+      : 'gemini-3.5-flash-lite'
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+    const body = {
+      contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK' }] }],
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+
+    let res
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } catch (fetchErr) {
+      clearTimeout(timer)
+      const isAbort = fetchErr.name === 'AbortError'
+      console.error('[main] Gemini test fetch error:', isAbort ? 'timeout' : fetchErr.message)
+      if (isAbort) {
+        return { ok: false, error: 'Request timed out after 10s. Please try again.' }
+      }
+      return { ok: false, error: 'Network error: unable to reach Gemini.' }
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (!res.ok) {
+      let errorMessage = 'unknown error'
+      try {
+        const errData = await res.json()
+        if (errData?.error?.message) errorMessage = errData.error.message
+      } catch (_) {
+        // Ignore JSON parse errors on error responses
+      }
+      console.error(`[main] Gemini test HTTP ${res.status}: ${errorMessage}`)
+      if (res.status === 401) {
+        return { ok: false, error: 'HTTP 401: Invalid API key. Please check your key in Settings.' }
+      }
+      if (res.status === 403) {
+        return { ok: false, error: 'HTTP 403: Access forbidden. Please check your API key permissions.' }
+      }
+      if (res.status === 404) {
+        return { ok: false, error: 'HTTP 404: Model not found. Please check your model name.' }
+      }
+      if (res.status === 429) {
+        return { ok: false, error: 'HTTP 429: Rate limit exceeded. Please wait a moment and try again.' }
+      }
+      if (res.status >= 500) {
+        return { ok: false, error: `HTTP ${res.status}: Gemini service is temporarily unavailable.` }
+      }
+      return { ok: false, error: `HTTP ${res.status}: Request failed.` }
+    }
+
+    let data
+    try {
+      data = await res.json()
+    } catch (parseErr) {
+      console.error('[main] Gemini test response parse error:', parseErr.message)
+      return { ok: false, error: 'Failed to parse Gemini response.' }
+    }
+
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+    if (!text) {
+      console.error('[main] Gemini test unexpected response shape:', JSON.stringify(data).slice(0, 200))
+      return { ok: false, error: 'Received an empty or unexpected response from Gemini.' }
+    }
+
+    return { ok: true }
+  })
+
   ipcMain.on('app:open-external', (_event, rawUrl) => {
     if (typeof rawUrl !== 'string') return
     try {
@@ -2259,6 +2361,31 @@ function registerIpcHandlers() {
 
   /** Get current application version */
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  /** Get system and application info for the About screen */
+  ipcMain.handle('app:get-info', () => {
+    const licensePath = path.join(app.getAppPath(), 'LICENSE')
+    return {
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      dataDir: path.dirname(getSettingsPath()),
+      license: fs.existsSync(licensePath) ? 'MIT License' : null,
+    }
+  })
+
+  /** Open the settings file directory in the OS file manager */
+  ipcMain.handle('app:open-settings-folder', async () => {
+    try {
+      const dir = path.dirname(getSettingsPath())
+      await shell.openPath(dir)
+    } catch (err) {
+      console.warn('[main] open-settings-folder failed:', err.message)
+    }
+  })
 
   /** Expose the resolved settings file path to the renderer for display */
   ipcMain.handle('settings:get-path', () => getSettingsPath())

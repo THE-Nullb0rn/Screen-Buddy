@@ -58,6 +58,11 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url) => ipcRenderer.send('app:open-external', url),
   copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
   getVersion: () => ipcRenderer.invoke('app:get-version'),
+  getAppInfo: () => ipcRenderer.invoke('app:get-info'),
+  openSettingsFolder: () => ipcRenderer.invoke('app:open-settings-folder'),
+  resetSettings: () => ipcRenderer.invoke('settings:reset'),
+  testChatConnection: () => ipcRenderer.invoke('chat:test-connection'),
+  platform: process.platform,
   updates: { check: () => ipcRenderer.invoke('updates:check') },
 
   // ── Pause / resume ────────────────────────────────────────────────────────

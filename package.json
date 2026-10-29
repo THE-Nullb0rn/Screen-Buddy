@@ -32,9 +32,11 @@
     "vite-plugin-electron-renderer": "^0.14.5"
   },
   "dependencies": {
-    "@fontsource/pixelify-sans": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/caveat": "^5.3.0",
     "dbus-next": "^0.10.2",
     "electron": "^32.0.1",
+    "lucide-react": "^1.63.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "uiohook-napi": "^1.5.5"

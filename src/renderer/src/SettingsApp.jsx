@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import SettingsModal from './components/SettingsModal'
+import SettingsModal from './components/settings/SettingsModal'
 
 export default function SettingsApp() {
   const [settings, setSettings] = useState(null)
