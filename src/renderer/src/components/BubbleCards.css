@@ -1,100 +1,209 @@
 /*
  * BubbleCards.css — shared card styles for the bubble window renderer.
- * These rules are copied from Mascot.css so the bubble window can
- * render reminder, hunger, timer and now-playing cards independently.
- * When updating visual styles, keep this file and Mascot.css in sync.
+ * All bubble cards share the modern dark UI style with speech tail.
  */
 
 @import url('./NotificationBubble.css');
 
-/* ── Shared Reminder / Hunger Card ───────────────────────────────── */
+/* ── Shared Card Tokens & Base Rules ─────────────────────────────── */
+:root {
+  --sb-bubble-bg: #1a1625;
+  --sb-bubble-border: rgba(255, 255, 255, 0.08);
+  --sb-bubble-radius: 14px;
+  --sb-bubble-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --sb-bubble-text: #f3ecdf;
+  --sb-bubble-muted: #a79fb8;
+  --sb-bubble-accent: #f6b93b;
+  --sb-bubble-danger: #ef7b8f;
+  --sb-bubble-ok: #7ed99a;
+}
+
+/* Container inside bubble window: measured by ResizeObserver */
+.sb-bubble-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 8px 8px;
+  width: max-content;
+  height: max-content;
+  box-sizing: border-box;
+}
+
+/* ── Common Card Base ────────────────────────────────────────────── */
+.sb-bubble-card,
+.mascot-reminder-card,
+.mascot-now-playing,
+.mascot-chat-input-wrap,
+.mascot-chat-bubble--waiting {
+  position: relative;
+  font-family: var(--font-ui, "Inter Variable", system-ui, sans-serif);
+  color: var(--sb-bubble-text);
+  box-sizing: border-box;
+}
+
+/* ── Speech Tail (shared downward triangle) ───────────────────────── */
+.mascot-reminder-card::before,
+.mascot-now-playing::before,
+.mascot-chat-input-wrap::before,
+.mascot-chat-bubble--waiting::before {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid var(--sb-bubble-border);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mascot-reminder-card::after,
+.mascot-now-playing::after,
+.mascot-chat-input-wrap::after,
+.mascot-chat-bubble--waiting::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid var(--sb-bubble-bg);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Tail color adaptations */
+.mascot-chat-bubble--error::before {
+  border-top-color: rgba(239, 123, 143, 0.5);
+}
+
+.mascot-chat-input-wrap:focus-within::before {
+  border-top-color: rgba(246, 185, 59, 0.6);
+}
+
+/* ── Reminder Card (Water / Eyes / Movement) ─────────────────────── */
 .mascot-reminder-card {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(24, 24, 37, 0.94);
-  border: 1px solid rgba(243, 139, 168, 0.4);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 12px;
-  padding: 6px 10px;
-  color: #cdd6f4;
+  background: var(--sb-bubble-bg);
+  border: 1px solid var(--sb-bubble-border);
+  box-shadow: var(--sb-bubble-shadow);
+  border-radius: var(--sb-bubble-radius);
+  padding: 8px 12px;
   pointer-events: auto;
-  animation: reminder-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: reminder-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   z-index: 10;
   white-space: nowrap;
 }
 
 .mascot-reminder-card.is-big {
-  border-color: rgba(137, 180, 250, 0.5);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
   padding: 10px 14px;
   gap: 12px;
-  margin-bottom: 20px;
 }
 
 @keyframes reminder-pop {
-  from { opacity: 0; transform: translateY(8px) scale(0.92); }
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .mascot-reminder-card__content {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
-.mascot-reminder-card__icon { font-size: 1.2rem; line-height: 1; }
-.mascot-reminder-card.is-big .mascot-reminder-card__icon { font-size: 1.55rem; }
+.mascot-reminder-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #251f33;
+  color: var(--sb-bubble-accent);
+  font-size: 1.15rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
 
-.mascot-reminder-card__text-wrap { display: flex; flex-direction: column; gap: 2px; }
+.mascot-reminder-card.is-big .mascot-reminder-card__icon {
+  width: 40px;
+  height: 40px;
+}
+
+.mascot-reminder-card__text-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .mascot-reminder-card__title {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #f38ba8;
+  color: var(--sb-bubble-accent);
 }
-.mascot-reminder-card.is-big .mascot-reminder-card__title { color: #89b4fa; font-size: 0.82rem; }
 
-.mascot-reminder-card__message { font-size: 0.85rem; color: #cdd6f4; font-weight: 500; }
-.mascot-reminder-card.is-big .mascot-reminder-card__message { font-size: 0.92rem; font-weight: 600; }
+.mascot-reminder-card__message {
+  font-size: 0.82rem;
+  color: var(--sb-bubble-text);
+  font-weight: 500;
+}
 
+.mascot-reminder-card.is-big .mascot-reminder-card__message {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* Corner Dismiss Button */
 .mascot-dismiss {
-  background: rgba(243, 139, 168, 0.15);
-  border: 1px solid rgba(243, 139, 168, 0.4);
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--sb-bubble-border);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
   font-size: 0.75rem;
-  color: #f38ba8;
+  color: var(--sb-bubble-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, transform 0.15s;
+  transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
   margin-left: 4px;
 }
-.mascot-dismiss:hover { background: rgba(243, 139, 168, 0.4); transform: scale(1.1); }
 
+.mascot-dismiss:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--sb-bubble-text);
+}
+
+/* ── Hunger Card ─────────────────────────────────────────────────── */
 .mascot-hunger-feed-btn {
   align-self: flex-start;
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 0.72rem;
-  background: rgba(166, 227, 161, 0.15);
-  border: 1px solid rgba(166, 227, 161, 0.4);
-  border-radius: 4px;
-  color: #a6e3a1;
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--sb-bubble-accent);
+  border: none;
+  border-radius: 8px;
+  color: #25190a;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: opacity 0.15s;
 }
 
 .mascot-hunger-feed-btn:hover {
-  background: rgba(166, 227, 161, 0.3);
+  opacity: 0.9;
 }
 
 /* ── Persistent Timer Badge ───────────────────────────────────────── */
@@ -102,86 +211,128 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(24, 24, 37, 0.9);
-  border: 1px solid rgba(205, 214, 244, 0.18);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--sb-bubble-bg);
+  border: 1px solid var(--sb-bubble-border);
+  box-shadow: var(--sb-bubble-shadow);
   border-radius: 20px;
-  padding: 3px 9px;
+  padding: 3px 10px;
   font-size: 0.74rem;
-  font-family: monospace;
+  font-family: var(--font-ui, "Inter Variable", system-ui, sans-serif);
   font-weight: 600;
-  color: #cdd6f4;
+  color: var(--sb-bubble-text);
   pointer-events: none;
   animation: badge-fade-in 0.2s ease both;
   white-space: nowrap;
 }
 
 @keyframes badge-fade-in {
-  from { opacity: 0; transform: scale(0.9); }
+  from { opacity: 0; transform: scale(0.94); }
   to   { opacity: 1; transform: scale(1); }
 }
 
 .mascot-timer-badge__icon { font-size: 0.85rem; line-height: 1; }
-.mascot-timer-badge__time { letter-spacing: 0.05em; color: #a6e3a1; }
+.mascot-timer-badge__time { letter-spacing: 0.05em; color: var(--sb-bubble-accent); font-family: monospace; }
 
 /* ── Now Playing Card ─────────────────────────────────────────────── */
 .mascot-now-playing {
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(24, 24, 37, 0.92);
-  border: 1px solid rgba(203, 166, 247, 0.38);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 12px rgba(203, 166, 247, 0.1);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-radius: 10px;
-  padding: 5px 10px;
-  max-width: 220px;
-  color: #cdd6f4;
+  gap: 10px;
+  background: var(--sb-bubble-bg);
+  border: 1px solid var(--sb-bubble-border);
+  box-shadow: var(--sb-bubble-shadow);
+  border-radius: var(--sb-bubble-radius);
+  padding: 8px 12px;
+  max-width: 260px;
+  color: var(--sb-bubble-text);
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
-  animation: now-playing-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: now-playing-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   z-index: 10;
 }
 
 @keyframes now-playing-pop {
-  from { opacity: 0; transform: translateY(6px) scale(0.94); }
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .mascot-now-playing__icon {
-  font-size: 0.9rem;
-  line-height: 1;
-  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #251f33;
+  color: var(--sb-bubble-accent);
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
-.mascot-now-playing__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden; }
+
+.mascot-now-playing__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
+}
+
 .mascot-now-playing__title {
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 600;
-  color: #cba6f7;
+  color: var(--sb-bubble-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.25;
 }
+
 .mascot-now-playing__artist {
-  font-size: 0.64rem;
+  font-size: 0.72rem;
   font-weight: 400;
-  color: #a6adc8;
+  color: var(--sb-bubble-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.25;
 }
 
+/* Decorative Audio Equalizer Bars */
+.mascot-now-playing__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 16px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
 
-/* ── Chat Input ─────────────────────────────────────────────── */
+.mascot-now-playing__bars span {
+  width: 3px;
+  background: var(--sb-bubble-accent);
+  border-radius: 1px;
+  animation: sb-equalizer 1s ease-in-out infinite alternate;
+}
+
+.mascot-now-playing__bars span:nth-child(1) { height: 40%; animation-duration: 0.8s; }
+.mascot-now-playing__bars span:nth-child(2) { height: 90%; animation-duration: 1.1s; }
+.mascot-now-playing__bars span:nth-child(3) { height: 60%; animation-duration: 0.9s; }
+.mascot-now-playing__bars span:nth-child(4) { height: 75%; animation-duration: 1.2s; }
+
+@keyframes sb-equalizer {
+  0%   { height: 25%; }
+  100% { height: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-now-playing__bars span {
+    animation: none;
+    height: 60%;
+  }
+}
+
+/* ── Chat Input Bubble ────────────────────────────────────────────── */
 .mascot-chat-input-wrap {
   display: flex;
   justify-content: center;
@@ -194,28 +345,27 @@
 }
 
 .mascot-chat-input {
-  background: rgba(24, 24, 37, 0.94);
-  border: 1px solid rgba(205, 214, 244, 0.2);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: 12px;
-  padding: 8px 12px;
+  background: var(--sb-bubble-bg);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: var(--sb-bubble-shadow);
+  border-radius: var(--sb-bubble-radius);
+  padding: 10px 14px;
   width: 280px;
   max-width: 320px;
   box-sizing: border-box;
-  color: #cdd6f4;
-  font-family: inherit;
+  color: var(--sb-bubble-text);
+  font-family: var(--font-ui, "Inter Variable", system-ui, sans-serif);
   font-size: 0.85rem;
   line-height: 1.4;
   outline: none;
   resize: none;
-  min-height: 38px;
+  min-height: 40px;
   max-height: 96px;
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
   display: block;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .mascot-chat-input::-webkit-scrollbar {
@@ -225,28 +375,27 @@
 }
 
 .mascot-chat-input::placeholder {
-  color: #6c7086;
+  color: var(--sb-bubble-muted);
 }
 
 .mascot-chat-input:focus {
-  border-color: rgba(137, 180, 250, 0.6);
+  border-color: rgba(246, 185, 59, 0.6);
+  box-shadow: var(--sb-bubble-shadow), 0 0 0 1px rgba(246, 185, 59, 0.4);
 }
 
-/* ── Chat Bubble ────────────────────────────────────────────── */
+/* ── Chat Waiting Bubble ──────────────────────────────────────────── */
 .mascot-chat-bubble {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(24, 24, 37, 0.94);
-  border: 1px solid rgba(137, 180, 250, 0.4);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 12px;
+  background: var(--sb-bubble-bg);
+  border: 1px solid var(--sb-bubble-border);
+  box-shadow: var(--sb-bubble-shadow);
+  border-radius: var(--sb-bubble-radius);
   padding: 8px 12px;
-  color: #cdd6f4;
+  color: var(--sb-bubble-text);
   pointer-events: auto;
-  animation: reminder-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: reminder-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   z-index: 10;
   max-width: 320px;
 }
@@ -264,7 +413,7 @@
 .mascot-chat-bubble__dots span {
   width: 7px;
   height: 7px;
-  background-color: #89b4fa;
+  background-color: var(--sb-bubble-accent);
   border-radius: 50%;
   display: inline-block;
   animation: chat-dot-pulse 1.4s infinite ease-in-out both;
@@ -293,22 +442,24 @@
   }
 }
 
+/* ── Chat Reply Bubble ────────────────────────────────────────────── */
 .mascot-chat-bubble--reply {
-  border-color: rgba(166, 227, 161, 0.5);
+  border-color: var(--sb-bubble-border);
   cursor: default;
   white-space: normal;
-  line-height: 1.35;
+  line-height: 1.4;
   width: 320px;
   max-width: 320px;
   box-sizing: border-box;
   display: block;
   position: relative;
-  padding: 8px 10px;
+  padding: 10px 12px;
 }
 
+/* ── Chat Error State ─────────────────────────────────────────────── */
 .mascot-chat-bubble--error {
-  border-color: rgba(243, 139, 168, 0.6);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 12px rgba(243, 139, 168, 0.15);
+  border-color: rgba(239, 123, 143, 0.5);
+  box-shadow: var(--sb-bubble-shadow), 0 0 6px rgba(239, 123, 143, 0.25);
 }
 
 .mascot-chat-bubble__body {
@@ -324,11 +475,11 @@
   overflow-x: hidden;
   padding-right: 4px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 .mascot-chat-bubble__scroll-area::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 
 .mascot-chat-bubble__scroll-area::-webkit-scrollbar-track {
@@ -336,18 +487,18 @@
 }
 
 .mascot-chat-bubble__scroll-area::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
 }
 
 .mascot-chat-bubble__scroll-area::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .mascot-chat-bubble__actions {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 8px;
+  right: 8px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -371,12 +522,13 @@
 }
 
 .mascot-chat-copy-btn {
-  background: rgba(205, 214, 244, 0.12);
-  border: 1px solid rgba(205, 214, 244, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--sb-bubble-border);
   border-radius: 6px;
-  padding: 2px 7px;
+  padding: 2px 8px;
   font-size: 0.72rem;
-  color: #cdd6f4;
+  font-family: inherit;
+  color: var(--sb-bubble-muted);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
   flex-shrink: 0;
@@ -384,43 +536,51 @@
 }
 
 .mascot-chat-copy-btn:hover {
-  background: rgba(205, 214, 244, 0.22);
-  border-color: rgba(205, 214, 244, 0.4);
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--sb-bubble-text);
 }
 
 .mascot-chat-error-text {
-  color: #f38ba8;
-  font-size: 0.85rem;
-  line-height: 1.35;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--sb-bubble-danger);
+  font-size: 0.82rem;
+  line-height: 1.4;
   font-weight: 500;
   word-break: break-word;
 }
 
+.mascot-chat-error-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .mascot-chat-retry-btn {
   align-self: flex-start;
-  margin-top: 6px;
-  padding: 3px 10px;
+  margin-top: 8px;
+  padding: 4px 12px;
   font-size: 0.75rem;
   font-weight: 600;
-  background: rgba(243, 139, 168, 0.15);
-  border: 1px solid rgba(243, 139, 168, 0.4);
-  border-radius: 6px;
-  color: #f38ba8;
+  background: rgba(239, 123, 143, 0.12);
+  border: 1px solid rgba(239, 123, 143, 0.35);
+  border-radius: 8px;
+  color: var(--sb-bubble-danger);
   cursor: pointer;
   transition: background 0.15s, transform 0.15s;
 }
 
 .mascot-chat-retry-btn:hover {
-  background: rgba(243, 139, 168, 0.3);
+  background: rgba(239, 123, 143, 0.22);
   transform: scale(1.02);
 }
 
-/* ── Chat Markdown Styles ────────────────────────────────────── */
+/* ── Chat Markdown Styles ────────────────────────────────────────── */
 .chat-markdown {
   display: block;
   font-size: 0.85rem;
-  line-height: 1.4;
-  color: #cdd6f4;
+  line-height: 1.45;
+  color: var(--sb-bubble-text);
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
@@ -436,41 +596,42 @@
 }
 
 .chat-md-heading {
-  margin: 2px 0;
-  color: #cba6f7;
+  margin: 4px 0 2px 0;
+  color: var(--sb-bubble-text);
+  font-weight: 600;
 }
 
 .chat-md-bold {
   font-weight: 700;
-  color: #cdd6f4;
+  color: var(--sb-bubble-text);
 }
 
 .chat-md-italic {
   font-style: italic;
-  color: #bac2de;
+  color: var(--sb-bubble-muted);
 }
 
 .chat-md-inline-code {
   font-family: monospace;
-  background: rgba(17, 17, 27, 0.7);
-  border: 1px solid rgba(205, 214, 244, 0.15);
-  padding: 1px 4px;
+  background: #14111b;
+  border: 1px solid var(--sb-bubble-border);
+  padding: 1px 5px;
   border-radius: 4px;
-  font-size: 0.8em;
-  color: #f9e2af;
+  font-size: 0.82em;
+  color: var(--sb-bubble-accent);
 }
 
 .chat-md-code-block {
-  margin: 4px 0;
-  padding: 6px 8px;
-  background: rgba(17, 17, 27, 0.85);
-  border: 1px solid rgba(205, 214, 244, 0.15);
-  border-radius: 6px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: #14111b;
+  border: 1px solid var(--sb-bubble-border);
+  border-radius: 8px;
   overflow-x: auto;
   font-family: monospace;
   font-size: 0.78rem;
-  line-height: 1.35;
-  color: #f9e2af;
+  line-height: 1.4;
+  color: var(--sb-bubble-accent);
 }
 
 .chat-md-code-block code {
@@ -497,18 +658,19 @@
 }
 
 .chat-md-list-item {
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 .chat-md-link {
-  color: #89b4fa;
+  color: var(--sb-bubble-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: opacity 0.15s;
 }
 
 .chat-md-link:hover {
-  color: #b4befe;
+  opacity: 0.85;
 }
+
 

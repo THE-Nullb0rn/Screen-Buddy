@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { Droplet, Eye, Footprints, Timer, Briefcase, Utensils, Music, AlertCircle } from 'lucide-react'
 import NotificationBubble from './components/NotificationBubble'
 import ChatMarkdown from './components/ChatMarkdown'
 import './components/NotificationBubble.css'
@@ -10,6 +11,23 @@ const REMINDER_MESSAGES = {
   movementBreak: { title: 'Movement Break', text: 'Time to get up and move!!', icon: '🤸' },
   pomodoroWorkEnd: { title: 'Pomodoro Done!', text: 'Pomodoro complete — take a 5 min break!', icon: '🍅' },
   pomodoroBreakEnd: { title: "Break's Over", text: "Break's over — back to work!", icon: '💼' },
+}
+
+function getReminderIcon(type, fallback) {
+  switch (type) {
+    case 'water':
+      return <Droplet size={18} />
+    case 'eyeRest':
+      return <Eye size={18} />
+    case 'movementBreak':
+      return <Footprints size={18} />
+    case 'pomodoroWorkEnd':
+      return <Timer size={18} />
+    case 'pomodoroBreakEnd':
+      return <Briefcase size={18} />
+    default:
+      return fallback || <Droplet size={18} />
+  }
 }
 
 export default function BubbleApp() {
@@ -226,7 +244,19 @@ export default function BubbleApp() {
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' }}>
-      <div ref={contentRef} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', paddingBottom: '4px', width: 'max-content', height: 'max-content' }}>
+      <div
+        ref={contentRef}
+        className="sb-bubble-content-wrapper"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '4px 8px 8px 8px',
+          width: 'max-content',
+          height: 'max-content',
+        }}
+      >
 
       {/* Desktop Notification */}
       {activeNotification && (
@@ -250,19 +280,26 @@ export default function BubbleApp() {
       {/* Now Playing card */}
       {showNowPlaying && (mediaTitle || mediaArtist) && (
         <div className="mascot-now-playing">
-          <span className="mascot-now-playing__icon">🎵</span>
+          <span className="mascot-now-playing__icon">
+            <Music size={18} />
+          </span>
           <div className="mascot-now-playing__text">
             {mediaTitle && <div className="mascot-now-playing__title">{mediaTitle}</div>}
             {mediaArtist && <div className="mascot-now-playing__artist">{mediaArtist}</div>}
+          </div>
+          <div className="mascot-now-playing__bars" aria-hidden="true">
+            <span /><span /><span /><span />
           </div>
         </div>
       )}
 
       {/* Hunger card */}
       {showHunger && (
-        <div className="mascot-reminder-card is-small">
+        <div className="mascot-reminder-card mascot-hunger-card">
           <div className="mascot-reminder-card__content">
-            <span className="mascot-reminder-card__icon">🐟</span>
+            <span className="mascot-reminder-card__icon">
+              <Utensils size={18} />
+            </span>
             <div className="mascot-reminder-card__text-wrap">
               <div className="mascot-reminder-card__title">Hungry!</div>
               <div className="mascot-reminder-card__message">Time to eat.</div>
@@ -298,7 +335,9 @@ export default function BubbleApp() {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mascot-reminder-card__content">
-            <span className="mascot-reminder-card__icon">{reminderInfo.icon}</span>
+            <span className="mascot-reminder-card__icon">
+              {getReminderIcon(reminderType, reminderInfo.icon)}
+            </span>
             <div className="mascot-reminder-card__text-wrap">
               <div className="mascot-reminder-card__title">{reminderInfo.title}</div>
               <div className="mascot-reminder-card__message">{reminderInfo.text}</div>
@@ -414,7 +453,8 @@ export default function BubbleApp() {
                 />
                 {isError ? (
                   <div className="mascot-chat-error-text">
-                    {errorMessage}
+                    <AlertCircle size={15} className="mascot-chat-error-icon" aria-hidden="true" />
+                    <span>{errorMessage}</span>
                   </div>
                 ) : (
                   <ChatMarkdown text={replyText} />

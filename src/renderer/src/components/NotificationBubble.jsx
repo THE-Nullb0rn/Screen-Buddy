@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useLayoutEffect } from 'react'
+import { Bell } from 'lucide-react'
 import './NotificationBubble.css'
 
 // ── Clamp expire_timeout to valid range ──────────────────────────────────────
@@ -104,14 +105,20 @@ export default function NotificationBubble({ notification, onDismiss, onAction }
     if (onDismiss) onDismiss(id, 2)
   }
 
+  const urgency = notification.urgency ?? 1
+  const urgencyClass = urgency === 2 ? ' is-critical' : urgency === 0 ? ' is-low' : ' is-normal'
+
   return (
     <div
-      className={`mascot-notif-bubble${expanded ? ' is-expanded' : ''}`}
+      className={`mascot-notif-bubble${expanded ? ' is-expanded' : ''}${urgencyClass}`}
       onClick={handleCardClick}
       onPointerDown={(e) => e.stopPropagation()}
       role="alertdialog"
       aria-label={summary || 'Notification'}
     >
+      <div className="mascot-notif-bubble__icon" aria-hidden="true">
+        <Bell size={18} />
+      </div>
       <div className="mascot-notif-bubble__content">
         {appName && (
           <div ref={appNameRef} className="mascot-notif-bubble__app-name">{appName}</div>

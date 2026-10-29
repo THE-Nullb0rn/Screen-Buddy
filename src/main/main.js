@@ -1509,6 +1509,12 @@ function buildTrayMenu() {
       },
     },
     {
+      label: '🐟 Test Hunger',
+      click: () => {
+        mainWindow?.webContents.send('tray:test-hunger')
+      },
+    },
+    {
       label: '⏱️ Pomodoro & Stopwatch',
       submenu: [
         {

@@ -3,7 +3,7 @@
 @keyframes reminder-pop {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.92);
+    transform: translateY(6px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -12,29 +12,100 @@
 }
 
 .mascot-notif-bubble {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  background: rgba(24, 24, 37, 0.94);
-  border: 1px solid rgba(166, 227, 161, 0.4);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 12px;
-  padding: 8px 10px;
-  color: #cdd6f4;
+  background: #1a1625;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  border-radius: 14px;
+  padding: 10px 12px;
+  color: #f3ecdf;
+  font-family: var(--font-ui, "Inter Variable", system-ui, sans-serif);
   pointer-events: auto;
-  animation: reminder-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: reminder-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   z-index: 10;
-  max-width: 280px;
+  max-width: 300px;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
+/* ── Speech Tail ─────────────────────────────────────────────────── */
+.mascot-notif-bubble::before {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mascot-notif-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid #1a1625;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── Urgency Variants ────────────────────────────────────────────── */
+.mascot-notif-bubble.is-low {
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.mascot-notif-bubble.is-low::before {
+  border-top-color: rgba(255, 255, 255, 0.05);
+}
+
+.mascot-notif-bubble.is-critical {
+  border-color: rgba(239, 123, 143, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45), 0 0 6px rgba(239, 123, 143, 0.25);
+}
+
+.mascot-notif-bubble.is-critical::before {
+  border-top-color: rgba(239, 123, 143, 0.5);
+}
+
+/* ── Expanded State ──────────────────────────────────────────────── */
 .mascot-notif-bubble.is-expanded {
   max-width: 340px;
   max-height: 260px;
 }
 
+/* ── Icon Badge ─────────────────────────────────────────────────── */
+.mascot-notif-bubble__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #251f33;
+  color: #f6b93b;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.mascot-notif-bubble.is-critical .mascot-notif-bubble__icon {
+  color: #ef7b8f;
+  background: rgba(239, 123, 143, 0.15);
+}
+
+/* ── Content ─────────────────────────────────────────────────────── */
 .mascot-notif-bubble__content {
   display: flex;
   flex-direction: column;
@@ -45,8 +116,9 @@
 
 .mascot-notif-bubble__app-name {
   font-size: 0.68rem;
-  color: #a6adc8;
+  color: #a79fb8;
   letter-spacing: 0.03em;
+  font-weight: 500;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -54,8 +126,8 @@
 
 .mascot-notif-bubble__summary {
   font-size: 0.85rem;
-  font-weight: 700;
-  color: #cdd6f4;
+  font-weight: 600;
+  color: #f3ecdf;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -68,8 +140,8 @@
 
 .mascot-notif-bubble__body {
   font-size: 0.78rem;
-  color: #a6adc8;
-  line-height: 1.35;
+  color: #a79fb8;
+  line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -86,6 +158,7 @@
   overflow-y: auto;
   max-height: 190px;
   scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 .mascot-notif-bubble.is-expanded .mascot-notif-bubble__body::-webkit-scrollbar {
@@ -93,58 +166,62 @@
 }
 
 .mascot-notif-bubble.is-expanded .mascot-notif-bubble__body::-webkit-scrollbar-thumb {
-  background: rgba(166, 227, 161, 0.3);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 4px;
 }
 
 .mascot-notif-bubble__toggle {
-  font-size: 11px;
-  color: #a6adc8;
+  font-size: 0.75rem;
+  color: #f6b93b;
   cursor: pointer;
-  margin-top: 2px;
+  margin-top: 3px;
   user-select: none;
   align-self: flex-start;
+  font-weight: 500;
+  transition: opacity 0.15s;
 }
 
 .mascot-notif-bubble__toggle:hover {
-  color: #cdd6f4;
+  text-decoration: underline;
+  opacity: 0.9;
 }
 
 .mascot-notif-bubble__open-btn {
   align-self: flex-start;
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 0.72rem;
-  background: rgba(166, 227, 161, 0.15);
-  border: 1px solid rgba(166, 227, 161, 0.4);
-  border-radius: 4px;
-  color: #a6e3a1;
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #f6b93b;
+  border: none;
+  border-radius: 8px;
+  color: #25190a;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: opacity 0.15s;
 }
 
 .mascot-notif-bubble__open-btn:hover {
-  background: rgba(166, 227, 161, 0.3);
+  opacity: 0.9;
 }
 
 .mascot-dismiss {
-  background: rgba(243, 139, 168, 0.15);
-  border: 1px solid rgba(243, 139, 168, 0.4);
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
   font-size: 0.75rem;
-  color: #f38ba8;
+  color: #a79fb8;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, transform 0.15s;
-  flex: 0 0 24px;
+  transition: background 0.15s, color 0.15s;
+  flex: 0 0 22px;
   margin-left: 4px;
 }
 
 .mascot-dismiss:hover {
-  background: rgba(243, 139, 168, 0.4);
-  transform: scale(1.1);
+  background: rgba(255, 255, 255, 0.12);
+  color: #f3ecdf;
 }
