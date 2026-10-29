@@ -115,7 +115,11 @@ export default function AdvancedTab({
 
   return (
     <>
-      <Card title="Updates" icon={RefreshCw}>
+      <Card
+        title="Updates"
+        subtitle="Check for updates and manage update settings."
+        icon={RefreshCw}
+      >
         <Row
           icon={RefreshCw}
           label="Check for updates automatically"
@@ -199,7 +203,11 @@ export default function AdvancedTab({
         )}
       </Card>
 
-      <Card title="Performance" icon={Zap}>
+      <Card
+        title="Performance"
+        subtitle="Optimize performance and resource usage."
+        icon={Zap}
+      >
         <Row
           icon={Zap}
           label="Animation FPS"
@@ -260,7 +268,11 @@ export default function AdvancedTab({
         </Row>
       </Card>
 
-      <Card title="Startup & System" icon={Laptop}>
+      <Card
+        title="Startup & System"
+        subtitle="Configure how Screen Buddy starts and runs with your system."
+        icon={Laptop}
+      >
         <Row
           icon={Laptop}
           label="Start with system"
@@ -326,7 +338,11 @@ export default function AdvancedTab({
         </Row>
       </Card>
 
-      <Card title="Experimental & Developer" icon={Code}>
+      <Card
+        title="Experimental & Developer"
+        subtitle="Advanced settings for development and customization."
+        icon={Code}
+      >
         <Row
           icon={Code}
           label="Experimental features"
@@ -406,7 +422,11 @@ export default function AdvancedTab({
         </div>
       </Card>
 
-      <Card title="Reset" icon={AlertTriangle}>
+      <Card
+        title="Reset"
+        subtitle="Restore all settings to default values."
+        icon={AlertTriangle}
+      >
         <p className="sb-card-desc">
           Restore all application settings back to their original factory defaults.
         </p>

@@ -11,7 +11,7 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
   }
 
   return (
-    <Card title="App">
+    <Card title="App" icon={Power}>
       <Row
         icon={Power}
         label="Start with system"

@@ -30,7 +30,7 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
     }
   }
 
-  const version = appInfo?.version || '0.1.0'
+  const version = appInfo?.version || ''
 
   return (
     <>
@@ -42,7 +42,7 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
           <div className="sb-about-hero__info">
             <div className="sb-about-title-row">
               <h2 className="sb-about-title">Screen Buddy</h2>
-              <span className="sb-version-badge">v{version}</span>
+              {version && <span className="sb-version-badge">v{version}</span>}
             </div>
             <p className="sb-about-desc">
               A cute desktop companion that keeps you company and helps you take care of yourself while you work.
@@ -91,7 +91,7 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
           <div className="sb-update-status-wrap">
             {updateState.status === 'up-to-date' && (
               <div className="sb-update-banner sb-update-banner--ok">
-                <span>You&apos;re on the latest version (v{version})</span>
+                <span>You&apos;re on the latest version{version ? ` (v${version})` : ''}</span>
               </div>
             )}
 
@@ -152,9 +152,13 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
         )}
       </Card>
 
-      <Card title="App information" icon={Info}>
+      <Card
+        title="App information"
+        subtitle="General information about Screen Buddy."
+        icon={Info}
+      >
         <Row label="Version" hint="Current release build">
-          <span className="sb-info-value">v{version}</span>
+          <span className="sb-info-value">{version ? `v${version}` : '—'}</span>
         </Row>
         <Row label="Electron" hint="Desktop runtime">
           <span className="sb-info-value">{appInfo?.electron ? `v${appInfo.electron}` : '—'}</span>
@@ -175,7 +179,11 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
         </Row>
       </Card>
 
-      <Card title="Credits" icon={Heart}>
+      <Card
+        title="Credits"
+        subtitle="Special thanks to the amazing tools and people."
+        icon={Heart}
+      >
         <Row label="Electron" hint="Cross-platform desktop application framework">
           <Button variant="secondary" size="small" onClick={() => openUrl('https://www.electronjs.org')}>
             <ExternalLink size={13} />
@@ -210,7 +218,11 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
 
       {/* License Card: Only shown if a LICENSE file exists in the repo root */}
       {appInfo?.license && (
-        <Card title="License" icon={Shield}>
+        <Card
+          title="License"
+          subtitle="Screen Buddy is open source and free to use."
+          icon={Shield}
+        >
           <Row label={appInfo.license} hint="Open source license terms">
             <Button
               variant="secondary"
@@ -224,7 +236,11 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
         </Card>
       )}
 
-      <Card title="Support the project" icon={Star}>
+      <Card
+        title="Support the project"
+        subtitle="If you like Screen Buddy, consider supporting the development!"
+        icon={Star}
+      >
         <Row label="Star on GitHub" hint="Show some love and help others discover Screen Buddy">
           <Button
             variant="secondary"

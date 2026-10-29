@@ -16,7 +16,11 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
 
   return (
     <>
-      <Card title="Notification Settings" icon={Bell}>
+      <Card
+        title="Notification Settings"
+        subtitle="Configure general notification behavior."
+        icon={Bell}
+      >
         <Row
           icon={Bell}
           label="Enable notifications"
@@ -86,7 +90,11 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      <Card title="Notification Types" icon={MessageCircle}>
+      <Card
+        title="Notification Types"
+        subtitle="Choose which events should show notifications."
+        icon={MessageCircle}
+      >
         <Row
           icon={Bell}
           label="Reminders"

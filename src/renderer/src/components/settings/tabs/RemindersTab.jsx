@@ -209,7 +209,11 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
 
   return (
     <>
-      <Card title="Reminder System" icon={Bell}>
+      <Card
+        title="Reminder System"
+        subtitle="Manage your daily reminders and habits."
+        icon={Bell}
+      >
         <Row
           icon={Clock}
           label="Interval"
@@ -284,7 +288,12 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      <Card title="Your Reminders" icon={Clock} className="sb-reminders-list-card">
+      <Card
+        title="Your Reminders"
+        subtitle="Manage, edit or delete your reminders."
+        icon={Clock}
+        className="sb-reminders-list-card"
+      >
         <div className="sb-reminders-list">
           {BUILTIN_REMINDERS.map((r) => {
             const IconComp = r.icon
@@ -340,7 +349,11 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
         </div>
       </Card>
 
-      <Card title="Advanced Options" icon={SlidersHorizontal}>
+      <Card
+        title="Advanced Options"
+        subtitle="Additional reminder settings."
+        icon={SlidersHorizontal}
+      >
         <Row
           icon={Timer}
           label="Snooze duration"

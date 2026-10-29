@@ -17,7 +17,7 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
 
   return (
     <>
-      <Card title="Cat Style" icon={Cat}>
+      <Card title="Cat Style" subtitle="Choose your buddy's look." icon={Cat}>
         <Row
           icon={Cat}
           label="Companion"
@@ -77,7 +77,7 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      <Card title="Animation Speed" icon={Gauge}>
+      <Card title="Animation Speed" subtitle="Control how fast the animations play." icon={Gauge}>
         <Row
           icon={Gauge}
           label="Animation speed"

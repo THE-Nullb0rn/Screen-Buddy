@@ -75,6 +75,7 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
     <>
       <Card
         title="AI Provider"
+        subtitle="Choose the AI provider and configure it."
         icon={Sparkles}
         headerRight={
           <span className={`sb-status-pill sb-status-pill--${providerStatusVariant}`}>
@@ -97,7 +98,11 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
         </div>
       </Card>
 
-      <Card title="Model" icon={Cpu}>
+      <Card
+        title="Model"
+        subtitle="Select the model and parameters."
+        icon={Cpu}
+      >
         <div className="sb-form-group">
           <label className="sb-form-label" htmlFor="gemini-model-input">
             Model name
@@ -117,7 +122,11 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
         </div>
       </Card>
 
-      <Card title="API Key" icon={Key}>
+      <Card
+        title="API Key"
+        subtitle="Set up your API keys and endpoints."
+        icon={Key}
+      >
         <div className="sb-form-group">
           <label className="sb-form-label" htmlFor="gemini-api-key-input">
             Gemini API key

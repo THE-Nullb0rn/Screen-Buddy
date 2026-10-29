@@ -10,14 +10,21 @@ export function IconTile({ icon: Icon, size = 18, className = '' }) {
   )
 }
 
-export function Card({ title, icon: Icon, children, className = '', headerRight = null }) {
+export function Card({ title, subtitle, icon: Icon, children, className = '', headerRight = null }) {
   return (
     <section className={`sb-card ${className}`}>
       {(title || Icon || headerRight) && (
         <header className="sb-card__header">
           <div className="sb-card__title-group">
-            {Icon && <Icon size={18} className="sb-card__icon" aria-hidden="true" />}
-            {title && <h3 className="sb-card__title">{title}</h3>}
+            {Icon && (
+              <div className="sb-card__icon-badge" aria-hidden="true">
+                <Icon size={18} className="sb-card__icon" />
+              </div>
+            )}
+            <div className="sb-card__title-wrap">
+              {title && <h3 className="sb-card__title">{title}</h3>}
+              {subtitle && <p className="sb-card__subtitle">{subtitle}</p>}
+            </div>
           </div>
           {headerRight && <div className="sb-card__header-right">{headerRight}</div>}
         </header>

@@ -40,7 +40,11 @@ export default function ShortcutsTab() {
 
   return (
     <>
-      <Card title="Shortcuts" icon={Keyboard}>
+      <Card
+        title="Shortcuts"
+        subtitle="Main shortcuts to control Screen Buddy."
+        icon={Keyboard}
+      >
         <Row
           icon={Pause}
           label="Toggle pause"

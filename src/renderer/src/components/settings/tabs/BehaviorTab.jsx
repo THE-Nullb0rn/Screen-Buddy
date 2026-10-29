@@ -15,6 +15,7 @@ import {
   Moon,
   AlertCircle,
   RefreshCw,
+  Zap,
 } from 'lucide-react'
 
 export default function BehaviorTab({ settings, saveSettingsPatch }) {
@@ -66,7 +67,11 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
 
   return (
     <>
-      <Card title="Activity Reactions">
+      <Card
+        title="Activity Reactions"
+        subtitle="Choose what wakes up Screen Buddy and how it reacts."
+        icon={Zap}
+      >
         {isLinux && (
           <>
             <Row
@@ -144,7 +149,11 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      <Card title="Interaction Behavior">
+      <Card
+        title="Interaction Behavior"
+        subtitle="How Screen Buddy responds to your interactions."
+        icon={Hand}
+      >
         <Row
           icon={Hand}
           label="Click to interact"
@@ -213,7 +222,11 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      <Card title="Hunger & Needs">
+      <Card
+        title="Hunger & Needs"
+        subtitle="Keep your buddy happy and healthy."
+        icon={Utensils}
+      >
         <Row
           icon={Utensils}
           label="Enable hunger system"
@@ -282,7 +295,11 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      <Card title="Mood System">
+      <Card
+        title="Mood System"
+        subtitle="Your buddy's mood changes based on your activity and interactions."
+        icon={Smile}
+      >
         <Row
           icon={Smile}
           label="Enable mood system"
