@@ -524,6 +524,14 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   line-height: 1.35;
+  flex-shrink: 0;
+}
+
+.sb-btn:disabled .sb-soon-pill,
+.sb-btn--primary:disabled .sb-soon-pill {
+  background-color: rgba(22, 18, 30, 0.9);
+  color: #f6b93b;
+  border-color: rgba(246, 185, 59, 0.5);
 }
 
 .sb-row__hint {
@@ -560,10 +568,6 @@
   font-size: 13px;
   outline: none;
   cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238c829e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 14px 14px;
   transition: border-color 130ms ease;
 }
 
@@ -574,6 +578,15 @@
 .sb-select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.sb-select__chevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
 }
 
 .sb-select option {
@@ -948,6 +961,187 @@
 .sb-unit-label {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+/* ── Reminders List ── */
+.sb-reminders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sb-reminder-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--card-border);
+  transition: background-color 130ms ease, border-color 130ms ease;
+}
+
+.sb-reminder-item:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.sb-reminder-item--editing {
+  border-color: var(--accent);
+  background-color: rgba(246, 185, 59, 0.05);
+}
+
+.sb-reminder-drag-handle {
+  color: var(--text-muted);
+  opacity: 0.35;
+  cursor: not-allowed;
+  flex-shrink: 0;
+}
+
+.sb-reminder-icon-box {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.sb-reminder-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-reminder-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-reminder-subline {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.sb-reminder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sb-btn-icon {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  padding: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 130ms ease;
+}
+
+.sb-btn-icon:hover:not(:disabled) {
+  color: var(--text);
+  background-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--card-border);
+}
+
+.sb-btn-icon--active {
+  color: var(--accent);
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.sb-btn-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Edit Reminder Modal Overlay ── */
+.sb-reminder-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+  box-sizing: border-box;
+  animation: sbFadeIn 130ms ease;
+}
+
+.sb-reminder-edit-modal {
+  width: min(520px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-sizing: border-box;
+}
+
+.sb-reminder-note {
+  font-size: 12px;
+  color: var(--accent);
+  background-color: var(--accent-soft);
+  border: 1px solid rgba(246, 185, 59, 0.25);
+  border-radius: 6px;
+  padding: 7px 11px;
+  margin-bottom: 4px;
+}
+
+.sb-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sb-form-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.sb-form-row-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.sb-time-input {
+  color-scheme: dark;
+  background-color: var(--input-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 130ms ease;
+}
+
+.sb-time-input:focus {
+  border-color: var(--accent);
+}
+
+.sb-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* ── Keycaps (Kbd) ───────────────────────────────────────────────────────── */

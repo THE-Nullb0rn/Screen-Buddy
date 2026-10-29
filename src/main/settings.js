@@ -50,6 +50,20 @@ const DEFAULT_SETTINGS = {
     movementBreak: true,
   },
 
+  /** Master toggle for reminders */
+  remindersEnabled: true,
+
+  /** Reminder notifications, sounds, and animations */
+  reminderNotifications: true,
+  reminderSound: true,
+  reminderCatAnimation: true,
+
+  /** Reminder advanced options */
+  reminderSnoozeDuration: 5,
+  reminderAutoSnoozeLimit: 3,
+  reminderShowMissed: true,
+  reminderGroupSimilar: true,
+
   /** Whether screen-buddy should act as the desktop notification daemon */
   notificationsEnabled: true,
 
@@ -256,6 +270,12 @@ function validateSettingsUpdate(patch) {
       case 'notificationCardHunger':
       case 'notificationCardMusic':
       case 'notificationCardUpdates':
+      case 'remindersEnabled':
+      case 'reminderNotifications':
+      case 'reminderSound':
+      case 'reminderCatAnimation':
+      case 'reminderShowMissed':
+      case 'reminderGroupSimilar':
       case 'reduceResourceUsage':
       case 'pauseAnimationIdle':
       case 'limitBackgroundCpu':
@@ -422,6 +442,26 @@ function validateSettingsUpdate(patch) {
           sanitized.notificationDuration = Math.min(30, Math.max(2, Math.round(value)))
         } else {
           debugLog('notificationDuration', 'must be a number between 2 and 30')
+        }
+        break
+      }
+
+      case 'reminderSnoozeDuration': {
+        const num = Number(value)
+        if ([5, 10, 15].includes(num)) {
+          sanitized.reminderSnoozeDuration = num
+        } else {
+          debugLog('reminderSnoozeDuration', 'must be 5, 10, or 15')
+        }
+        break
+      }
+
+      case 'reminderAutoSnoozeLimit': {
+        const num = Number(value)
+        if ([1, 2, 3, 5].includes(num)) {
+          sanitized.reminderAutoSnoozeLimit = num
+        } else {
+          debugLog('reminderAutoSnoozeLimit', 'must be 1, 2, 3, or 5')
         }
         break
       }
