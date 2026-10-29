@@ -36,6 +36,8 @@ export default function ShortcutsTab() {
     },
   ]
 
+  const superKeyName = isLinux ? 'Super' : 'Win'
+
   return (
     <>
       <Card title="Shortcuts" icon={Keyboard}>
@@ -60,7 +62,7 @@ export default function ShortcutsTab() {
           <div className="sb-keycap-group">
             <Kbd>Ctrl</Kbd>
             <span className="sb-keycap-plus">+</span>
-            <Kbd>Super</Kbd>
+            <Kbd>{superKeyName}</Kbd>
             <span className="sb-keycap-plus">+</span>
             <Kbd>C</Kbd>
           </div>
@@ -71,7 +73,7 @@ export default function ShortcutsTab() {
           hint="Open this configuration window"
         >
           <div className="sb-keycap-group">
-            <Kbd>Super</Kbd>
+            <Kbd>{superKeyName}</Kbd>
             <span className="sb-keycap-plus">+</span>
             <Kbd>Shift</Kbd>
             <span className="sb-keycap-plus">+</span>

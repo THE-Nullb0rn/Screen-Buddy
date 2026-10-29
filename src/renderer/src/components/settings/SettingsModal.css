@@ -499,10 +499,31 @@
   min-width: 0;
 }
 
+.sb-row__label-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .sb-row__label {
   font-size: 14.5px;
   font-weight: 500;
   color: var(--text);
+}
+
+.sb-soon-pill {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(246, 185, 59, 0.35);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.35;
 }
 
 .sb-row__hint {
@@ -513,6 +534,158 @@
 
 .sb-row__control {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Select Dropdown Controls ── */
+.sb-select-wrap {
+  position: relative;
+  min-width: 130px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sb-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 6px 28px 6px 10px;
+  border-radius: 8px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238c829e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px 14px;
+  transition: border-color 130ms ease;
+}
+
+.sb-select:focus {
+  border-color: var(--accent);
+}
+
+.sb-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sb-select option {
+  background-color: #1a1625;
+  color: #e8e6ed;
+  padding: 6px 10px;
+}
+
+/* ── Slider Controls ── */
+.sb-slider-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 160px;
+}
+
+.sb-slider {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+  height: 6px;
+  border-radius: 3px;
+  background-color: #2b2538;
+}
+
+.sb-slider-value {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--accent);
+  min-width: 44px;
+  text-align: right;
+}
+
+/* ── Segmented Choice Buttons ── */
+.sb-segmented-group {
+  display: inline-flex;
+  background-color: var(--input-bg);
+  padding: 3px;
+  border-radius: 9px;
+  border: 1px solid var(--card-border);
+  gap: 2px;
+}
+
+.sb-segmented-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 130ms ease, color 130ms ease;
+}
+
+.sb-segmented-btn:hover:not(.sb-segmented-btn--active) {
+  color: var(--text);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.sb-segmented-btn--active {
+  background-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* ── Cat Style Card ── */
+.sb-char-selector {
+  display: flex;
+  gap: 12px;
+}
+
+.sb-char-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  cursor: pointer;
+  flex: 1;
+}
+
+.sb-char-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sb-char-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.sb-char-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sb-char-desc {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ── Toggles ─────────────────────────────────────────────────────────────── */

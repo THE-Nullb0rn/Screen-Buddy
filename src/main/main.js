@@ -293,7 +293,9 @@ function broadcastPauseState(source) {
 }
 
 function setManualPaused(paused, source) {
-  isPaused = Boolean(paused)
+  const next = Boolean(paused)
+  if (isPaused === next) return
+  isPaused = next
   broadcastPauseState(source)
 }
 
@@ -525,7 +527,7 @@ async function callGemini(userMessage) {
   ]
   const boundedContents = contents.length > 10 ? contents.slice(contents.length - 10) : contents
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
   const body = {
     systemInstruction: { parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }] },
     contents: boundedContents,
@@ -1587,7 +1589,9 @@ function registerIpcHandlers() {
       typingDetector.updateSettings(settings)
     }
 
-    setManualPaused(Boolean(settings.paused), 'settings')
+    if (settings.paused !== undefined && Boolean(settings.paused) !== isPaused) {
+      setManualPaused(Boolean(settings.paused), 'settings')
+    }
 
     mainWindow?.webContents.send('settings:updated', settings)
     settingsWindow?.webContents.send('settings:updated', settings)
@@ -2161,7 +2165,7 @@ function registerIpcHandlers() {
       ? settings.geminiModel.trim()
       : 'gemini-3.5-flash-lite'
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
     const body = {
       contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK' }] }],
     }
@@ -2364,7 +2368,29 @@ function registerIpcHandlers() {
 
   /** Get system and application info for the About screen */
   ipcMain.handle('app:get-info', () => {
-    const licensePath = path.join(app.getAppPath(), 'LICENSE')
+    let license = null
+    try {
+      const licensePath = path.join(app.getAppPath(), 'LICENSE')
+      if (fs.existsSync(licensePath)) {
+        const raw = fs.readFileSync(licensePath, 'utf8')
+        const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+        if (lines.length > 0 && lines[0].length <= 40) {
+          license = lines[0]
+        }
+      }
+      if (!license) {
+        const pkgPath = path.join(app.getAppPath(), 'package.json')
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+          if (pkg.license && typeof pkg.license === 'string') {
+            license = /license/i.test(pkg.license) ? pkg.license : `${pkg.license} License`
+          }
+        }
+      }
+    } catch (_) {
+      license = null
+    }
+
     return {
       version: app.getVersion(),
       electron: process.versions.electron,
@@ -2373,7 +2399,7 @@ function registerIpcHandlers() {
       platform: process.platform,
       arch: process.arch,
       dataDir: path.dirname(getSettingsPath()),
-      license: fs.existsSync(licensePath) ? 'MIT License' : null,
+      license,
     }
   })
 

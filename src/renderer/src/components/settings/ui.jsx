@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 export function IconTile({ icon: Icon, size = 18, className = '' }) {
   if (!Icon) return null
@@ -26,17 +26,99 @@ export function Card({ title, icon: Icon, children, className = '', headerRight 
   )
 }
 
-export function Row({ icon: Icon, label, hint, children, className = '' }) {
+export function Row({ icon: Icon, label, hint, soon = false, children, className = '' }) {
   return (
-    <div className={`sb-row ${className}`}>
+    <div className={`sb-row ${soon ? 'sb-row--soon' : ''} ${className}`}>
       <div className="sb-row__info">
         {Icon && <IconTile icon={Icon} />}
         <div className="sb-row__text">
-          <span className="sb-row__label">{label}</span>
+          <div className="sb-row__label-group">
+            <span className="sb-row__label">{label}</span>
+            {soon && <span className="sb-soon-pill">Soon</span>}
+          </div>
           {hint && <span className="sb-row__hint">{hint}</span>}
         </div>
       </div>
       {children && <div className="sb-row__control">{children}</div>}
+    </div>
+  )
+}
+
+export function Select({ value, onChange, options = [], disabled = false, className = '', id, ariaLabel }) {
+  return (
+    <div className={`sb-select-wrap ${className}`}>
+      <select
+        id={id}
+        className="sb-select"
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        aria-label={ariaLabel}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+export function Slider({
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  unit = '',
+  disabled = false,
+  ariaLabel,
+}) {
+  const [draftValue, setDraftValue] = useState(value ?? min ?? 0)
+  const isDraggingRef = useRef(false)
+  const prevValueRef = useRef(value)
+
+  useEffect(() => {
+    if (prevValueRef.current !== value) {
+      prevValueRef.current = value
+      setDraftValue(value ?? min ?? 0)
+    }
+  }, [value, min])
+
+  const handleInput = (e) => {
+    isDraggingRef.current = true
+    setDraftValue(Number(e.target.value))
+  }
+
+  const commitValue = () => {
+    if (!isDraggingRef.current && draftValue === value) return
+    isDraggingRef.current = false
+    if (onChange && draftValue !== value) {
+      onChange({ target: { value: draftValue } })
+    }
+  }
+
+  return (
+    <div className="sb-slider-group">
+      <input
+        type="range"
+        className="sb-slider"
+        min={min}
+        max={max}
+        step={step}
+        value={draftValue}
+        onChange={handleInput}
+        onPointerUp={commitValue}
+        onKeyUp={commitValue}
+        onBlur={commitValue}
+        disabled={disabled}
+        aria-label={ariaLabel}
+      />
+      <span className="sb-slider-value">
+        {draftValue}
+        {unit}
+      </span>
     </div>
   )
 }

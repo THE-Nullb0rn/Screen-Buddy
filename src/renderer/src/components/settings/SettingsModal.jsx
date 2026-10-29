@@ -17,7 +17,10 @@ import bannerImg from '../../assets/settings/banner.webp'
 import sidebarCatImg from '../../assets/settings/sidebar-cat.webp'
 
 import GeneralTab from './tabs/GeneralTab'
+import AppearanceTab from './tabs/AppearanceTab'
+import BehaviorTab from './tabs/BehaviorTab'
 import RemindersTab from './tabs/RemindersTab'
+import NotificationsTab from './tabs/NotificationsTab'
 import ChatTab from './tabs/ChatTab'
 import ShortcutsTab from './tabs/ShortcutsTab'
 import AdvancedTab from './tabs/AdvancedTab'
@@ -39,7 +42,6 @@ export const SETTINGS_TABS = [
     icon: Palette,
     tagline: 'Make Screen Buddy your own!',
     subtitle: 'Customize themes and visual appearance.',
-    hidden: true,
     bannerPosition: '85% center',
   },
   {
@@ -48,7 +50,6 @@ export const SETTINGS_TABS = [
     icon: Cat,
     tagline: 'Playful, calm, or focused!',
     subtitle: 'Tune companion habits and personality.',
-    hidden: true,
     bannerPosition: '75% 35%',
   },
   {
@@ -65,7 +66,6 @@ export const SETTINGS_TABS = [
     icon: MessageCircle,
     tagline: 'Stay informed, stay cozy!',
     subtitle: 'Configure desktop notifications.',
-    hidden: true,
     bannerPosition: '90% 45%',
   },
   {
@@ -127,28 +127,6 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     return off
   }, [])
 
-  // Auto check for updates on mount if autoCheckUpdates is enabled
-  const runUpdateCheck = useCallback(async (isSilent = false) => {
-    if (!window.api?.updates?.check) return
-    if (!isSilent) {
-      setUpdateState({ status: 'checking' })
-    }
-    try {
-      const res = await window.api.updates.check()
-      setUpdateState(res)
-    } catch (err) {
-      if (!isSilent) {
-        setUpdateState({ status: 'error', error: err.message || 'Update check failed' })
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (settings?.autoCheckUpdates !== false) {
-      runUpdateCheck(true)
-    }
-  }, [settings?.autoCheckUpdates, runUpdateCheck])
-
   // Instant apply settings patch
   const saveSettingsPatch = useCallback(
     async (patch) => {
@@ -180,6 +158,39 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     },
     []
   )
+
+  // Auto check for updates on mount if autoCheckUpdates is enabled
+  const runUpdateCheck = useCallback(
+    async (isSilent = false) => {
+      if (!window.api?.updates?.check) return
+      if (!isSilent) {
+        setUpdateState({ status: 'checking' })
+      }
+      try {
+        const res = await window.api.updates.check()
+        setUpdateState(res)
+        if (
+          res &&
+          (res.status === 'up-to-date' ||
+            res.status === 'available' ||
+            res.status === 'no-releases')
+        ) {
+          saveSettingsPatch({ lastUpdateCheck: Date.now() })
+        }
+      } catch (err) {
+        if (!isSilent) {
+          setUpdateState({ status: 'error', error: err.message || 'Update check failed' })
+        }
+      }
+    },
+    [saveSettingsPatch]
+  )
+
+  useEffect(() => {
+    if (settings?.autoCheckUpdates !== false) {
+      runUpdateCheck(true)
+    }
+  }, [settings?.autoCheckUpdates, runUpdateCheck])
 
   const handleResetSettings = useCallback(async () => {
     try {
@@ -350,15 +361,30 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
             {activeTab === 'general' && (
               <GeneralTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
             )}
+            {activeTab === 'appearance' && (
+              <AppearanceTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
+            )}
+            {activeTab === 'behavior' && (
+              <BehaviorTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
+            )}
             {activeTab === 'reminders' && (
               <RemindersTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
+            )}
+            {activeTab === 'notifications' && (
+              <NotificationsTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
             )}
             {activeTab === 'chat' && (
               <ChatTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
             )}
             {activeTab === 'shortcuts' && <ShortcutsTab />}
             {activeTab === 'advanced' && (
-              <AdvancedTab onResetSettings={handleResetSettings} />
+              <AdvancedTab
+                settings={settings}
+                saveSettingsPatch={saveSettingsPatch}
+                onResetSettings={handleResetSettings}
+                updateState={updateState}
+                onCheckUpdates={runUpdateCheck}
+              />
             )}
             {activeTab === 'about' && (
               <AboutTab updateState={updateState} onCheckUpdates={runUpdateCheck} />

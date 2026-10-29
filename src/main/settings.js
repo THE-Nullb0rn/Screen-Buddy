@@ -67,6 +67,54 @@ const DEFAULT_SETTINGS = {
 
   /** Check for updates when Settings opens */
   autoCheckUpdates: true,
+
+  // ── Appearance ──
+  catStyle: 'black-cat',
+  catSize: 100,
+  catOpacity: 100,
+  catAnimationSpeed: 'normal',
+
+  // ── Behavior ──
+  mouseReaction: false,
+  appFocusReaction: false,
+  mediaReaction: false,
+  clickToInteract: true,
+  dragBehavior: true,
+  doubleClickAction: 'chat',
+  rightClickAction: 'menu',
+  pettingEffects: true,
+  hungerEnabled: false,
+  hungerRate: 'normal',
+  hungerNotify: true,
+  hungerBehavior: 'search-food',
+  hungerPauseSleeping: true,
+  moodEnabled: false,
+  moodIndicator: false,
+
+  // ── Notifications ──
+  notificationAnimations: true,
+  notificationSounds: false,
+  notificationAutoHide: true,
+  notificationDuration: 5,
+  notificationCardReminders: true,
+  notificationCardChat: true,
+  notificationCardHunger: true,
+  notificationCardMusic: true,
+  notificationCardUpdates: true,
+
+  // ── Advanced ──
+  animationFps: 60,
+  reduceResourceUsage: false,
+  pauseAnimationIdle: false,
+  limitBackgroundCpu: false,
+  startMinimized: false,
+  delayStartup: false,
+  minimizeToTray: true,
+  showTrayIcon: true,
+  experimentalFeatures: false,
+  developerMode: false,
+  allowCustomCss: false,
+  lastUpdateCheck: null,
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -188,7 +236,36 @@ function validateSettingsUpdate(patch) {
       case 'autostart':
       case 'notificationsEnabled':
       case 'systemTypingDetection':
-      case 'autoCheckUpdates': {
+      case 'autoCheckUpdates':
+      case 'mouseReaction':
+      case 'appFocusReaction':
+      case 'mediaReaction':
+      case 'clickToInteract':
+      case 'dragBehavior':
+      case 'pettingEffects':
+      case 'hungerEnabled':
+      case 'hungerNotify':
+      case 'hungerPauseSleeping':
+      case 'moodEnabled':
+      case 'moodIndicator':
+      case 'notificationAnimations':
+      case 'notificationSounds':
+      case 'notificationAutoHide':
+      case 'notificationCardReminders':
+      case 'notificationCardChat':
+      case 'notificationCardHunger':
+      case 'notificationCardMusic':
+      case 'notificationCardUpdates':
+      case 'reduceResourceUsage':
+      case 'pauseAnimationIdle':
+      case 'limitBackgroundCpu':
+      case 'startMinimized':
+      case 'delayStartup':
+      case 'minimizeToTray':
+      case 'showTrayIcon':
+      case 'experimentalFeatures':
+      case 'developerMode':
+      case 'allowCustomCss': {
         if (typeof value === 'boolean') {
           sanitized[key] = value
         } else {
@@ -264,6 +341,105 @@ function validateSettingsUpdate(patch) {
           }
         } else {
           debugLog('geminiApiKey', 'must be a string')
+        }
+        break
+      }
+
+      case 'catStyle': {
+        if (typeof value === 'string' && ['black-cat'].includes(value)) {
+          sanitized.catStyle = value
+        } else {
+          debugLog('catStyle', 'invalid cat style')
+        }
+        break
+      }
+
+      case 'catSize': {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          sanitized.catSize = Math.min(150, Math.max(50, Math.round(value)))
+        } else {
+          debugLog('catSize', 'must be a number between 50 and 150')
+        }
+        break
+      }
+
+      case 'catOpacity': {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          sanitized.catOpacity = Math.min(100, Math.max(20, Math.round(value)))
+        } else {
+          debugLog('catOpacity', 'must be a number between 20 and 100')
+        }
+        break
+      }
+
+      case 'catAnimationSpeed': {
+        if (typeof value === 'string' && ['slow', 'normal', 'fast'].includes(value)) {
+          sanitized.catAnimationSpeed = value
+        } else {
+          debugLog('catAnimationSpeed', 'must be slow, normal, or fast')
+        }
+        break
+      }
+
+      case 'doubleClickAction': {
+        if (typeof value === 'string' && ['chat', 'settings', 'none'].includes(value)) {
+          sanitized.doubleClickAction = value
+        } else {
+          debugLog('doubleClickAction', 'invalid double click action')
+        }
+        break
+      }
+
+      case 'rightClickAction': {
+        if (typeof value === 'string' && ['menu', 'chat', 'pause'].includes(value)) {
+          sanitized.rightClickAction = value
+        } else {
+          debugLog('rightClickAction', 'invalid right click action')
+        }
+        break
+      }
+
+      case 'hungerRate': {
+        if (typeof value === 'string' && ['slow', 'normal', 'fast'].includes(value)) {
+          sanitized.hungerRate = value
+        } else {
+          debugLog('hungerRate', 'must be slow, normal, or fast')
+        }
+        break
+      }
+
+      case 'hungerBehavior': {
+        if (typeof value === 'string' && ['search-food', 'sad', 'sit'].includes(value)) {
+          sanitized.hungerBehavior = value
+        } else {
+          debugLog('hungerBehavior', 'invalid hunger behavior')
+        }
+        break
+      }
+
+      case 'notificationDuration': {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          sanitized.notificationDuration = Math.min(30, Math.max(2, Math.round(value)))
+        } else {
+          debugLog('notificationDuration', 'must be a number between 2 and 30')
+        }
+        break
+      }
+
+      case 'animationFps': {
+        if (value === 30 || value === 60) {
+          sanitized.animationFps = value
+        } else {
+          debugLog('animationFps', 'must be 30 or 60')
+        }
+        break
+      }
+
+      case 'lastUpdateCheck': {
+        if (value === null || (typeof value === 'number' && Number.isFinite(value))) {
+          sanitized.lastUpdateCheck = value
+        } else {
+          debugLog('lastUpdateCheck', 'must be a timestamp or null')
         }
         break
       }
