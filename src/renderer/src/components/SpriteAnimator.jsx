@@ -49,6 +49,12 @@ if (typeof window !== 'undefined') {
   getSpritesheetImage(listeningSheetSrc, () => {})
 }
 
+const SPEED_FACTORS = {
+  slow: 0.5,
+  normal: 1,
+  fast: 2,
+}
+
 /**
  * Custom hook to drive sprite sheet frame stepping based on manifest animations
  */
@@ -57,6 +63,7 @@ export function useSpriteAnimation({
   animation = 'idle',
   loop: propLoop,
   onAnimationEnd,
+  speed = 'normal',
 }) {
   const baseConfig =
     manifest.animations[animation] ||
@@ -73,9 +80,11 @@ export function useSpriteAnimation({
   const currentAnimationRef = useRef(animation)
   const onEndRef = useRef(onAnimationEnd)
   const frameIndexRef = useRef(0)
+  const speedFactorRef = useRef(1)
 
   animRef.current = animConfig
   onEndRef.current = onAnimationEnd
+  speedFactorRef.current = SPEED_FACTORS[speed] || 1
 
   // Reset frame when animation name or manifest changes
   useEffect(() => {
@@ -98,13 +107,15 @@ export function useSpriteAnimation({
 
       const totalFrames = frames.length
       let idx = frameIndexRef.current
+      const speedFactor = speedFactorRef.current || 1
 
       // Drain accumulated time frame-by-frame so no frame is ever skipped
       let safety = 0
       while (safety++ < totalFrames + 1) {
-        const duration = frameDurations
+        const rawDuration = frameDurations
           ? (frameDurations[idx] ?? (1000 / (fps || 1)))
           : (1000 / (fps || 1))
+        const duration = rawDuration / speedFactor
 
         if (accumulated < duration) break
 
@@ -167,6 +178,9 @@ export default function SpriteAnimator({
   className = '',
   style = {},
   onAnimationEnd,
+  speed,
+  animationSpeed,
+  catAnimationSpeed,
   ...rest
 }) {
   const canvasRef = useRef(null)
@@ -186,11 +200,14 @@ export default function SpriteAnimator({
   const displayWidth = Math.round(cellWidth * scale)
   const displayHeight = Math.round(cellHeight * scale)
 
+  const effectiveSpeed = catAnimationSpeed || animationSpeed || speed || 'normal'
+
   const { currentFrame } = useSpriteAnimation({
     manifest,
     animation,
     loop,
     onAnimationEnd,
+    speed: effectiveSpeed,
   })
 
   // Load / listen to spritesheet

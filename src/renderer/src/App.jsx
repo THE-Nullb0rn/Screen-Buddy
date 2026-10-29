@@ -717,6 +717,8 @@ export default function App() {
           x: (settings.mascotPosition?.x ?? 0) + NORMAL_CAT_CX,
           y: (settings.mascotPosition?.y ?? 0) + NORMAL_CAT_CY,
         }}
+        catOpacity={settings.catOpacity}
+        catAnimationSpeed={settings.catAnimationSpeed}
       />}
 
     </>

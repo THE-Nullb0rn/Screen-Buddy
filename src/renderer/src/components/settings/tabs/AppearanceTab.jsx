@@ -63,7 +63,6 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
           icon={Eye}
           label="Opacity"
           hint="Adjust how transparent the cat appears on screen"
-          soon={true}
         >
           <Slider
             value={currentOpacity}
@@ -82,7 +81,6 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
           icon={Gauge}
           label="Animation speed"
           hint="Control how fast sprite animations and transitions play"
-          soon={true}
         >
           <div className="sb-segmented-group">
             {speedOptions.map((sp) => (

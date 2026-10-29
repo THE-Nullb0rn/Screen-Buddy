@@ -42,7 +42,7 @@ export const SETTINGS_TABS = [
     icon: Palette,
     tagline: 'Make Screen Buddy your own!',
     subtitle: 'Customize themes and visual appearance.',
-    bannerPosition: '85% center',
+    bannerPosition: 'right center',
   },
   {
     id: 'behavior',
@@ -50,7 +50,7 @@ export const SETTINGS_TABS = [
     icon: Cat,
     tagline: 'Playful, calm, or focused!',
     subtitle: 'Tune companion habits and personality.',
-    bannerPosition: '75% 35%',
+    bannerPosition: 'right center',
   },
   {
     id: 'reminders',
@@ -58,7 +58,7 @@ export const SETTINGS_TABS = [
     icon: Bell,
     tagline: 'Little reminders for a better you!',
     subtitle: 'Set up reminders and let Screen Buddy help you stay on track.',
-    bannerPosition: '80% center',
+    bannerPosition: 'right center',
   },
   {
     id: 'notifications',
@@ -66,7 +66,7 @@ export const SETTINGS_TABS = [
     icon: MessageCircle,
     tagline: 'Stay informed, stay cozy!',
     subtitle: 'Configure desktop notifications.',
-    bannerPosition: '90% 45%',
+    bannerPosition: 'right center',
   },
   {
     id: 'chat',
@@ -74,7 +74,7 @@ export const SETTINGS_TABS = [
     icon: Sparkles,
     tagline: "Chat, learn, ask anything — I'm here!",
     subtitle: 'Configure how Screen Buddy chats and uses AI.',
-    bannerPosition: '70% center',
+    bannerPosition: 'right center',
   },
   {
     id: 'shortcuts',
@@ -82,7 +82,7 @@ export const SETTINGS_TABS = [
     icon: Keyboard,
     tagline: 'Hotkeys for a faster, cuter workflow!',
     subtitle: 'Keyboard shortcuts to control Screen Buddy.',
-    bannerPosition: '85% 40%',
+    bannerPosition: 'right center',
   },
   {
     id: 'advanced',
@@ -90,7 +90,7 @@ export const SETTINGS_TABS = [
     icon: SlidersHorizontal,
     tagline: 'Advanced settings for more control!',
     subtitle: 'Fine-tune Screen Buddy with advanced settings.',
-    bannerPosition: '65% 40%',
+    bannerPosition: 'right center',
   },
   {
     id: 'about',
@@ -98,7 +98,7 @@ export const SETTINGS_TABS = [
     icon: Info,
     tagline: 'Thanks for having me around!',
     subtitle: 'Learn more about Screen Buddy, check for updates and see the credits.',
-    bannerPosition: 'right 60%',
+    bannerPosition: 'right center',
   },
 ]
 

@@ -83,8 +83,16 @@ export default function Mascot({
   // BrowserWindow top-left position before passing this value.
   initialPosition = null,
   onSleepChange,
+  catOpacity = 100,
+  catAnimationSpeed = 'normal',
 }) {
   const containerRef = useRef(null)
+  
+  const clampedOpacity = Math.min(
+    100,
+    Math.max(20, typeof catOpacity === 'number' ? catOpacity : 100)
+  )
+  const effectiveOpacity = clampedOpacity / 100
   
 
   const [pose, setPose] = useState('idle')
@@ -1177,13 +1185,19 @@ export default function Mascot({
           onPointerLeave={handleHeadPointerLeave}
           title="Pet me!"
         />
-        <SpriteAnimator
-          animation={animationName}
-          flipped={flipped}
-          loop={true}
-          manifest={useListening ? listeningManifest : undefined}
-          spritesheet={useListening ? listeningSheetSrc : undefined}
-        />
+        <div
+          className="mascot-opacity-wrap"
+          style={{ opacity: effectiveOpacity }}
+        >
+          <SpriteAnimator
+            animation={animationName}
+            flipped={flipped}
+            loop={true}
+            manifest={useListening ? listeningManifest : undefined}
+            spritesheet={useListening ? listeningSheetSrc : undefined}
+            catAnimationSpeed={catAnimationSpeed}
+          />
+        </div>
       </div>
 
 
