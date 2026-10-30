@@ -22,6 +22,9 @@ const XDG_CONFIG_HOME =
 const SETTINGS_DIR = path.join(XDG_CONFIG_HOME, 'screen-buddy')
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
 
+const CLICK_ACTIONS = ['none', 'react', 'chat', 'settings', 'pause']
+const DRAG_BUTTONS = ['left', 'right', 'middle']
+
 // ─── Defaults ────────────────────────────────────────────────────────────────
 /**
  * Default settings object.
@@ -94,6 +97,9 @@ const DEFAULT_SETTINGS = {
   mediaReaction: false,
   clickToInteract: true,
   dragBehavior: true,
+  dragButton: 'right',
+  leftClickAction: 'react',
+  rightClickAction: 'none',
   doubleClickAction: 'chat',
   rightDoubleClickAction: 'settings',
   pettingEffects: true,
@@ -173,6 +179,30 @@ function loadSettings() {
       }
       delete saved.reminders.posture
       delete saved.reminders.stretch
+    }
+
+    // Migration for interaction actions: only drop values that are invalid for the new enums
+    if (saved && typeof saved === 'object') {
+      if (saved.rightClickAction !== undefined && !CLICK_ACTIONS.includes(saved.rightClickAction)) {
+        delete saved.rightClickAction
+        needsSave = true
+      }
+      if (saved.leftClickAction !== undefined && !CLICK_ACTIONS.includes(saved.leftClickAction)) {
+        delete saved.leftClickAction
+        needsSave = true
+      }
+      if (saved.doubleClickAction !== undefined && !CLICK_ACTIONS.includes(saved.doubleClickAction)) {
+        delete saved.doubleClickAction
+        needsSave = true
+      }
+      if (saved.rightDoubleClickAction !== undefined && !CLICK_ACTIONS.includes(saved.rightDoubleClickAction)) {
+        delete saved.rightDoubleClickAction
+        needsSave = true
+      }
+      if (saved.dragButton !== undefined && !DRAG_BUTTONS.includes(saved.dragButton)) {
+        delete saved.dragButton
+        needsSave = true
+      }
     }
 
     // Deep merge: saved values override defaults, but new default keys are added
@@ -401,20 +431,23 @@ function validateSettingsUpdate(patch) {
         break
       }
 
-      case 'doubleClickAction': {
-        if (typeof value === 'string' && ['chat', 'settings', 'none'].includes(value)) {
-          sanitized.doubleClickAction = value
+      case 'dragButton': {
+        if (typeof value === 'string' && DRAG_BUTTONS.includes(value)) {
+          sanitized.dragButton = value
         } else {
-          debugLog('doubleClickAction', 'invalid double click action')
+          debugLog('dragButton', 'must be left, right, or middle')
         }
         break
       }
 
+      case 'leftClickAction':
+      case 'rightClickAction':
+      case 'doubleClickAction':
       case 'rightDoubleClickAction': {
-        if (typeof value === 'string' && ['chat', 'settings', 'none'].includes(value)) {
-          sanitized.rightDoubleClickAction = value
+        if (typeof value === 'string' && CLICK_ACTIONS.includes(value)) {
+          sanitized[key] = value
         } else {
-          debugLog('rightDoubleClickAction', 'invalid right double click action')
+          debugLog(key, 'invalid click action')
         }
         break
       }

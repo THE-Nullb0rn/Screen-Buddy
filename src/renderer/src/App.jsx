@@ -701,6 +701,12 @@ export default function App() {
     })
   }, [])
 
+  const handleTogglePause = useCallback(() => {
+    if (window.api?.setPaused) {
+      window.api.setPaused(!pausedRef.current)
+    }
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -724,8 +730,12 @@ export default function App() {
         onChatOpen={handleChatOpen}
         clickToInteract={settings.clickToInteract !== false}
         dragBehavior={settings.dragBehavior !== false}
+        dragButton={settings.dragButton || 'right'}
+        leftClickAction={settings.leftClickAction || 'react'}
+        rightClickAction={settings.rightClickAction || 'none'}
         doubleClickAction={settings.doubleClickAction || 'chat'}
         rightDoubleClickAction={settings.rightDoubleClickAction || 'settings'}
+        onTogglePause={handleTogglePause}
         notificationVisible={notificationVisible}
         initialPosition={{
           x: (settings.mascotPosition?.x ?? 0) + NORMAL_CAT_CX,

@@ -40,10 +40,18 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
     }
   }, [isLinux, settings.systemTypingDetection, checkTypingPerm])
 
-  const doubleClickOptions = [
-    { value: 'chat', label: 'Open Chat' },
-    { value: 'settings', label: 'Open Settings' },
-    { value: 'none', label: 'Do Nothing' },
+  const dragButtonOptions = [
+    { value: 'left', label: 'Left button' },
+    { value: 'right', label: 'Right button' },
+    { value: 'middle', label: 'Middle button' },
+  ]
+
+  const actionOptions = [
+    { value: 'none', label: 'Do nothing' },
+    { value: 'react', label: 'Happy reaction' },
+    { value: 'chat', label: 'Open chat' },
+    { value: 'settings', label: 'Open settings' },
+    { value: 'pause', label: 'Toggle pause' },
   ]
 
 
@@ -144,6 +152,38 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
       </Card>
 
       <Card
+        title="Mood System"
+        subtitle="Your buddy's mood changes based on your activity and interactions."
+        icon={Smile}
+      >
+        <Row
+          icon={Smile}
+          label="Enable mood system"
+          hint="Let your buddy have dynamic moods based on activity"
+          soon={true}
+        >
+          <Toggle
+            checked={Boolean(settings.moodEnabled)}
+            onChange={(e) => saveSettingsPatch({ moodEnabled: e.target.checked })}
+            ariaLabel="Enable mood system"
+          />
+        </Row>
+
+        <Row
+          icon={Smile}
+          label="Show mood indicator"
+          hint="Display mood icon near the cat"
+          soon={true}
+        >
+          <Toggle
+            checked={Boolean(settings.moodIndicator)}
+            onChange={(e) => saveSettingsPatch({ moodIndicator: e.target.checked })}
+            ariaLabel="Show mood indicator"
+          />
+        </Row>
+      </Card>
+
+      <Card
         title="Interaction Behavior"
         subtitle="How Screen Buddy responds to your interactions."
         icon={Hand}
@@ -174,13 +214,52 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
 
         <Row
           icon={Mouse}
+          label="Drag button"
+          hint="Mouse button that picks her up"
+        >
+          <Select
+            value={settings.dragButton || 'right'}
+            onChange={(e) => saveSettingsPatch({ dragButton: e.target.value })}
+            options={dragButtonOptions}
+            ariaLabel="Drag button"
+          />
+        </Row>
+
+        <Row
+          icon={MousePointer}
+          label="Left click"
+          hint="When you click the left button"
+        >
+          <Select
+            value={settings.leftClickAction || 'react'}
+            onChange={(e) => saveSettingsPatch({ leftClickAction: e.target.value })}
+            options={actionOptions}
+            ariaLabel="Left click action"
+          />
+        </Row>
+
+        <Row
+          icon={MousePointer}
+          label="Right click"
+          hint="When you click the right button"
+        >
+          <Select
+            value={settings.rightClickAction || 'none'}
+            onChange={(e) => saveSettingsPatch({ rightClickAction: e.target.value })}
+            options={actionOptions}
+            ariaLabel="Right click action"
+          />
+        </Row>
+
+        <Row
+          icon={Mouse}
           label="Left double click"
-          hint="Action triggered on double clicking the cat"
+          hint="When you double-click the left button"
         >
           <Select
             value={settings.doubleClickAction || 'chat'}
             onChange={(e) => saveSettingsPatch({ doubleClickAction: e.target.value })}
-            options={doubleClickOptions}
+            options={actionOptions}
             ariaLabel="Left double click action"
           />
         </Row>
@@ -188,12 +267,12 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         <Row
           icon={Mouse}
           label="Right double click"
-          hint="Action triggered on right double clicking the cat"
+          hint="When you double-click the right button"
         >
           <Select
             value={settings.rightDoubleClickAction || 'settings'}
             onChange={(e) => saveSettingsPatch({ rightDoubleClickAction: e.target.value })}
-            options={doubleClickOptions}
+            options={actionOptions}
             ariaLabel="Right double click action"
           />
         </Row>
@@ -268,38 +347,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
             checked={settings.hungerPauseSleeping !== false}
             onChange={(e) => saveSettingsPatch({ hungerPauseSleeping: e.target.checked })}
             ariaLabel="Pause hunger while sleeping"
-          />
-        </Row>
-      </Card>
-
-      <Card
-        title="Mood System"
-        subtitle="Your buddy's mood changes based on your activity and interactions."
-        icon={Smile}
-      >
-        <Row
-          icon={Smile}
-          label="Enable mood system"
-          hint="Let your buddy have dynamic moods based on activity"
-          soon={true}
-        >
-          <Toggle
-            checked={Boolean(settings.moodEnabled)}
-            onChange={(e) => saveSettingsPatch({ moodEnabled: e.target.checked })}
-            ariaLabel="Enable mood system"
-          />
-        </Row>
-
-        <Row
-          icon={Smile}
-          label="Show mood indicator"
-          hint="Display mood icon near the cat"
-          soon={true}
-        >
-          <Toggle
-            checked={Boolean(settings.moodIndicator)}
-            onChange={(e) => saveSettingsPatch({ moodIndicator: e.target.checked })}
-            ariaLabel="Show mood indicator"
           />
         </Row>
       </Card>

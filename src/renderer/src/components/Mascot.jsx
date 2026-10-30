@@ -60,8 +60,16 @@ function defaultPosition() {
 // Animations that have a listening-spritesheet equivalent
 const LISTENING_ANIMATIONS = ['idle', 'walk', 'talk', 'eat', 'pet', 'typing', 'typingfast', 'play']
 
-
-
+const DRAG_BUTTON_MAP = {
+  left: 0,
+  middle: 1,
+  right: 2,
+}
+const BUTTON_MASK = {
+  0: 1, // left
+  1: 4, // middle
+  2: 2, // right
+}
 
 export default function Mascot({
   reminderState,
@@ -81,8 +89,12 @@ export default function Mascot({
   onChatOpen,
   clickToInteract = true,
   dragBehavior = true,
+  dragButton = 'right',
+  leftClickAction = 'react',
+  rightClickAction = 'none',
   doubleClickAction = 'chat',
   rightDoubleClickAction = 'settings',
+  onTogglePause,
   notificationVisible = false,
   // Coordinates are the global cat centre; App converts the persisted
   // BrowserWindow top-left position before passing this value.
@@ -131,23 +143,24 @@ export default function Mascot({
   const typingEventsRef = useRef([])
 
   // Interaction & drag tracking refs
-  const leftPointerDownInfoRef = useRef(null)
+  const buttonPointersRef = useRef({ 0: null, 1: null, 2: null })
   const lastLeftClickRef = useRef({ time: 0, x: 0, y: 0 })
   const leftClickTimerRef = useRef(null)
-  const rightPointerDownInfoRef = useRef(null)
   const lastRightClickRef = useRef({ time: 0, x: 0, y: 0 })
+  const rightClickTimerRef = useRef(null)
   const isStartingDragRef = useRef(false)
   const dragStartedRef = useRef(false)
   const strokeTrackingRef = useRef({ currentDir: 0, apexX: 0, reversals: [] })
   const petLeaveTimeoutRef = useRef(null)
 
-  const executeAction = useCallback((action) => {
-    if (action === 'chat') {
-      onChatOpen?.()
-    } else if (action === 'settings') {
-      window.api?.openSettings?.()
-    }
-  }, [onChatOpen])
+  const targetDragButton = DRAG_BUTTON_MAP[dragButton] ?? 2
+
+  useEffect(() => {
+    clearTimeout(leftClickTimerRef.current)
+    clearTimeout(rightClickTimerRef.current)
+    leftClickTimerRef.current = null
+    rightClickTimerRef.current = null
+  }, [clickToInteract, dragBehavior, dragButton, leftClickAction, rightClickAction, doubleClickAction, rightDoubleClickAction])
 
   const triggerAccent = useCallback((cls) => {
     clearTimeout(accentTimerRef.current)
@@ -279,6 +292,33 @@ export default function Mascot({
       startEating()
     }
   }, [hungerState, onFeed, startEating])
+
+  const executeAction = useCallback((action) => {
+    switch (action) {
+      case 'react':
+        if (poseRef.current === 'sleep') {
+          wakeUp()
+          setRoamEpoch((n) => n + 1)
+        } else if (hungerState === 'ACTIVE') {
+          handleFeedTrigger()
+        } else {
+          triggerAccentRef.current('is-stretch')
+        }
+        break
+      case 'chat':
+        if (onChatOpen) onChatOpen()
+        break
+      case 'settings':
+        if (window.api?.openSettings) window.api.openSettings()
+        break
+      case 'pause':
+        if (onTogglePause) onTogglePause()
+        break
+      case 'none':
+      default:
+        break
+    }
+  }, [hungerState, handleFeedTrigger, onChatOpen, onTogglePause, wakeUp])
 
   const prevFeedSignalRef = useRef(feedSignal)
   useEffect(() => {
@@ -681,12 +721,19 @@ export default function Mascot({
   }
 
   const unbindDragPointerListeners = () => {
-    document.removeEventListener('pointermove', onRightPointerMove, true)
-    document.removeEventListener('pointerup', onRightPointerUp, true)
-    document.removeEventListener('pointercancel', onRightPointerCancel, true)
+    document.removeEventListener('pointermove', onDocPointerMove, true)
+    document.removeEventListener('pointerup', onDocPointerUp, true)
+    document.removeEventListener('pointercancel', onPointerCancel, true)
     document.removeEventListener('lostpointercapture', onLostPointerCapture, true)
-    document.removeEventListener('pointerup', handleLeftPointerUp, true)
     window.removeEventListener('blur', onWindowBlur, true)
+  }
+
+  const bindGlobalPointerListeners = () => {
+    document.addEventListener('pointermove', onDocPointerMove, true)
+    document.addEventListener('pointerup', onDocPointerUp, true)
+    document.addEventListener('pointercancel', onPointerCancel, true)
+    document.addEventListener('lostpointercapture', onLostPointerCapture, true)
+    window.addEventListener('blur', onWindowBlur, true)
   }
 
   const applyDragPointer = (event) => {
@@ -716,7 +763,7 @@ export default function Mascot({
     setY(next.y)
   }
 
-  const startRightDrag = async (event) => {
+  const startDrag = async (event) => {
     isStartingDragRef.current = true
     dragStartedRef.current = true
     dragPointerIdRef.current = event.pointerId
@@ -746,7 +793,7 @@ export default function Mascot({
       const result = await window.api.setWindowMode('drag')
       dragResizeApplied = result?.applied === true
       if (!dragResizeApplied) {
-        console.error('[Renderer] startRightDrag NOT switching to screen-space CSS: hyprctl did not confirm fullscreen size')
+        console.error('[Renderer] startDrag NOT switching to screen-space CSS: hyprctl did not confirm fullscreen size')
       }
     }
 
@@ -754,7 +801,7 @@ export default function Mascot({
     isStartingDragRef.current = false
 
     if (!dragPointerDownRef.current || dragEndingRef.current) {
-      console.log('[Renderer] startRightDrag aborted: pointer released before fullscreen confirmed')
+      console.log('[Renderer] startDrag aborted: pointer released before fullscreen confirmed')
       if (dragResizeApplied && window.api?.setWindowMode) {
         await window.api.setWindowMode('mascot', posRef.current.x, posRef.current.y)
       }
@@ -784,83 +831,6 @@ export default function Mascot({
     setDragging(true)
   }
 
-  const handleLeftPointerUp = (event) => {
-    document.removeEventListener('pointerup', handleLeftPointerUp, true)
-    if (event.button !== 0) return
-    const down = leftPointerDownInfoRef.current
-    leftPointerDownInfoRef.current = null
-    if (!down) return
-
-    if (draggingRef.current || justDroppedRef.current) return
-
-    const dx = Math.abs(event.screenX - down.screenX)
-    const dy = Math.abs(event.screenY - down.screenY)
-    if (Math.hypot(dx, dy) >= CLICK_MAX_DISTANCE) return
-
-    const now = Date.now()
-    const prev = lastLeftClickRef.current
-    const isDoubleClick = (now - prev.time <= CLICK_MAX_DURATION) && Math.hypot(event.screenX - prev.x, event.screenY - prev.y) <= CLICK_MAX_DISTANCE
-
-    if (isDoubleClick) {
-      lastLeftClickRef.current = { time: 0, x: 0, y: 0 }
-      clearTimeout(leftClickTimerRef.current)
-      leftClickTimerRef.current = null
-      executeAction(doubleClickAction)
-    } else {
-      lastLeftClickRef.current = { time: now, x: event.screenX, y: event.screenY }
-      clearTimeout(leftClickTimerRef.current)
-      leftClickTimerRef.current = setTimeout(() => {
-        leftClickTimerRef.current = null
-        if (hungerState === 'ACTIVE') {
-          handleFeedTrigger()
-        } else {
-          triggerAccentRef.current('is-stretch')
-        }
-      }, CLICK_MAX_DURATION)
-    }
-  }
-
-  const onRightPointerMove = (event) => {
-    if (!rightPointerDownInfoRef.current) return
-
-    if ((event.buttons & 2) === 0) {
-      onRightPointerUp(event)
-      return
-    }
-
-    lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
-
-    if (draggingRef.current || dragExpandingRef.current) {
-      applyDragPointer(event)
-      return
-    }
-
-    if (isStartingDragRef.current) return
-
-    const dx = event.screenX - rightPointerDownInfoRef.current.screenX
-    const dy = event.screenY - rightPointerDownInfoRef.current.screenY
-    const dist = Math.hypot(dx, dy)
-
-    if (dist >= CLICK_MAX_DISTANCE) {
-      if (dragBehavior === false) {
-        return
-      }
-      console.log('[Renderer] Right-drag started')
-      startRightDrag(event)
-    }
-  }
-
-  const onRightPointerCancel = (event) => {
-    if (dragStartedRef.current || draggingRef.current) {
-      lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
-      console.log(`[Renderer] pointercancel ignored (resize/capture loss); expanding=${dragExpandingRef.current} buttons=${event.buttons}`)
-      recaptureDragPointer()
-    } else {
-      rightPointerDownInfoRef.current = null
-      unbindDragPointerListeners()
-    }
-  }
-
   const onLostPointerCapture = (event) => {
     if (!dragPointerDownRef.current && !draggingRef.current) return
     if (dragEndingRef.current) return
@@ -869,97 +839,18 @@ export default function Mascot({
     recaptureDragPointer()
   }
 
-  const onRightPointerUp = (event) => {
-    if (event?.button != null && event.button !== 2 && (event.buttons & 2) !== 0) return
-    const downInfo = rightPointerDownInfoRef.current
-    rightPointerDownInfoRef.current = null
-
+  const onPointerCancel = (event) => {
     if (dragStartedRef.current || draggingRef.current) {
-      onDragEnd(event)
-      dragStartedRef.current = false
-      return
-    }
-
-    if (isStartingDragRef.current) {
-      dragPointerDownRef.current = false
-      dragEndingRef.current = true
-      return
-    }
-
-    unbindDragPointerListeners()
-
-    if (downInfo && event?.screenX != null) {
-      const dx = Math.abs(event.screenX - downInfo.screenX)
-      const dy = Math.abs(event.screenY - downInfo.screenY)
-      const dist = Math.hypot(dx, dy)
-      if (dist <= CLICK_MAX_DISTANCE) {
-        const now = Date.now()
-        const prev = lastRightClickRef.current
-        const isDoubleClick = (now - prev.time <= CLICK_MAX_DURATION) && Math.hypot(event.screenX - prev.x, event.screenY - prev.y) <= CLICK_MAX_DISTANCE
-        if (isDoubleClick) {
-          lastRightClickRef.current = { time: 0, x: 0, y: 0 }
-          executeAction(rightDoubleClickAction)
-        } else {
-          lastRightClickRef.current = { time: now, x: event.screenX, y: event.screenY }
-        }
-      }
-    }
-  }
-
-  const onWindowBlur = () => {
-    if (dragStartedRef.current || draggingRef.current) {
-      onDragEnd(null)
-      dragStartedRef.current = false
-    } else {
-      rightPointerDownInfoRef.current = null
-      unbindDragPointerListeners()
-    }
-    leftPointerDownInfoRef.current = null
-    document.removeEventListener('pointerup', handleLeftPointerUp, true)
-  }
-
-  const handlePointerDown = (event) => {
-    if (event.target.closest?.('.mascot-reminder-card')) return
-
-    if (event.button === 0) {
-      if (clickToInteract === false) return
-      leftPointerDownInfoRef.current = {
-        screenX: event.screenX,
-        screenY: event.screenY,
-        time: Date.now(),
-      }
-      document.addEventListener('pointerup', handleLeftPointerUp, true)
-      return
-    }
-
-    if (event.button === 2) {
-      if (fallRafRef.current) {
-        cancelAnimationFrame(fallRafRef.current)
-        fallRafRef.current = null
-        setFalling(false)
-      }
-
-      rightPointerDownInfoRef.current = {
-        screenX: event.screenX,
-        screenY: event.screenY,
-        clientX: event.clientX,
-        clientY: event.clientY,
-        time: Date.now(),
-      }
-      isStartingDragRef.current = false
-      dragStartedRef.current = false
-
-      dragOffsetRef.current = {
-        x: event.clientX - (window.innerWidth / 2),
-        y: event.clientY - NORMAL_CAT_CY,
-      }
       lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
-
-      document.addEventListener('pointermove', onRightPointerMove, true)
-      document.addEventListener('pointerup', onRightPointerUp, true)
-      document.addEventListener('pointercancel', onRightPointerCancel, true)
-      document.addEventListener('lostpointercapture', onLostPointerCapture, true)
-      window.addEventListener('blur', onWindowBlur, true)
+      console.log(`[Renderer] pointercancel ignored (resize/capture loss); expanding=${dragExpandingRef.current} buttons=${event.buttons}`)
+      recaptureDragPointer()
+    } else {
+      buttonPointersRef.current = { 0: null, 1: null, 2: null }
+      clearTimeout(leftClickTimerRef.current)
+      clearTimeout(rightClickTimerRef.current)
+      leftClickTimerRef.current = null
+      rightClickTimerRef.current = null
+      unbindDragPointerListeners()
     }
   }
 
@@ -968,7 +859,7 @@ export default function Mascot({
     if (!dragPointerDownRef.current && !draggingRef.current) return
 
     if (event?.type === 'pointercancel') {
-      onRightPointerCancel(event)
+      onPointerCancel(event)
       return
     }
     if (dragExpandingRef.current && event?.type === 'pointerup') {
@@ -1091,6 +982,187 @@ export default function Mascot({
     }
   }
 
+  const handleButtonRelease = (b, event) => {
+    const downInfo = buttonPointersRef.current[b]
+    buttonPointersRef.current[b] = null
+
+    if (
+      !buttonPointersRef.current[0] &&
+      !buttonPointersRef.current[1] &&
+      !buttonPointersRef.current[2] &&
+      !draggingRef.current &&
+      !dragExpandingRef.current
+    ) {
+      unbindDragPointerListeners()
+    }
+
+    if (b === targetDragButton) {
+      if (dragStartedRef.current || draggingRef.current) {
+        onDragEnd(event)
+        dragStartedRef.current = false
+        return
+      }
+      if (isStartingDragRef.current) {
+        dragPointerDownRef.current = false
+        dragEndingRef.current = true
+        return
+      }
+    }
+
+    if (draggingRef.current || dragStartedRef.current || justDroppedRef.current) {
+      return
+    }
+    if (!downInfo) return
+    if (clickToInteract === false) return
+
+    const eventX = event?.screenX ?? downInfo.screenX
+    const eventY = event?.screenY ?? downInfo.screenY
+    const dx = Math.abs(eventX - downInfo.screenX)
+    const dy = Math.abs(eventY - downInfo.screenY)
+    if (Math.hypot(dx, dy) >= CLICK_MAX_DISTANCE) return
+    if (Date.now() - downInfo.time > 800) return
+
+    if (b === 0) {
+      const now = Date.now()
+      const prev = lastLeftClickRef.current
+      const isDoubleClick = (now - prev.time <= CLICK_MAX_DURATION) &&
+        Math.hypot(eventX - prev.x, eventY - prev.y) <= CLICK_MAX_DISTANCE
+
+      if (isDoubleClick) {
+        clearTimeout(leftClickTimerRef.current)
+        leftClickTimerRef.current = null
+        lastLeftClickRef.current = { time: 0, x: 0, y: 0 }
+        if (doubleClickAction !== 'none') {
+          executeAction(doubleClickAction)
+        }
+      } else {
+        lastLeftClickRef.current = { time: now, x: eventX, y: eventY }
+        if (doubleClickAction !== 'none') {
+          clearTimeout(leftClickTimerRef.current)
+          leftClickTimerRef.current = setTimeout(() => {
+            leftClickTimerRef.current = null
+            executeAction(leftClickAction)
+          }, CLICK_MAX_DURATION)
+        } else {
+          clearTimeout(leftClickTimerRef.current)
+          leftClickTimerRef.current = null
+          executeAction(leftClickAction)
+        }
+      }
+    } else if (b === 2) {
+      const now = Date.now()
+      const prev = lastRightClickRef.current
+      const isDoubleClick = (now - prev.time <= CLICK_MAX_DURATION) &&
+        Math.hypot(eventX - prev.x, eventY - prev.y) <= CLICK_MAX_DISTANCE
+
+      if (isDoubleClick) {
+        clearTimeout(rightClickTimerRef.current)
+        rightClickTimerRef.current = null
+        lastRightClickRef.current = { time: 0, x: 0, y: 0 }
+        if (rightDoubleClickAction !== 'none') {
+          executeAction(rightDoubleClickAction)
+        }
+      } else {
+        lastRightClickRef.current = { time: now, x: eventX, y: eventY }
+        if (rightDoubleClickAction !== 'none') {
+          clearTimeout(rightClickTimerRef.current)
+          rightClickTimerRef.current = setTimeout(() => {
+            rightClickTimerRef.current = null
+            executeAction(rightClickAction)
+          }, CLICK_MAX_DURATION)
+        } else {
+          clearTimeout(rightClickTimerRef.current)
+          rightClickTimerRef.current = null
+          executeAction(rightClickAction)
+        }
+      }
+    }
+  }
+
+  const onDocPointerMove = (event) => {
+    for (const b of [0, 1, 2]) {
+      if (buttonPointersRef.current[b] && (event.buttons & BUTTON_MASK[b]) === 0) {
+        handleButtonRelease(b, event)
+      }
+    }
+
+    lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
+
+    if (draggingRef.current || dragExpandingRef.current) {
+      applyDragPointer(event)
+      return
+    }
+
+    if (isStartingDragRef.current) return
+
+    const dragDown = buttonPointersRef.current[targetDragButton]
+    if (dragDown && dragBehavior !== false) {
+      const dx = event.screenX - dragDown.screenX
+      const dy = event.screenY - dragDown.screenY
+      const dist = Math.hypot(dx, dy)
+      if (dist >= CLICK_MAX_DISTANCE) {
+        clearTimeout(leftClickTimerRef.current)
+        clearTimeout(rightClickTimerRef.current)
+        leftClickTimerRef.current = null
+        rightClickTimerRef.current = null
+        console.log(`[Renderer] drag started (button=${dragButton})`)
+        startDrag(event)
+      }
+    }
+  }
+
+  const onDocPointerUp = (event) => {
+    handleButtonRelease(event.button, event)
+  }
+
+  const onWindowBlur = () => {
+    if (dragStartedRef.current || draggingRef.current) {
+      onDragEnd(null)
+      dragStartedRef.current = false
+    }
+    buttonPointersRef.current = { 0: null, 1: null, 2: null }
+    clearTimeout(leftClickTimerRef.current)
+    clearTimeout(rightClickTimerRef.current)
+    leftClickTimerRef.current = null
+    rightClickTimerRef.current = null
+    unbindDragPointerListeners()
+  }
+
+  const handlePointerDown = (event) => {
+    if (event.target.closest?.('.mascot-reminder-card')) return
+    if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
+
+    if (event.button === 1) {
+      event.preventDefault()
+    }
+
+    if (fallRafRef.current) {
+      cancelAnimationFrame(fallRafRef.current)
+      fallRafRef.current = null
+      setFalling(false)
+    }
+
+    buttonPointersRef.current[event.button] = {
+      screenX: event.screenX,
+      screenY: event.screenY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      time: Date.now(),
+    }
+
+    if (event.button === targetDragButton) {
+      isStartingDragRef.current = false
+      dragStartedRef.current = false
+      dragOffsetRef.current = {
+        x: event.clientX - (window.innerWidth / 2),
+        y: event.clientY - NORMAL_CAT_CY,
+      }
+      lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
+    }
+
+    bindGlobalPointerListeners()
+  }
+
   // Keep original handler names for the JSX props; pointerMove/Up on the
   // element are no-ops now — the document listeners do the real work.
   const handlePointerMove = () => {}
@@ -1165,6 +1237,7 @@ export default function Mascot({
       // Clean up document-level drag listeners if component unmounts mid-drag
       unbindDragPointerListeners()
       clearTimeout(leftClickTimerRef.current)
+      clearTimeout(rightClickTimerRef.current)
       clearTimeout(petLeaveTimeoutRef.current)
     }
   }, [])
@@ -1305,6 +1378,8 @@ export default function Mascot({
         // Normal mode: cat is centered in the 160x128 window via Mascot.css.
       }}
       onContextMenu={(e) => e.preventDefault()}
+      onAuxClick={(e) => e.preventDefault()}
+      onMouseDown={(e) => { if (e.button === 1) e.preventDefault() }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onPointerDown={handlePointerDown}
