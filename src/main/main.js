@@ -123,6 +123,16 @@ const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'sc
 const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-chat')
 const SETTINGS_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-settings')
 
+const initialDebugEnv = process.env.SCREEN_BUDDY_DEBUG === '1'
+
+function syncDeveloperMode(devMode) {
+  if (devMode || initialDebugEnv) {
+    process.env.SCREEN_BUDDY_DEBUG = '1'
+  } else {
+    delete process.env.SCREEN_BUDDY_DEBUG
+  }
+}
+
 // The floor overhang is ~66px. We add 100px so main.js doesn't artificially clip 
 // the window if the workAreaSize is slightly smaller than the renderer's full 1080 display.
 const BOTTOM_OVERHANG_PX = 100
@@ -186,6 +196,7 @@ if (rendererOverride === 'swiftshader') {
 app.whenReady().then(async () => {
   if (!gotLock) return
   settings = loadSettings()
+  syncDeveloperMode(Boolean(settings?.developerMode))
 
   typingDetector = new TypingDetector((channel, event) => {
     // Optional chaining alone is insufficient: a closed BrowserWindow is still
@@ -202,7 +213,9 @@ app.whenReady().then(async () => {
   trayHostWatcher = watchTrayHost({
     onReady: () => {
       destroyTray()
-      createTray()
+      if (settings?.showTrayIcon !== false) {
+        createTray()
+      }
     },
     onLost: () => {
       destroyTray()
@@ -1148,6 +1161,8 @@ function openSettingsWindow() {
 }
 
 function createOverlayWindow() {
+  const isAutostart = process.argv.includes('--autostart')
+  const shouldDelayStartup = isAutostart && Boolean(settings?.delayStartup)
   const savedPosition = getSavedMascotPosition()
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
@@ -1155,6 +1170,7 @@ function createOverlayWindow() {
     height: NORMAL_WIN_H,
     x: savedPosition.x,
     y: savedPosition.y,
+    show: false,
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
@@ -1257,8 +1273,18 @@ function createOverlayWindow() {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
 
-  // showInactive() prevents stealing focus from the user's active app on startup
-  mainWindow.showInactive()
+  if (shouldDelayStartup) {
+    console.log('[main] Autostart detected with delayStartup enabled: waiting 10s before showing cat')
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.showInactive()
+        console.log('[main] 10s startup delay elapsed: overlay window shown')
+      }
+    }, 10000)
+  } else {
+    // showInactive() prevents stealing focus from the user's active app on startup
+    mainWindow.showInactive()
+  }
   // Seed the cat window position tracker from the saved position so that
   // positionBubbleWindow() has a valid anchor before the first cat move.
   lastKnownCatWinX = savedPosition.x
@@ -1460,6 +1486,7 @@ function destroyTray() {
  * Falls back to an empty/placeholder icon if the asset isn't present yet.
  */
 function createTray() {
+  if (settings && settings.showTrayIcon === false) return
   if (tray) return
 
   try {
@@ -1595,12 +1622,29 @@ function registerIpcHandlers() {
   function applySettingsPipeline(nextSettings) {
     settings = nextSettings
     saveSettings(settings)
+    syncDeveloperMode(Boolean(settings.developerMode))
 
     // Toggle autostart .desktop file based on the new setting
     if (settings.autostart) {
       setAutostart()
     } else {
       removeAutostart()
+    }
+
+    // Toggle system tray icon based on showTrayIcon setting
+    if (settings.showTrayIcon !== false) {
+      if (!tray) {
+        createTray()
+      }
+    } else {
+      if (tray) {
+        destroyTray()
+      }
+    }
+
+    // If reduce resource usage is enabled, stop any ongoing eye tracking polling
+    if (settings.reduceResourceUsage) {
+      stopEyeTrackingPolling?.()
     }
 
     // Update typing detector settings
@@ -2203,6 +2247,7 @@ function registerIpcHandlers() {
   }
 
   function startEyeTrackingPolling() {
+    if (settings && settings.reduceResourceUsage) return
     if (eyeTrackingInterval) return
 
     const poll = async () => {

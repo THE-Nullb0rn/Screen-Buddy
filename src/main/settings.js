@@ -291,9 +291,7 @@ const DEFAULT_SETTINGS = {
   reduceResourceUsage: false,
   pauseAnimationIdle: false,
   limitBackgroundCpu: false,
-  startMinimized: false,
   delayStartup: false,
-  minimizeToTray: true,
   showTrayIcon: true,
   experimentalFeatures: false,
   developerMode: false,
@@ -391,6 +389,17 @@ function loadSettings() {
           delete saved.hungerBehavior
         }
         needsSave = true
+      }
+      if (saved.startMinimized !== undefined) {
+        delete saved.startMinimized
+        needsSave = true
+      }
+      if (saved.minimizeToTray !== undefined) {
+        delete saved.minimizeToTray
+        needsSave = true
+      }
+      if (saved.developerMode) {
+        process.env.SCREEN_BUDDY_DEBUG = '1'
       }
     }
 
@@ -498,9 +507,7 @@ function validateSettingsUpdate(patch) {
       case 'reduceResourceUsage':
       case 'pauseAnimationIdle':
       case 'limitBackgroundCpu':
-      case 'startMinimized':
       case 'delayStartup':
-      case 'minimizeToTray':
       case 'showTrayIcon':
       case 'experimentalFeatures':
       case 'developerMode':
@@ -510,6 +517,12 @@ function validateSettingsUpdate(patch) {
         } else {
           debugLog(key, 'must be a boolean')
         }
+        break
+      }
+
+      case 'startMinimized':
+      case 'minimizeToTray': {
+        // Dropped / ignored
         break
       }
 

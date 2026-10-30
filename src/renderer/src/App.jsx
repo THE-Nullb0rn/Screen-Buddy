@@ -651,6 +651,8 @@ export default function App() {
         catAnimationSpeed={settings.catAnimationSpeed}
         mouseReaction={settings.mouseReaction}
         paused={paused}
+        animationFps={settings.animationFps}
+        reduceResourceUsage={settings.reduceResourceUsage}
       />}
 
     </>

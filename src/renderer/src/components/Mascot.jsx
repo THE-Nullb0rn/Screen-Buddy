@@ -105,6 +105,8 @@ export default function Mascot({
   mouseReaction = false,
   paused = false,
   reminderCatAnimation = true,
+  animationFps = 60,
+  reduceResourceUsage = false,
 }) {
   const containerRef = useRef(null)
   
@@ -113,6 +115,7 @@ export default function Mascot({
     Math.max(20, typeof catOpacity === 'number' ? catOpacity : 100)
   )
   const effectiveOpacity = clampedOpacity / 100
+  const effectiveFps = reduceResourceUsage ? 30 : (animationFps || 60)
   
 
   const [cursorOffset, setCursorOffset] = useState(null)
@@ -1325,6 +1328,7 @@ export default function Mascot({
   }
 
   const isEyeTrackingEligible = Boolean(
+    !reduceResourceUsage &&
     mouseReaction &&
     !paused &&
     animationName === 'idle' &&
@@ -1487,6 +1491,7 @@ export default function Mascot({
             catAnimationSpeed={catAnimationSpeed}
             eyeTracking={isEyeTrackingEligible}
             cursorOffset={cursorOffset}
+            fpsCap={effectiveFps}
           />
         </div>
       </div>

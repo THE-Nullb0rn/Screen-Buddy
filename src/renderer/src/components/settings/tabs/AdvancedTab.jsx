@@ -212,7 +212,6 @@ export default function AdvancedTab({
           icon={Zap}
           label="Animation FPS"
           hint="Target framerate for cat animation loop"
-          soon={true}
         >
           <div className="sb-segmented-group">
             {fpsOptions.map((fps) => (
@@ -232,7 +231,6 @@ export default function AdvancedTab({
           icon={Zap}
           label="Reduce resource usage"
           hint="Lower particle effects and rendering priority to save power"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.reduceResourceUsage)}
@@ -286,23 +284,9 @@ export default function AdvancedTab({
         </Row>
 
         <Row
-          icon={Laptop}
-          label="Start minimized"
-          hint="Launch companion quietly in the background on startup"
-          soon={true}
-        >
-          <Toggle
-            checked={Boolean(settings.startMinimized)}
-            onChange={(e) => saveSettingsPatch({ startMinimized: e.target.checked })}
-            ariaLabel="Start minimized"
-          />
-        </Row>
-
-        <Row
           icon={Clock}
           label="Delay startup"
-          hint="Wait a few seconds after login before spawning buddy"
-          soon={true}
+          hint="Wait 10 seconds after login before showing the cat (applies to autostart only)"
         >
           <Toggle
             checked={Boolean(settings.delayStartup)}
@@ -313,22 +297,8 @@ export default function AdvancedTab({
 
         <Row
           icon={Laptop}
-          label="Minimize to system tray"
-          hint="Keep running in system tray when companion windows close"
-          soon={true}
-        >
-          <Toggle
-            checked={settings.minimizeToTray !== false}
-            onChange={(e) => saveSettingsPatch({ minimizeToTray: e.target.checked })}
-            ariaLabel="Minimize to system tray"
-          />
-        </Row>
-
-        <Row
-          icon={Laptop}
           label="Show tray icon"
-          hint="Display companion icon in notification tray"
-          soon={true}
+          hint="Hotkeys still work when the tray icon is hidden"
         >
           <Toggle
             checked={settings.showTrayIcon !== false}
@@ -359,8 +329,7 @@ export default function AdvancedTab({
         <Row
           icon={Code}
           label="Developer mode"
-          hint="Enable dev logs and debugging tools"
-          soon={true}
+          hint="Detailed logs in the terminal and DevTools console"
         >
           <Toggle
             checked={Boolean(settings.developerMode)}

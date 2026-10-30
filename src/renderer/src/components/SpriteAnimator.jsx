@@ -64,6 +64,7 @@ export function useSpriteAnimation({
   loop: propLoop,
   onAnimationEnd,
   speed = 'normal',
+  fpsCap = 60,
 }) {
   const baseConfig =
     manifest.animations[animation] ||
@@ -81,6 +82,7 @@ export function useSpriteAnimation({
   const onEndRef = useRef(onAnimationEnd)
   const frameIndexRef = useRef(0)
   const speedFactorRef = useRef(1)
+  const fpsCapRef = useRef(fpsCap)
   const idleBlinkStateRef = useRef({
     openDuration: 3000 + Math.random() * 3000,
     blinkDuration: 120 + Math.random() * 60,
@@ -91,6 +93,7 @@ export function useSpriteAnimation({
   animRef.current = animConfig
   onEndRef.current = onAnimationEnd
   speedFactorRef.current = SPEED_FACTORS[speed] || 1
+  fpsCapRef.current = fpsCap
 
   // Reset frame when animation name or manifest changes
   useEffect(() => {
@@ -112,10 +115,18 @@ export function useSpriteAnimation({
   useEffect(() => {
     let animFrameId
     let lastTime = performance.now()
+    let lastStepTime = 0
     let accumulated = 0
     const { frames, fps, loop, frameDurations } = animRef.current
 
     const tick = (now) => {
+      const cap = fpsCapRef.current || 60
+      const minInterval = 1000 / cap
+      if (now - lastStepTime < minInterval - 1) {
+        animFrameId = requestAnimationFrame(tick)
+        return
+      }
+      lastStepTime = now
       accumulated += now - lastTime
       lastTime = now
 
@@ -313,6 +324,7 @@ export default function SpriteAnimator({
   catAnimationSpeed,
   eyeTracking = false,
   cursorOffset = null,
+  fpsCap = 60,
   ...rest
 }) {
   const canvasRef = useRef(null)
@@ -361,6 +373,7 @@ export default function SpriteAnimator({
     loop,
     onAnimationEnd,
     speed: effectiveSpeed,
+    fpsCap,
   })
 
   // Load / listen to spritesheet
