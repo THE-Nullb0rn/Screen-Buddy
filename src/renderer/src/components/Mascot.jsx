@@ -75,9 +75,9 @@ export default function Mascot({
   reminderState,
   reminderType = 'water',
   hungerState = 'IDLE',
-  showHunger = false,
   onFeed,
   feedSignal = 0,
+  hungerBehavior = 'search-food',
   pomodoroCelebrating = false,
   REMINDER_STATE,
   mediaPlaying = false,
@@ -219,7 +219,7 @@ export default function Mascot({
     pomodoroCelebrating ||
     chatState !== 'idle' ||
     notificationVisible ||
-    showHunger ||
+    (hungerState === 'ACTIVE' && hungerBehavior === 'sit') ||
     isEating
   )
   const roamBlockedRef = useRef(isRoamBlocked)
@@ -480,6 +480,10 @@ export default function Mascot({
     const step = (now) => {
       if (roamBlockedRef.current) {
         walkTweenRef.current = null
+        if (poseRef.current.startsWith('walk')) {
+          poseRef.current = 'idle'
+          setPose('idle')
+        }
       }
       const tween = walkTweenRef.current
       if (tween && !draggingRef.current && !dragPointerDownRef.current) {

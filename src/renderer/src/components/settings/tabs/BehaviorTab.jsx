@@ -63,8 +63,7 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
 
   const hungerBehaviorOptions = [
     { value: 'search-food', label: 'Look for food' },
-    { value: 'sad', label: 'Act sad' },
-    { value: 'sit', label: 'Sit quietly' },
+    { value: 'sit', label: 'Sit and wait' },
   ]
 
   return (
@@ -286,7 +285,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Utensils}
           label="Enable hunger system"
           hint="Your buddy gets hungry over time and needs feeding"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.hungerEnabled)}
@@ -299,7 +297,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Utensils}
           label="Hunger rate"
           hint="How fast hunger levels increase"
-          soon={true}
         >
           <Select
             value={settings.hungerRate || 'normal'}
@@ -313,7 +310,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Bell}
           label="Notify when hungry"
           hint="Show a gentle hunger alert bubble"
-          soon={true}
         >
           <Toggle
             checked={settings.hungerNotify !== false}
@@ -326,7 +322,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Utensils}
           label="Behavior when hungry"
           hint="How your buddy acts when hungry"
-          soon={true}
         >
           <Select
             value={settings.hungerBehavior || 'search-food'}
@@ -340,7 +335,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Moon}
           label="Pause hunger while sleeping"
           hint="Do not increase hunger when the cat is sleeping"
-          soon={true}
         >
           <Toggle
             checked={settings.hungerPauseSleeping !== false}

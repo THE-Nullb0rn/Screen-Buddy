@@ -13,6 +13,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Mascot, { NORMAL_CAT_CX, NORMAL_CAT_CY } from './components/Mascot'
+import { useHunger } from './hooks/useHunger'
 
 // ─── State machine constants ─────────────────────────────────────────────────
 const REMINDER_STATE = {
@@ -28,7 +29,6 @@ const EXIT_DURATION_MS = 800
 const POMODORO_WORK_SEC = 25 * 60
 const POMODORO_BREAK_SEC = 5 * 60
 const POMODORO_CELEBRATION_MS = 1200
-const HUNGER_SNOOZE_SECONDS = 10 * 60
 
 const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
 
@@ -58,23 +58,10 @@ export default function App() {
   const [reminderState, setReminderState] = useState(REMINDER_STATE.IDLE_COUNTING)
   const [reminderType, setReminderType] = useState('water')
 
-  // ── Hunger state ───────────────────────────────────────────────────────────
-  const [hungerState, setHungerState] = useState('IDLE')
-  const [hungerCountdown, setHungerCountdown] = useState(() => Math.floor((20 + Math.random() * 20) * 60))
-  const [feedSignal, setFeedSignal] = useState(0)
-
-  // ── Sleep state ────────────────────────────────────────────────────────────
-  const [isAsleep, setIsAsleep] = useState(false)
-  const isAsleepRef = useRef(false)
-
-  const handleSleepChange = useCallback((asleep) => {
-    setIsAsleep(asleep)
-    isAsleepRef.current = asleep
-  }, [])
-
-  useEffect(() => {
-    isAsleepRef.current = isAsleep
-  }, [isAsleep])
+  const isReminderActive =
+    reminderState === REMINDER_STATE.ENTRANCE ||
+    reminderState === REMINDER_STATE.ACTIVE ||
+    reminderState === REMINDER_STATE.EXIT
 
   // ── Pomodoro & Stopwatch state ─────────────────────────────────────────────
   const [timerMode, setTimerMode] = useState('none') // 'none' | 'pomodoro-work' | 'pomodoro-break' | 'stopwatch'
@@ -97,17 +84,30 @@ export default function App() {
   // Countdown displayed in development / debug overlay
   const [countdown, setCountdown] = useState(0)
 
+  // ── Hunger state ───────────────────────────────────────────────────────────
+  const {
+    hungerState,
+    hungerLevel,
+    showHunger,
+    feedSignal,
+    handleFeed,
+    handleSnooze,
+    handleSleepChange,
+  } = useHunger({
+    settings,
+    paused,
+    isReminderActive,
+  })
+
   const pausedRef = useRef(paused)
   const settingsRef = useRef(settings)
   const reminderStateRef = useRef(reminderState)
   const reminderIndexRef = useRef(0)
-  const hungerStateRef = useRef(hungerState)
 
   useEffect(() => { pausedRef.current = paused }, [paused])
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { reminderStateRef.current = reminderState }, [reminderState])
   useEffect(() => { window.api.sendReminderState?.(reminderState) }, [reminderState])
-  useEffect(() => { hungerStateRef.current = hungerState }, [hungerState])
 
   // ── Load settings from main process on mount ──────────────────────────────
   useEffect(() => {
@@ -146,11 +146,6 @@ export default function App() {
     setTimeout(() => {
       setReminderState(REMINDER_STATE.IDLE_COUNTING)
     }, EXIT_DURATION_MS)
-  }, [])
-
-  const handleFeed = useCallback(() => {
-    setHungerState('IDLE')
-    setHungerCountdown(Math.floor((20 + Math.random() * 20) * 60))
   }, [])
 
   // ── Auto-dismiss after a few seconds if not manually dismissed ────────────
@@ -199,26 +194,6 @@ export default function App() {
 
     return () => clearInterval(tick)
   }, [settings, triggerReminder])
-
-  // ── Hunger Timer ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    const tick = setInterval(() => {
-      if (pausedRef.current) return
-      if (hungerStateRef.current === 'IDLE') {
-        setHungerCountdown((prev) => {
-          const next = Math.max(0, prev - 1)
-          if (next === 0) {
-            if (!isAsleepRef.current) {
-              setHungerState('ACTIVE')
-            }
-            return 0
-          }
-          return next
-        })
-      }
-    }, 1000)
-    return () => clearInterval(tick)
-  }, [])
 
   // ── Pomodoro / Stopwatch Controls ─────────────────────────────────────────
   const startPomodoro = useCallback((workSec = POMODORO_WORK_SEC) => {
@@ -354,10 +329,6 @@ export default function App() {
       }
     })
 
-    const offTestHunger = window.api.on('tray:test-hunger', () => {
-      setHungerState('ACTIVE')
-    })
-
     const offTrigger = window.api.on('reminder:trigger', (data) => {
       if (reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING) {
         triggerReminder(data?.type)
@@ -386,7 +357,6 @@ export default function App() {
 
     return () => {
       offTest()
-      offTestHunger()
       offTrigger()
       offStartPomodoro()
       offStartStopwatch()
@@ -429,8 +399,6 @@ export default function App() {
   // ── Push card-state snapshot to bubble window ─────────────────────────────
   // Computed once and sent whenever any relevant state changes.
   // hasContent drives the bubble window visibility decision in main.js.
-  const showHunger = hungerState === 'ACTIVE' && reminderState !== REMINDER_STATE.ACTIVE
-
   useEffect(() => {
     const isReminderActive =
       reminderState === REMINDER_STATE.ENTRANCE ||
@@ -470,10 +438,8 @@ export default function App() {
         dismissReminder()
       } else if (type === 'hunger:feed') {
         handleFeed()
-        setFeedSignal((s) => s + 1)
       } else if (type === 'hunger:later') {
-        setHungerState('IDLE')
-        setHungerCountdown(HUNGER_SNOOZE_SECONDS)
+        handleSnooze()
       } else if (type === 'chat:send') {
         handleChatSend(payload)
       } else if (type === 'chat:retry') {
@@ -496,7 +462,7 @@ export default function App() {
       }
     })
     return () => offAction()
-  }, [dismissReminder, handleFeed])
+  }, [dismissReminder, handleFeed, handleSnooze])
 
 
   // ── IPC: media playback status ────────────────────────────────────────────
@@ -714,9 +680,9 @@ export default function App() {
         reminderState={reminderState}
         reminderType={reminderType}
         hungerState={hungerState}
-        showHunger={showHunger}
         onFeed={handleFeed}
         feedSignal={feedSignal}
+        hungerBehavior={settings.hungerBehavior || 'search-food'}
         onSleepChange={handleSleepChange}
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}

@@ -203,6 +203,14 @@ function loadSettings() {
         delete saved.dragButton
         needsSave = true
       }
+      if (saved.hungerBehavior !== undefined && !['search-food', 'sit'].includes(saved.hungerBehavior)) {
+        if (saved.hungerBehavior === 'sad') {
+          saved.hungerBehavior = 'search-food'
+        } else {
+          delete saved.hungerBehavior
+        }
+        needsSave = true
+      }
     }
 
     // Deep merge: saved values override defaults, but new default keys are added
@@ -462,8 +470,10 @@ function validateSettingsUpdate(patch) {
       }
 
       case 'hungerBehavior': {
-        if (typeof value === 'string' && ['search-food', 'sad', 'sit'].includes(value)) {
+        if (typeof value === 'string' && ['search-food', 'sit'].includes(value)) {
           sanitized.hungerBehavior = value
+        } else if (value === 'sad') {
+          sanitized.hungerBehavior = 'search-food'
         } else {
           debugLog('hungerBehavior', 'invalid hunger behavior')
         }
