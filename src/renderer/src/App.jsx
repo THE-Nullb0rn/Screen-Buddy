@@ -692,6 +692,15 @@ export default function App() {
     setChatState('idle')
   }, [])
 
+  const handleChatOpen = useCallback(() => {
+    setChatState((prev) => {
+      if (prev === 'reply' || prev === 'idle') {
+        return 'input'
+      }
+      return prev
+    })
+  }, [])
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -712,6 +721,11 @@ export default function App() {
         onChatSend={handleChatSend}
         onChatDismiss={handleChatDismiss}
         onChatActivity={resetChatInputTimer}
+        onChatOpen={handleChatOpen}
+        clickToInteract={settings.clickToInteract !== false}
+        dragBehavior={settings.dragBehavior !== false}
+        doubleClickAction={settings.doubleClickAction || 'chat'}
+        rightDoubleClickAction={settings.rightDoubleClickAction || 'settings'}
         notificationVisible={notificationVisible}
         initialPosition={{
           x: (settings.mascotPosition?.x ?? 0) + NORMAL_CAT_CX,

@@ -95,7 +95,7 @@ const DEFAULT_SETTINGS = {
   clickToInteract: true,
   dragBehavior: true,
   doubleClickAction: 'chat',
-  rightClickAction: 'menu',
+  rightDoubleClickAction: 'settings',
   pettingEffects: true,
   hungerEnabled: false,
   hungerRate: 'normal',
@@ -410,11 +410,11 @@ function validateSettingsUpdate(patch) {
         break
       }
 
-      case 'rightClickAction': {
-        if (typeof value === 'string' && ['menu', 'chat', 'pause'].includes(value)) {
-          sanitized.rightClickAction = value
+      case 'rightDoubleClickAction': {
+        if (typeof value === 'string' && ['chat', 'settings', 'none'].includes(value)) {
+          sanitized.rightDoubleClickAction = value
         } else {
-          debugLog('rightClickAction', 'invalid right click action')
+          debugLog('rightDoubleClickAction', 'invalid right double click action')
         }
         break
       }

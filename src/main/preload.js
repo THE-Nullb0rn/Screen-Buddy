@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('api', {
   /** Get the absolute path of the settings file (for display in the UI) */
   getSettingsPath: () => ipcRenderer.invoke('settings:get-path'),
 
+  /** Open the Settings window */
+  openSettings: () => ipcRenderer.send('settings:open'),
+
   // ── Mouse hit-region ──────────────────────────────────────────────────────
 
   /**

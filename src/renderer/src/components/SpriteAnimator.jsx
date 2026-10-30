@@ -81,6 +81,12 @@ export function useSpriteAnimation({
   const onEndRef = useRef(onAnimationEnd)
   const frameIndexRef = useRef(0)
   const speedFactorRef = useRef(1)
+  const idleBlinkStateRef = useRef({
+    openDuration: 3000 + Math.random() * 3000,
+    blinkDuration: 120 + Math.random() * 60,
+    doubleBlinkPending: false,
+    isSecondBlinkOpen: false,
+  })
 
   animRef.current = animConfig
   onEndRef.current = onAnimationEnd
@@ -92,6 +98,14 @@ export function useSpriteAnimation({
       currentAnimationRef.current = animation
       frameIndexRef.current = 0
       setFrameIndex(0)
+      if (animation === 'idle') {
+        idleBlinkStateRef.current = {
+          openDuration: 3000 + Math.random() * 3000,
+          blinkDuration: 120 + Math.random() * 60,
+          doubleBlinkPending: false,
+          isSecondBlinkOpen: false,
+        }
+      }
     }
   }, [animation, manifest])
 
@@ -112,9 +126,21 @@ export function useSpriteAnimation({
       // Drain accumulated time frame-by-frame so no frame is ever skipped
       let safety = 0
       while (safety++ < totalFrames + 1) {
-        const rawDuration = frameDurations
-          ? (frameDurations[idx] ?? (1000 / (fps || 1)))
-          : (1000 / (fps || 1))
+        let rawDuration
+        const isTwoFrameIdle = currentAnimationRef.current === 'idle' && totalFrames === 2
+        if (isTwoFrameIdle) {
+          if (idx === 0) {
+            rawDuration = idleBlinkStateRef.current.isSecondBlinkOpen
+              ? 120 + Math.random() * 50
+              : idleBlinkStateRef.current.openDuration
+          } else {
+            rawDuration = idleBlinkStateRef.current.blinkDuration
+          }
+        } else {
+          rawDuration = frameDurations
+            ? (frameDurations[idx] ?? (1000 / (fps || 1)))
+            : (1000 / (fps || 1))
+        }
         const duration = rawDuration / speedFactor
 
         if (accumulated < duration) break
@@ -125,6 +151,18 @@ export function useSpriteAnimation({
         if (next >= totalFrames) {
           if (loop) {
             idx = 0
+            if (isTwoFrameIdle) {
+              if (idleBlinkStateRef.current.doubleBlinkPending) {
+                idleBlinkStateRef.current.isSecondBlinkOpen = true
+                idleBlinkStateRef.current.doubleBlinkPending = false
+                idleBlinkStateRef.current.blinkDuration = 120 + Math.random() * 60
+              } else {
+                idleBlinkStateRef.current.isSecondBlinkOpen = false
+                idleBlinkStateRef.current.openDuration = 3000 + Math.random() * 3000
+                idleBlinkStateRef.current.blinkDuration = 120 + Math.random() * 60
+                idleBlinkStateRef.current.doubleBlinkPending = Math.random() < 0.2
+              }
+            }
           } else {
             idx = totalFrames - 1
             if (idx !== frameIndexRef.current) {

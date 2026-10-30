@@ -6,7 +6,7 @@
   "columns": 4,
   "scale": 0.6,
   "animations": {
-    "idle":        { "frames": [0, 1],                          "fps": 2,    "loop": true,  "frameDurations": [200, 200] },
+    "idle":        { "frames": [0, 1],                          "fps": 2,    "loop": true,  "frameDurations": [3500, 150] },
     "eat":         { "frames": [2, 3, 2, 3],                    "fps": 4,    "loop": false, "frameDurations": [200, 250, 200, 250] },
     "walk":        { "frames": [4, 5, 6, 7],                    "fps": 10,   "loop": true,  "frameDurations": [190, 75, 190, 75] },
     "sleep":       { "frames": [8, 9],                          "fps": 1.2,  "loop": true,  "frameDurations": [1200, 1200] },

@@ -2483,6 +2483,10 @@ function registerIpcHandlers() {
 
   /** Expose the resolved settings file path to the renderer for display */
   ipcMain.handle('settings:get-path', () => getSettingsPath())
+
+  ipcMain.on('settings:open', () => {
+    openSettingsWindow()
+  })
 }
 
 // ─── Power monitor ───────────────────────────────────────────────────────────

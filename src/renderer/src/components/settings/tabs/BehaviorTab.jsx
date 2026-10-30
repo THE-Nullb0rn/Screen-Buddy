@@ -8,7 +8,6 @@ import {
   Hand,
   Move,
   Mouse,
-  Sparkles,
   Utensils,
   Bell,
   Smile,
@@ -47,11 +46,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
     { value: 'none', label: 'Do Nothing' },
   ]
 
-  const rightClickOptions = [
-    { value: 'menu', label: 'Open Menu' },
-    { value: 'chat', label: 'Open Chat' },
-    { value: 'pause', label: 'Toggle Pause' },
-  ]
 
   const hungerRateOptions = [
     { value: 'slow', label: 'Slow' },
@@ -157,8 +151,7 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         <Row
           icon={Hand}
           label="Click to interact"
-          hint="Left click to pet or interact with the cat"
-          soon={true}
+          hint="Left click gives her a small reaction and feeds her when hungry"
         >
           <Toggle
             checked={settings.clickToInteract !== false}
@@ -170,8 +163,7 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         <Row
           icon={Move}
           label="Drag behavior"
-          hint="Allow dragging the cat around the screen"
-          soon={true}
+          hint="Hold the right mouse button on the cat to move her"
         >
           <Toggle
             checked={settings.dragBehavior !== false}
@@ -182,42 +174,27 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
 
         <Row
           icon={Mouse}
-          label="Double click action"
+          label="Left double click"
           hint="Action triggered on double clicking the cat"
-          soon={true}
         >
           <Select
             value={settings.doubleClickAction || 'chat'}
             onChange={(e) => saveSettingsPatch({ doubleClickAction: e.target.value })}
             options={doubleClickOptions}
-            ariaLabel="Double click action"
+            ariaLabel="Left double click action"
           />
         </Row>
 
         <Row
           icon={Mouse}
-          label="Right click action"
-          hint="Action triggered on right clicking the cat"
-          soon={true}
+          label="Right double click"
+          hint="Action triggered on right double clicking the cat"
         >
           <Select
-            value={settings.rightClickAction || 'menu'}
-            onChange={(e) => saveSettingsPatch({ rightClickAction: e.target.value })}
-            options={rightClickOptions}
-            ariaLabel="Right click action"
-          />
-        </Row>
-
-        <Row
-          icon={Sparkles}
-          label="Petting effects"
-          hint="Show visual heart/sparkle particles when petting"
-          soon={true}
-        >
-          <Toggle
-            checked={settings.pettingEffects !== false}
-            onChange={(e) => saveSettingsPatch({ pettingEffects: e.target.checked })}
-            ariaLabel="Petting effects"
+            value={settings.rightDoubleClickAction || 'settings'}
+            onChange={(e) => saveSettingsPatch({ rightDoubleClickAction: e.target.value })}
+            options={doubleClickOptions}
+            ariaLabel="Right double click action"
           />
         </Row>
       </Card>
