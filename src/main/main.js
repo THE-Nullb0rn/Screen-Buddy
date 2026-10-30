@@ -507,13 +507,35 @@ async function focusChatWindow() {
 
 // ─── Gemini API call ─────────────────────────────────────────────────────────
 
-const GEMINI_SYSTEM_INSTRUCTION =
-  "You are a small black cat desktop companion. Answer the user's " +
-  "question correctly and helpfully in 1-3 short sentences. Include a " +
-  "small cat touch in EVERY reply (a meow, a purr, or a paw emoji 🐾, " +
-  "at the start or end) while keeping the answer itself accurate and " +
-  "complete. If you don't know something, say so plainly. Always reply " +
-  "in English, even if the user writes in another language."
+function buildGeminiSystemInstruction(currentSettings) {
+  const length = currentSettings?.chatResponseLength || 'medium'
+  let lengthInstruction = "Answer correctly and helpfully in 2-3 short sentences."
+  if (length === 'short') lengthInstruction = "Answer correctly and helpfully in 1-2 very short sentences."
+  else if (length === 'detailed') lengthInstruction = "Provide a thorough, accurate, and detailed answer in 3-5 sentences."
+
+  const tone = currentSettings?.chatTone || 'casual'
+  let toneInstruction = "Use a casual and friendly tone."
+  if (tone === 'formal') toneInstruction = "Use a polite, formal, and direct tone."
+  else if (tone === 'friendly') toneInstruction = "Use a warm, enthusiastic, and cheerful tone."
+
+  const catPersonality = currentSettings?.chatUseCatPersonality !== false
+  const useEmojis = currentSettings?.chatUseEmojis !== false
+
+  let catTouch = ""
+  if (catPersonality) {
+    const emojiPart = useEmojis ? "or a paw emoji 🐾" : "such as *purr* or *meow*"
+    catTouch = ` Include a small cat touch in EVERY reply (a meow, a purr, ${emojiPart}, at the start or end) while keeping the answer itself accurate and complete.`
+  } else if (!useEmojis) {
+    catTouch = " Do not use emojis in your response."
+  }
+
+  return (
+    "You are a small black cat desktop companion. " +
+    lengthInstruction + " " + toneInstruction +
+    catTouch +
+    " If you don't know something, say so plainly. Always reply in English, even if the user writes in another language."
+  )
+}
 
 const GEMINI_TIMEOUT_MS = 25_000
 
@@ -542,10 +564,17 @@ async function callGemini(userMessage) {
   ]
   const boundedContents = contents.length > 10 ? contents.slice(contents.length - 10) : contents
 
+  const temperature = typeof settings?.geminiTemperature === 'number' ? settings.geminiTemperature : 0.7
+  const maxOutputTokens = typeof settings?.geminiMaxTokens === 'number' ? settings.geminiMaxTokens : 1024
+
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
   const body = {
-    systemInstruction: { parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }] },
+    systemInstruction: { parts: [{ text: buildGeminiSystemInstruction(settings) }] },
     contents: boundedContents,
+    generationConfig: {
+      temperature,
+      maxOutputTokens,
+    },
   }
 
   const controller = new AbortController()

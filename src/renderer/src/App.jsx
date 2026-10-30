@@ -102,6 +102,99 @@ export default function App() {
   useEffect(() => { pausedRef.current = paused }, [paused])
   useEffect(() => { window.api.sendReminderState?.(reminderState) }, [reminderState])
 
+  const [hungerExiting, setHungerExiting] = useState(false)
+  const hungerExitTimerRef = useRef(null)
+
+  const triggerHungerExit = useCallback(() => {
+    if (settingsRef.current?.notificationAnimations === false) {
+      setHungerExiting(false)
+      return
+    }
+    setHungerExiting(true)
+    if (hungerExitTimerRef.current) clearTimeout(hungerExitTimerRef.current)
+    hungerExitTimerRef.current = setTimeout(() => {
+      setHungerExiting(false)
+      hungerExitTimerRef.current = null
+    }, 240)
+  }, [])
+
+  const handleFeedWithAnimation = useCallback(() => {
+    triggerHungerExit()
+    handleFeed()
+  }, [triggerHungerExit, handleFeed])
+
+  const handleSnoozeWithAnimation = useCallback(() => {
+    triggerHungerExit()
+    handleSnooze()
+  }, [triggerHungerExit, handleSnooze])
+
+  const [nowPlayingExiting, setNowPlayingExiting] = useState(false)
+  const nowPlayingExitTimerRef = useRef(null)
+
+  const dismissNowPlaying = useCallback(() => {
+    if (nowPlayingTimerRef.current) {
+      clearTimeout(nowPlayingTimerRef.current)
+      nowPlayingTimerRef.current = null
+    }
+    if (settingsRef.current?.notificationAnimations === false) {
+      setNowPlayingVisible(false)
+      setNowPlayingExiting(false)
+      return
+    }
+    setNowPlayingVisible((prev) => {
+      if (prev) {
+        setNowPlayingExiting(true)
+        if (nowPlayingExitTimerRef.current) clearTimeout(nowPlayingExitTimerRef.current)
+        nowPlayingExitTimerRef.current = setTimeout(() => {
+          setNowPlayingExiting(false)
+          nowPlayingExitTimerRef.current = null
+        }, 240)
+      }
+      return false
+    })
+  }, [])
+
+  const [chatExiting, setChatExiting] = useState(false)
+  const chatExitTimerRef = useRef(null)
+
+  const dismissChatReply = useCallback(() => {
+    if (replyDismissTimerRef.current) {
+      clearTimeout(replyDismissTimerRef.current)
+      replyDismissTimerRef.current = null
+    }
+    if (settingsRef.current?.notificationAnimations === false) {
+      setChatState('idle')
+      setChatExiting(false)
+      return
+    }
+    setChatExiting(true)
+    if (chatExitTimerRef.current) clearTimeout(chatExitTimerRef.current)
+    chatExitTimerRef.current = setTimeout(() => {
+      setChatState('idle')
+      setChatExiting(false)
+      chatExitTimerRef.current = null
+    }, 240)
+  }, [])
+
+  const handleChatDismiss = useCallback(() => {
+    setChatState((prev) => {
+      if (prev === 'reply') {
+        dismissChatReply()
+        return prev
+      }
+      setChatExiting(false)
+      return 'idle'
+    })
+  }, [dismissChatReply])
+
+  useEffect(() => {
+    return () => {
+      if (hungerExitTimerRef.current) clearTimeout(hungerExitTimerRef.current)
+      if (nowPlayingExitTimerRef.current) clearTimeout(nowPlayingExitTimerRef.current)
+      if (chatExitTimerRef.current) clearTimeout(chatExitTimerRef.current)
+    }
+  }, [])
+
   // ── Load settings from main process on mount ──────────────────────────────
   useEffect(() => {
     window.api.getSettings().then((s) => {
@@ -316,30 +409,42 @@ export default function App() {
   // Computed once and sent whenever any relevant state changes.
   // hasContent drives the bubble window visibility decision in main.js.
   useEffect(() => {
+    const masterCardsEnabled = settings?.notificationsEnabled !== false
+
     const showReminderCard = Boolean(
+      masterCardsEnabled &&
       isReminderActive &&
-      reminderState === REMINDER_STATE.ACTIVE &&
+      (reminderState === REMINDER_STATE.ACTIVE || reminderState === REMINDER_STATE.EXIT) &&
       settings?.reminderNotifications !== false
     )
 
     const showTimer = timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE
-    const showNowPlaying =
+    const effectiveShowNowPlaying = Boolean(
+      masterCardsEnabled &&
       settings?.notificationCardMusic !== false &&
-      nowPlayingVisible &&
+      (nowPlayingVisible || nowPlayingExiting) &&
       Boolean(mediaStatus.title || mediaStatus.artist) &&
       !isReminderActive
+    )
+    const effectiveShowHunger = Boolean(
+      masterCardsEnabled &&
+      (showHunger || hungerExiting)
+    )
 
     const hasContent =
-      (settings?.reminderNotifications !== false && isReminderActive) ||
+      (masterCardsEnabled && settings?.reminderNotifications !== false && isReminderActive) ||
       showTimer ||
-      showHunger ||
-      showNowPlaying ||
-      chatState !== 'idle'
+      effectiveShowHunger ||
+      effectiveShowNowPlaying ||
+      chatState !== 'idle' ||
+      chatExiting
 
     window.api.bubble?.sendCardState({
       hasContent,
       notificationAnimations: settings?.notificationAnimations !== false,
       chatState,
+      chatExiting,
+      chatThinkingIndicator: settings?.chatThinkingIndicator !== false,
       chatReply,
       // Reminder
       reminderState,
@@ -348,13 +453,15 @@ export default function App() {
       showReminderCard,
       reminderData,
       // Hunger
-      showHunger,
+      showHunger: effectiveShowHunger,
+      hungerExiting,
       // Timer
       showTimer,
       timerMode,
       timerFormatted: formatTime(timerSeconds),
       // Now Playing
-      showNowPlaying,
+      showNowPlaying: effectiveShowNowPlaying,
+      nowPlayingExiting,
       mediaTitle: mediaStatus.title,
       mediaArtist: mediaStatus.artist,
     })
@@ -363,15 +470,20 @@ export default function App() {
     reminderState,
     reminderType,
     reminderData,
+    settings?.notificationsEnabled,
     settings?.reminderNotifications,
     settings?.notificationCardMusic,
     settings?.notificationAnimations,
+    settings?.chatThinkingIndicator,
     showHunger,
+    hungerExiting,
     timerMode,
     timerSeconds,
     nowPlayingVisible,
+    nowPlayingExiting,
     mediaStatus,
     chatState,
+    chatExiting,
     chatReply,
   ])
 
@@ -383,15 +495,11 @@ export default function App() {
       } else if (type === 'reminder:snooze') {
         snoozeReminder()
       } else if (type === 'now-playing:dismiss') {
-        setNowPlayingVisible(false)
-        if (nowPlayingTimerRef.current) {
-          clearTimeout(nowPlayingTimerRef.current)
-          nowPlayingTimerRef.current = null
-        }
+        dismissNowPlaying()
       } else if (type === 'hunger:feed') {
-        handleFeed()
+        handleFeedWithAnimation()
       } else if (type === 'hunger:later') {
-        handleSnooze()
+        handleSnoozeWithAnimation()
       } else if (type === 'chat:send') {
         handleChatSend(payload)
       } else if (type === 'chat:retry') {
@@ -414,7 +522,7 @@ export default function App() {
       }
     })
     return () => offAction()
-  }, [dismissReminder, snoozeReminder, handleFeed, handleSnooze])
+  }, [dismissReminder, snoozeReminder, dismissNowPlaying, handleFeedWithAnimation, handleSnoozeWithAnimation, handleChatDismiss])
 
 
   // ── IPC: media playback status ────────────────────────────────────────────
@@ -428,11 +536,7 @@ export default function App() {
 
       if (!status.playing) {
         // Playback paused or stopped — hide the popup and cancel any active timer
-        setNowPlayingVisible(false)
-        if (nowPlayingTimerRef.current) {
-          clearTimeout(nowPlayingTimerRef.current)
-          nowPlayingTimerRef.current = null
-        }
+        dismissNowPlaying()
         return
       }
 
@@ -454,6 +558,7 @@ export default function App() {
 
         // Show popup and set auto-hide timer if enabled
         setNowPlayingVisible(true)
+        setNowPlayingExiting(false)
         if (nowPlayingTimerRef.current) {
           clearTimeout(nowPlayingTimerRef.current)
           nowPlayingTimerRef.current = null
@@ -461,8 +566,7 @@ export default function App() {
         if (settingsRef.current?.notificationAutoHide !== false) {
           const dur = (settingsRef.current?.notificationDuration ?? 5) * 1000
           nowPlayingTimerRef.current = setTimeout(() => {
-            setNowPlayingVisible(false)
-            nowPlayingTimerRef.current = null
+            dismissNowPlaying()
           }, dur)
         }
       }
@@ -475,7 +579,7 @@ export default function App() {
         nowPlayingTimerRef.current = null
       }
     }
-  }, [])
+  }, [dismissNowPlaying])
 
   // Re-sync now-playing auto-dismiss timer on duration or autoHide change
   useEffect(() => {
@@ -487,12 +591,11 @@ export default function App() {
       if (settings?.notificationAutoHide !== false) {
         const dur = (settings?.notificationDuration ?? 5) * 1000
         nowPlayingTimerRef.current = setTimeout(() => {
-          setNowPlayingVisible(false)
-          nowPlayingTimerRef.current = null
+          dismissNowPlaying()
         }, dur)
       }
     }
-  }, [settings?.notificationAutoHide, settings?.notificationDuration, nowPlayingVisible])
+  }, [settings?.notificationAutoHide, settings?.notificationDuration, nowPlayingVisible, dismissNowPlaying])
 
   // ── Chat handlers and effects ─────────────────────────────────────────────
   
@@ -503,6 +606,7 @@ export default function App() {
 
   useEffect(() => {
     const offOpen = window.api.on('chat:open', () => {
+      if (settingsRef.current?.chatEnabled === false) return
       setChatState(prev => {
         // If it's already showing the reply bubble, hotkey dismisses it.
         if (prev === 'reply') {
@@ -517,14 +621,14 @@ export default function App() {
     })
 
     const offDismiss = window.api.on('chat:dismiss', () => {
-      setChatState('idle')
+      handleChatDismiss()
     })
 
     return () => {
       offOpen()
       offDismiss()
     }
-  }, [])
+  }, [handleChatDismiss])
 
   const lastUserMessageRef = useRef('')
   const chatSendRequestIdRef = useRef(0)
@@ -538,6 +642,7 @@ export default function App() {
       hasUnsentTextRef.current = hasText
     }
     if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
+    if (settingsRef.current?.chatAutoHide === false) return
     const timeoutMs = hasUnsentTextRef.current ? 45000 : 15000
     chatInputTimerRef.current = setTimeout(() => {
       setChatState('idle')
@@ -550,9 +655,9 @@ export default function App() {
   const startReplyDismissTimer = useCallback((duration) => {
     if (replyDismissTimerRef.current) clearTimeout(replyDismissTimerRef.current)
     replyDismissTimerRef.current = setTimeout(() => {
-      setChatState('idle')
+      dismissChatReply()
     }, duration)
-  }, [])
+  }, [dismissChatReply])
 
   useEffect(() => {
     if (chatState === 'input') {
@@ -627,11 +732,8 @@ export default function App() {
     })
   }, [])
 
-  const handleChatDismiss = useCallback(() => {
-    setChatState('idle')
-  }, [])
-
   const handleChatOpen = useCallback(() => {
+    if (settingsRef.current?.chatEnabled === false) return
     setChatState((prev) => {
       if (prev === 'reply' || prev === 'idle') {
         return 'input'
@@ -654,7 +756,7 @@ export default function App() {
         reminderType={reminderType}
         reminderCatAnimation={settings.reminderCatAnimation !== false}
         hungerState={hungerState}
-        onFeed={handleFeed}
+        onFeed={handleFeedWithAnimation}
         feedSignal={feedSignal}
         hungerBehavior={settings.hungerBehavior || 'search-food'}
         onSleepChange={handleSleepChangeCombined}

@@ -1,32 +1,57 @@
 import React, { useState, useEffect } from 'react'
-import { Card, TextInput, Button, StatusLine } from '../ui'
-import { Sparkles, Cpu, Key, Eye, EyeOff, Loader2, ExternalLink } from 'lucide-react'
+import { Card, Row, Toggle, Slider, Select, TextInput, Button, StatusLine } from '../ui'
+import {
+  Sparkles,
+  Bot,
+  Cpu,
+  Key,
+  Sliders,
+  SlidersHorizontal,
+  MessageSquare,
+  Smile,
+  Clock,
+  Languages,
+  Layers,
+  Eye,
+  EyeOff,
+  Loader2,
+  ExternalLink,
+} from 'lucide-react'
+
+const MODEL_OPTIONS = [
+  { value: 'gemini-3.5-flash-lite', label: 'gemini-3.5-flash-lite (Fast & Recommended)' },
+  { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
+  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro' },
+]
+
+const RESPONSE_LENGTH_OPTIONS = [
+  { value: 'short', label: 'Short' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'detailed', label: 'Detailed' },
+]
+
+const TONE_OPTIONS = [
+  { value: 'casual', label: 'Casual' },
+  { value: 'friendly', label: 'Friendly' },
+  { value: 'formal', label: 'Formal' },
+]
+
+const WINDOW_STYLE_OPTIONS = [
+  { value: 'bubble', label: 'Speech Bubble' },
+  { value: 'compact', label: 'Compact Card' },
+  { value: 'expanded', label: 'Expanded Panel' },
+]
 
 export default function ChatTab({ settings, saveSettingsPatch }) {
-  const [modelInput, setModelInput] = useState(settings.geminiModel || 'gemini-3.5-flash-lite')
   const [apiKeyInput, setApiKeyInput] = useState(settings.geminiApiKey || '')
   const [showApiKey, setShowApiKey] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [testResult, setTestResult] = useState(null) // null | { ok: boolean, error?: string }
 
   useEffect(() => {
-    setModelInput(settings.geminiModel || 'gemini-3.5-flash-lite')
-  }, [settings.geminiModel])
-
-  useEffect(() => {
     setApiKeyInput(settings.geminiApiKey || '')
   }, [settings.geminiApiKey])
-
-  const handleModelSave = () => {
-    const trimmed = modelInput.trim()
-    if (!trimmed) {
-      setModelInput(settings.geminiModel || 'gemini-3.5-flash-lite')
-      return
-    }
-    if (trimmed !== settings.geminiModel) {
-      saveSettingsPatch({ geminiModel: trimmed })
-    }
-  }
 
   const handleApiKeySave = () => {
     const trimmed = apiKeyInput.trim()
@@ -71,6 +96,11 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
     providerStatusVariant = 'accent'
   }
 
+  const currentModel = settings.geminiModel || 'gemini-3.5-flash-lite'
+  const modelOptions = MODEL_OPTIONS.some((o) => o.value === currentModel)
+    ? MODEL_OPTIONS
+    : [{ value: currentModel, label: currentModel }, ...MODEL_OPTIONS]
+
   return (
     <>
       <Card
@@ -99,31 +129,85 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
       </Card>
 
       <Card
-        title="Model"
-        subtitle="Select the model and parameters."
-        icon={Cpu}
+        title="Chat Features"
+        subtitle="Configure AI chat features and companion integration."
+        icon={Bot}
       >
-        <div className="sb-form-group">
-          <label className="sb-form-label" htmlFor="gemini-model-input">
-            Model name
-          </label>
-          <TextInput
-            id="gemini-model-input"
-            value={modelInput}
-            onChange={(e) => setModelInput(e.target.value)}
-            onBlur={handleModelSave}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-            }}
-            placeholder="gemini-3.5-flash-lite"
-            maxLength={100}
+        <Row
+          icon={Bot}
+          label="Enable Chat & AI"
+          hint="Talk with Screen Buddy using Gemini AI"
+        >
+          <Toggle
+            checked={settings.chatEnabled !== false}
+            onChange={(e) => saveSettingsPatch({ chatEnabled: e.target.checked })}
+            ariaLabel="Enable Chat & AI"
           />
-          <span className="sb-form-hint">Recommended: gemini-3.5-flash-lite</span>
-        </div>
+        </Row>
+        <Row
+          icon={Languages}
+          label="Multi-language support"
+          hint="Automatically detect and reply in your language"
+          soon={true}
+        >
+          <Toggle
+            checked={Boolean(settings.chatMultiLanguage)}
+            onChange={(e) => saveSettingsPatch({ chatMultiLanguage: e.target.checked })}
+            disabled={true}
+            ariaLabel="Multi-language support"
+          />
+        </Row>
       </Card>
 
       <Card
-        title="API Key"
+        title="Model Settings"
+        subtitle="Configure the AI model and generation parameters."
+        icon={Cpu}
+      >
+        <Row
+          icon={Cpu}
+          label="Model"
+          hint="Gemini 3.5 Flash Lite is fast, responsive, and cost-effective"
+        >
+          <Select
+            value={currentModel}
+            onChange={(e) => saveSettingsPatch({ geminiModel: e.target.value })}
+            options={modelOptions}
+            ariaLabel="Gemini Model"
+          />
+        </Row>
+        <Row
+          icon={Sliders}
+          label="Temperature"
+          hint="Higher values make output more creative, lower values more focused"
+        >
+          <Slider
+            value={settings.geminiTemperature ?? 0.7}
+            min={0}
+            max={2}
+            step={0.1}
+            onChange={(e) => saveSettingsPatch({ geminiTemperature: Number(e.target.value) })}
+            ariaLabel="Temperature"
+          />
+        </Row>
+        <Row
+          icon={SlidersHorizontal}
+          label="Max Tokens"
+          hint="Maximum length of the generated response"
+        >
+          <Slider
+            value={settings.geminiMaxTokens ?? 1024}
+            min={128}
+            max={2048}
+            step={64}
+            onChange={(e) => saveSettingsPatch({ geminiMaxTokens: Number(e.target.value) })}
+            ariaLabel="Max Tokens"
+          />
+        </Row>
+      </Card>
+
+      <Card
+        title="API Configuration"
         subtitle="Set up your API keys and endpoints."
         icon={Key}
       >
@@ -194,6 +278,145 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
             )}
           </div>
         )}
+      </Card>
+
+      <Card
+        title="Response Style"
+        subtitle="Customize how Screen Buddy responds in chat."
+        icon={MessageSquare}
+      >
+        <Row
+          icon={Clock}
+          label="Response length"
+          hint="Choose how concise or thorough replies should be"
+        >
+          <Select
+            value={settings.chatResponseLength || 'medium'}
+            onChange={(e) => saveSettingsPatch({ chatResponseLength: e.target.value })}
+            options={RESPONSE_LENGTH_OPTIONS}
+            ariaLabel="Response length"
+          />
+        </Row>
+        <Row
+          icon={Smile}
+          label="Tone"
+          hint="The conversational tone used in responses"
+        >
+          <Select
+            value={settings.chatTone || 'casual'}
+            onChange={(e) => saveSettingsPatch({ chatTone: e.target.value })}
+            options={TONE_OPTIONS}
+            ariaLabel="Tone"
+          />
+        </Row>
+        <Row
+          icon={Smile}
+          label="Include emojis"
+          hint="Allow playful emojis in companion replies"
+        >
+          <Toggle
+            checked={settings.chatUseEmojis !== false}
+            onChange={(e) => saveSettingsPatch({ chatUseEmojis: e.target.checked })}
+            ariaLabel="Include emojis"
+          />
+        </Row>
+        <Row
+          icon={Sparkles}
+          label="Cat personality"
+          hint="Add light feline mannerisms to conversations"
+        >
+          <Toggle
+            checked={settings.chatUseCatPersonality !== false}
+            onChange={(e) => saveSettingsPatch({ chatUseCatPersonality: e.target.checked })}
+            ariaLabel="Cat personality"
+          />
+        </Row>
+        <Row
+          icon={Clock}
+          label="Thinking indicator"
+          hint="Show animated dots while waiting for AI response"
+        >
+          <Toggle
+            checked={settings.chatThinkingIndicator !== false}
+            onChange={(e) => saveSettingsPatch({ chatThinkingIndicator: e.target.checked })}
+            ariaLabel="Thinking indicator"
+          />
+        </Row>
+        <Row
+          icon={Bot}
+          label="Cat animations during chat"
+          hint="Play companion gestures and reactions while chatting"
+          soon={true}
+        >
+          <Toggle
+            checked={settings.chatCatAnimations !== false}
+            onChange={(e) => saveSettingsPatch({ chatCatAnimations: e.target.checked })}
+            disabled={true}
+            ariaLabel="Cat animations during chat"
+          />
+        </Row>
+      </Card>
+
+      <Card
+        title="Chat Window"
+        subtitle="Configure the appearance and behavior of chat bubbles."
+        icon={Layers}
+      >
+        <Row
+          icon={Clock}
+          label="Auto-hide chat"
+          hint="Automatically dismiss chat bubbles after inactivity"
+        >
+          <Toggle
+            checked={settings.chatAutoHide !== false}
+            onChange={(e) => saveSettingsPatch({ chatAutoHide: e.target.checked })}
+            ariaLabel="Auto-hide chat"
+          />
+        </Row>
+        <Row
+          icon={Layers}
+          label="Window style"
+          hint="Visual style of the chat interface"
+          soon={true}
+        >
+          <Select
+            value={settings.chatWindowStyle || 'bubble'}
+            onChange={(e) => saveSettingsPatch({ chatWindowStyle: e.target.value })}
+            options={WINDOW_STYLE_OPTIONS}
+            disabled={true}
+            ariaLabel="Window style"
+          />
+        </Row>
+        <Row
+          icon={Layers}
+          label="Transparency"
+          hint="Adjust chat bubble background opacity"
+          soon={true}
+        >
+          <Slider
+            value={settings.chatWindowTransparency ?? 85}
+            min={0}
+            max={100}
+            step={1}
+            unit="%"
+            disabled={true}
+            onChange={(e) => saveSettingsPatch({ chatWindowTransparency: Number(e.target.value) })}
+            ariaLabel="Transparency"
+          />
+        </Row>
+        <Row
+          icon={Layers}
+          label="Blur background"
+          hint="Apply backdrop blur to chat elements"
+          soon={true}
+        >
+          <Toggle
+            checked={settings.chatBlurBackground !== false}
+            onChange={(e) => saveSettingsPatch({ chatBlurBackground: e.target.checked })}
+            disabled={true}
+            ariaLabel="Blur background"
+          />
+        </Row>
       </Card>
     </>
   )

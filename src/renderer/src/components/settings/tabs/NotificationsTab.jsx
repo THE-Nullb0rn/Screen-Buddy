@@ -25,7 +25,7 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
         <Row
           icon={Bell}
           label="Enable notifications"
-          hint="Allow Screen Buddy to show companion cards and nudges"
+          hint="Show Screen Buddy cards (reminders, hunger, music)"
         >
           <Toggle
             checked={settings.notificationsEnabled !== false}
@@ -37,7 +37,7 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
         <Row
           icon={Sparkles}
           label="Show notification animations"
-          hint="Play cat animations and motion when cards appear"
+          hint="Animate cards when they appear and disappear"
         >
           <Toggle
             checked={settings.notificationAnimations !== false}

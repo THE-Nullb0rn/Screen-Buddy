@@ -38,7 +38,8 @@
 .sb-no-animations .mascot-chat-bubble,
 .sb-no-animations .mascot-hunger-card,
 .sb-no-animations .mascot-timer-badge,
-.sb-no-animations .sb-notification-bubble {
+.sb-no-animations .sb-notification-bubble,
+.sb-no-animations .sb-card-exit {
   animation: none !important;
   transition: none !important;
 }
@@ -112,9 +113,15 @@
   border-radius: var(--sb-bubble-radius);
   padding: 8px 12px;
   pointer-events: auto;
-  animation: reminder-pop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: sb-card-entrance 320ms ease-out both;
+  transform-origin: 50% 100%;
   z-index: 10;
   white-space: nowrap;
+}
+
+.mascot-reminder-card.sb-card-exit {
+  animation: sb-card-exit 240ms ease-in both !important;
+  pointer-events: none !important;
 }
 
 .mascot-reminder-card.is-big {
@@ -122,9 +129,31 @@
   gap: 12px;
 }
 
-@keyframes reminder-pop {
-  from { opacity: 0; transform: translateY(6px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes sb-card-entrance {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sb-card-exit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+
+.sb-card-exit {
+  animation: sb-card-exit 240ms ease-in both !important;
+  pointer-events: none !important;
 }
 
 .mascot-reminder-card__content {
@@ -291,13 +320,14 @@
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
-  animation: now-playing-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation: sb-card-entrance 320ms ease-out both;
+  transform-origin: 50% 100%;
   z-index: 10;
 }
 
-@keyframes now-playing-pop {
-  from { opacity: 0; transform: translateY(6px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+.mascot-now-playing.sb-card-exit {
+  animation: sb-card-exit 240ms ease-in both !important;
+  pointer-events: none !important;
 }
 
 .mascot-now-playing__icon {

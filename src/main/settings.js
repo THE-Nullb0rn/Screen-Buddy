@@ -240,8 +240,27 @@ const DEFAULT_SETTINGS = {
   /** List of app names (case-insensitive) to block from showing notifications */
   notificationAppBlocklist: [],
 
-  /** Gemini model to use for the AI chat */
+  /** Chat & AI settings */
+  chatEnabled: true,
   geminiModel: 'gemini-3.5-flash-lite',
+  geminiTemperature: 0.7,
+  geminiMaxTokens: 1024,
+  chatResponseLength: 'medium',
+  chatTone: 'casual',
+  chatUseEmojis: true,
+  chatUseCatPersonality: true,
+  chatThinkingIndicator: true,
+  chatCatAnimations: true,
+  chatMultiLanguage: false,
+  chatAutoHide: true,
+  chatWindowStyle: 'bubble',
+  chatWindowTransparency: 85,
+  chatBlurBackground: true,
+
+  // ── General Sounds (Soon) ──
+  soundEffects: false,
+  soundVolume: 70,
+  catVoiceSounds: false,
 
   /** Global typing activity detection */
   systemTypingDetection: false,
@@ -527,7 +546,17 @@ function validateSettingsUpdate(patch) {
       case 'showTrayIcon':
       case 'experimentalFeatures':
       case 'developerMode':
-      case 'allowCustomCss': {
+      case 'allowCustomCss':
+      case 'chatEnabled':
+      case 'chatUseEmojis':
+      case 'chatUseCatPersonality':
+      case 'chatThinkingIndicator':
+      case 'chatCatAnimations':
+      case 'chatMultiLanguage':
+      case 'chatAutoHide':
+      case 'chatBlurBackground':
+      case 'soundEffects':
+      case 'catVoiceSounds': {
         if (typeof value === 'boolean') {
           sanitized[key] = value
         } else {
@@ -646,6 +675,73 @@ function validateSettingsUpdate(patch) {
           }
         } else {
           debugLog('geminiApiKey', 'must be a string')
+        }
+        break
+      }
+
+      case 'geminiTemperature': {
+        const num = Number(value)
+        if (Number.isFinite(num) && num >= 0 && num <= 2) {
+          sanitized.geminiTemperature = Math.round(num * 10) / 10
+        } else {
+          debugLog('geminiTemperature', 'must be a number between 0.0 and 2.0')
+        }
+        break
+      }
+
+      case 'geminiMaxTokens': {
+        const num = Number(value)
+        if (Number.isFinite(num) && num >= 64 && num <= 8192) {
+          sanitized.geminiMaxTokens = Math.round(num)
+        } else {
+          debugLog('geminiMaxTokens', 'must be an integer between 64 and 8192')
+        }
+        break
+      }
+
+      case 'chatResponseLength': {
+        if (['short', 'medium', 'detailed'].includes(value)) {
+          sanitized.chatResponseLength = value
+        } else {
+          debugLog('chatResponseLength', 'must be short, medium, or detailed')
+        }
+        break
+      }
+
+      case 'chatTone': {
+        if (['casual', 'friendly', 'formal'].includes(value)) {
+          sanitized.chatTone = value
+        } else {
+          debugLog('chatTone', 'must be casual, friendly, or formal')
+        }
+        break
+      }
+
+      case 'chatWindowStyle': {
+        if (['bubble', 'minimal'].includes(value)) {
+          sanitized.chatWindowStyle = value
+        } else {
+          debugLog('chatWindowStyle', 'must be bubble or minimal')
+        }
+        break
+      }
+
+      case 'chatWindowTransparency': {
+        const num = Number(value)
+        if (Number.isFinite(num) && num >= 10 && num <= 100) {
+          sanitized.chatWindowTransparency = Math.round(num)
+        } else {
+          debugLog('chatWindowTransparency', 'must be a number between 10 and 100')
+        }
+        break
+      }
+
+      case 'soundVolume': {
+        const num = Number(value)
+        if (Number.isFinite(num) && num >= 0 && num <= 100) {
+          sanitized.soundVolume = Math.round(num)
+        } else {
+          debugLog('soundVolume', 'must be a number between 0 and 100')
         }
         break
       }

@@ -211,6 +211,19 @@ export default function BubbleApp() {
     window.api.bubble.action('hunger:later')
   }, [])
 
+  const isAnimationsDisabled = (cardState?.notificationAnimations === false) || (settings?.notificationAnimations === false)
+
+  const isAnyExiting = !isAnimationsDisabled && Boolean(
+    (cardState?.reminderState === 'EXIT') ||
+    cardState?.hungerExiting ||
+    cardState?.nowPlayingExiting ||
+    cardState?.chatExiting
+  )
+  const isAnyExitingRef = useRef(isAnyExiting)
+  useEffect(() => {
+    isAnyExitingRef.current = isAnyExiting
+  }, [isAnyExiting])
+
   // ── Dynamic resize: observe the root content div and report dimensions ──
   const contentRef = useRef(null)
   const lastReportedSize = useRef({ w: 0, h: 0 })
@@ -228,6 +241,9 @@ export default function BubbleApp() {
     const MIN_H = 40
 
     const report = () => {
+      if (isAnyExitingRef.current) {
+        return
+      }
       const rect = el.getBoundingClientRect()
       const w = Math.max(MIN_W, Math.ceil(rect.width))
       const h = Math.max(MIN_H, Math.ceil(rect.height))
@@ -260,11 +276,28 @@ export default function BubbleApp() {
     return <div style={{ width: '100%', height: '100%' }} />
   }
 
-  const { isReminderActive, reminderState, reminderType, showReminderCard, reminderData, showHunger, showTimer, timerMode, timerFormatted, showNowPlaying, mediaTitle, mediaArtist, chatState, chatReply } = cardState || {}
+  const {
+    isReminderActive,
+    reminderState,
+    reminderType,
+    showReminderCard,
+    reminderData,
+    showHunger,
+    hungerExiting,
+    showTimer,
+    timerMode,
+    timerFormatted,
+    showNowPlaying,
+    nowPlayingExiting,
+    mediaTitle,
+    mediaArtist,
+    chatState,
+    chatExiting,
+    chatThinkingIndicator,
+    chatReply,
+  } = cardState || {}
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
   const reminderInfo = reminderData || REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
-
-  const isAnimationsDisabled = (cardState?.notificationAnimations === false) || (settings?.notificationAnimations === false)
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -302,8 +335,8 @@ export default function BubbleApp() {
       )}
 
       {/* Now Playing card */}
-      {showNowPlaying && (mediaTitle || mediaArtist) && (
-        <div className="mascot-now-playing">
+      {(showNowPlaying || nowPlayingExiting) && (mediaTitle || mediaArtist) && (
+        <div className={`mascot-now-playing ${nowPlayingExiting ? 'sb-card-exit' : ''}`}>
           <span className="mascot-now-playing__icon">
             <Music size={18} />
           </span>
@@ -329,8 +362,8 @@ export default function BubbleApp() {
       )}
 
       {/* Hunger card */}
-      {showHunger && (
-        <div className="mascot-reminder-card mascot-hunger-card">
+      {(showHunger || hungerExiting) && (
+        <div className={`mascot-reminder-card mascot-hunger-card ${hungerExiting ? 'sb-card-exit' : ''}`}>
           <div className="mascot-reminder-card__content">
             <span className="mascot-reminder-card__icon">
               <Utensils size={18} />
@@ -364,9 +397,9 @@ export default function BubbleApp() {
       )}
 
       {/* Reminder card */}
-      {isReminderActive && reminderState === 'ACTIVE' && showReminderCard !== false && (
+      {isReminderActive && (reminderState === 'ACTIVE' || (!isAnimationsDisabled && reminderState === 'EXIT')) && showReminderCard !== false && (
         <div
-          className={`mascot-reminder-card ${isBigTreatment ? 'is-big' : 'is-small'}`}
+          className={`mascot-reminder-card ${isBigTreatment ? 'is-big' : 'is-small'} ${reminderState === 'EXIT' ? 'sb-card-exit' : ''}`}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mascot-reminder-card__content">
@@ -440,7 +473,7 @@ export default function BubbleApp() {
       )}
 
       {/* Chat Waiting Bubble */}
-      {chatState === 'waiting' && (
+      {chatState === 'waiting' && chatThinkingIndicator !== false && (
         <div className="mascot-chat-bubble mascot-chat-bubble--waiting">
           <div className="mascot-chat-bubble__dots" aria-label="Thinking...">
             <span />
@@ -451,14 +484,14 @@ export default function BubbleApp() {
       )}
 
       {/* Chat Reply Bubble */}
-      {chatState === 'reply' && (() => {
+      {(chatState === 'reply' || chatExiting) && (() => {
         const isError = Boolean(chatReply && (!chatReply.ok || chatReply.error))
         const replyText = typeof chatReply === 'string' ? chatReply : (chatReply?.text || '')
         const errorMessage = chatReply?.error || (typeof chatReply === 'string' && !chatReply.ok ? chatReply : 'Something went wrong.')
 
         return (
           <div
-            className={`mascot-reminder-card mascot-chat-bubble--reply ${isError ? 'mascot-chat-bubble--error' : ''}`}
+            className={`mascot-reminder-card mascot-chat-bubble--reply ${isError ? 'mascot-chat-bubble--error' : ''} ${chatExiting ? 'sb-card-exit' : ''}`}
             onMouseEnter={handleReplyMouseEnter}
             onMouseLeave={handleReplyMouseLeave}
             onClick={(e) => e.stopPropagation()}

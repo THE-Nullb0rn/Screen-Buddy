@@ -98,6 +98,10 @@ export function useReminders({
 
     setReminderState(REMINDER_STATE.EXIT)
 
+    const isBig = currentReminderRef.current?.id === 'movementBreak'
+    const animEnabled = settingsRef.current?.notificationAnimations !== false
+    const exitDuration = isBig ? EXIT_DURATION_MS : (animEnabled ? 240 : 0)
+
     if (exitTimerRef.current) clearTimeout(exitTimerRef.current)
     exitTimerRef.current = setTimeout(() => {
       setReminderState(REMINDER_STATE.IDLE_COUNTING)
@@ -116,7 +120,7 @@ export function useReminders({
         const next = queueRef.current.shift()
         startReminderRef.current?.(next)
       }
-    }, EXIT_DURATION_MS)
+    }, exitDuration)
   }, [])
 
   const startReminder = useCallback((item) => {
