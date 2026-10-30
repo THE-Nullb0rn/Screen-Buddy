@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('api', {
    * Main process re-enables click-through.
    */
   mouseLeaveInteractive: () => ipcRenderer.send('mouse:leave-interactive'),
+  setEyeTrackingActive: (active) => ipcRenderer.send('mascot:eye-tracking-active', active),
 
   moveWindow: (x, y) => ipcRenderer.send('window:move', x, y),
   persistPosition: (x, y) => ipcRenderer.send('window:persist-position', x, y),
@@ -139,6 +140,7 @@ contextBridge.exposeInMainWorld('api', {
       'tray:test-hunger',
       'bubble:action',
       'chat:focus-input',
+      'mascot:cursor-offset',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

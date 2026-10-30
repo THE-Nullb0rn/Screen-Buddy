@@ -92,6 +92,7 @@ let tray = null
 let trayHostWatcher = null
 let settings = null // loaded from disk at startup
 let notificationsManager = null
+let stopEyeTrackingPolling = null
 // Manual pause is intentionally not persisted. Fullscreen pause is a separate
 // transient reason, so leaving fullscreen never overrides a manual pause.
 let isPaused = false
@@ -268,6 +269,7 @@ app.on('will-quit', () => {
   stopHyprlandFullscreenMonitor()
   removeHyprlandHotkeyFallback()
   removeChatHotkeyFallback()
+  stopEyeTrackingPolling?.()
   removeSettingsHotkeyFallback()
 })
 
@@ -2184,6 +2186,129 @@ function registerIpcHandlers() {
 
   ipcMain.on('pause:set', (_event, paused) => {
     setManualPaused(paused, 'renderer')
+  })
+
+  // ── Eye tracking (cursor follower) ──────────────────────────────────────
+  let eyeTrackingInterval = null
+  let eyeTrackingBusy = false
+  let lastCatBoundsRefreshTime = 0
+  let cachedCatBounds = null
+
+  stopEyeTrackingPolling = function () {
+    if (eyeTrackingInterval) {
+      clearInterval(eyeTrackingInterval)
+      eyeTrackingInterval = null
+    }
+    eyeTrackingBusy = false
+  }
+
+  function startEyeTrackingPolling() {
+    if (eyeTrackingInterval) return
+
+    const poll = async () => {
+      if (eyeTrackingBusy) return
+      eyeTrackingBusy = true
+
+      try {
+        if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
+          stopEyeTrackingPolling()
+          return
+        }
+
+        const now = Date.now()
+        let catX
+        let catY
+        let catW
+        let catH
+
+        if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+          if (!cachedCatBounds || now - lastCatBoundsRefreshTime > 1000) {
+            lastCatBoundsRefreshTime = now
+            const client = await logHyprlandClientBounds('eye-tracking')
+            if (client && client.at && client.size) {
+              cachedCatBounds = {
+                x: client.at[0],
+                y: client.at[1],
+                w: client.size[0],
+                h: client.size[1],
+              }
+            }
+          }
+
+          if (cachedCatBounds) {
+            catX = cachedCatBounds.x
+            catY = cachedCatBounds.y
+            catW = cachedCatBounds.w
+            catH = cachedCatBounds.h
+          } else if (lastKnownCatWinX != null && lastKnownCatWinY != null) {
+            catX = lastKnownCatWinX
+            catY = lastKnownCatWinY
+            catW = currentWinW
+            catH = currentWinH
+          } else {
+            const bounds = mainWindow.getBounds()
+            catX = bounds.x
+            catY = bounds.y
+            catW = bounds.width
+            catH = bounds.height
+          }
+
+          const { stdout } = await execFile('hyprctl', ['cursorpos'])
+          let cursorX = 0
+          let cursorY = 0
+          const trimmed = stdout.trim()
+          if (trimmed.startsWith('{')) {
+            const parsed = JSON.parse(trimmed)
+            cursorX = parsed.x
+            cursorY = parsed.y
+          } else {
+            const parts = trimmed.split(/[\s,]+/).map(Number)
+            cursorX = parts[0] || 0
+            cursorY = parts[1] || 0
+          }
+
+          const catCenterX = catX + catW / 2
+          const catCenterY = catY + catH / 2
+          const relX = Math.round(cursorX - catCenterX)
+          const relY = Math.round(cursorY - catCenterY)
+
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('mascot:cursor-offset', { x: relX, y: relY })
+          }
+        } else {
+          const bounds = mainWindow.getBounds()
+          catX = bounds.x
+          catY = bounds.y
+          catW = bounds.width
+          catH = bounds.height
+
+          const pt = electronScreen.getCursorScreenPoint()
+          const catCenterX = catX + catW / 2
+          const catCenterY = catY + catH / 2
+          const relX = Math.round(pt.x - catCenterX)
+          const relY = Math.round(pt.y - catCenterY)
+
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('mascot:cursor-offset', { x: relX, y: relY })
+          }
+        }
+      } catch (_err) {
+        // Silently ignore transient hyprctl / IPC errors
+      } finally {
+        eyeTrackingBusy = false
+      }
+    }
+
+    eyeTrackingInterval = setInterval(poll, 125)
+    poll()
+  }
+
+  ipcMain.on('mascot:eye-tracking-active', (_event, active) => {
+    if (active) {
+      startEyeTrackingPolling()
+    } else {
+      stopEyeTrackingPolling()
+    }
   })
 
   // ── Chat ──────────────────────────────────────────────────────────────────

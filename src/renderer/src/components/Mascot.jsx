@@ -102,6 +102,8 @@ export default function Mascot({
   onSleepChange,
   catOpacity = 100,
   catAnimationSpeed = 'normal',
+  mouseReaction = false,
+  paused = false,
 }) {
   const containerRef = useRef(null)
   
@@ -112,6 +114,7 @@ export default function Mascot({
   const effectiveOpacity = clampedOpacity / 100
   
 
+  const [cursorOffset, setCursorOffset] = useState(null)
   const [pose, setPose] = useState('idle')
   const [x, setX] = useState(() => Number.isFinite(initialPosition?.x) ? initialPosition.x : defaultPosition().x)
   const [y, setY] = useState(() => Number.isFinite(initialPosition?.y) ? initialPosition.y : defaultPosition().y)
@@ -1303,6 +1306,40 @@ export default function Mascot({
     flipped = false
   }
 
+  const isEyeTrackingEligible = Boolean(
+    mouseReaction &&
+    !paused &&
+    animationName === 'idle' &&
+    !dragging &&
+    !falling &&
+    !pomodoroCelebrating &&
+    !isReminder
+  )
+
+  useEffect(() => {
+    if (window.api?.setEyeTrackingActive) {
+      window.api.setEyeTrackingActive(isEyeTrackingEligible)
+    }
+    return () => {
+      if (window.api?.setEyeTrackingActive) {
+        window.api.setEyeTrackingActive(false)
+      }
+    }
+  }, [isEyeTrackingEligible])
+
+  useEffect(() => {
+    if (!isEyeTrackingEligible) {
+      setCursorOffset(null)
+      return undefined
+    }
+    const unsub = window.api?.on?.('mascot:cursor-offset', (offset) => {
+      setCursorOffset(offset)
+    })
+    return () => {
+      unsub?.()
+    }
+  }, [isEyeTrackingEligible])
+
   // ── Coordinates and Transitions for Center-Screen MovementBreak ───────────
   const screenW = window.screen.availWidth || window.screen.width || 1920
   const screenH = window.screen.availHeight || window.screen.height || 1080
@@ -1430,6 +1467,8 @@ export default function Mascot({
             manifest={useListening ? listeningManifest : undefined}
             spritesheet={useListening ? listeningSheetSrc : undefined}
             catAnimationSpeed={catAnimationSpeed}
+            eyeTracking={isEyeTrackingEligible}
+            cursorOffset={cursorOffset}
           />
         </div>
       </div>

@@ -114,8 +114,7 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         <Row
           icon={MousePointer}
           label="Mouse movement"
-          hint="React when you move the mouse actively"
-          soon={true}
+          hint="Her eyes follow your mouse cursor"
         >
           <Toggle
             checked={Boolean(settings.mouseReaction)}

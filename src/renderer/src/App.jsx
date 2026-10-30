@@ -743,6 +743,8 @@ export default function App() {
         }}
         catOpacity={settings.catOpacity}
         catAnimationSpeed={settings.catAnimationSpeed}
+        mouseReaction={settings.mouseReaction}
+        paused={paused}
       />}
 
     </>
