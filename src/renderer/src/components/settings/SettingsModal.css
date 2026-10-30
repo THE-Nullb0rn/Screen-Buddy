@@ -713,6 +713,28 @@
   font-weight: 500;
 }
 
+.sb-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.sb-slider:disabled::-webkit-slider-thumb {
+  cursor: not-allowed;
+  background-color: var(--text-muted);
+  box-shadow: none;
+}
+
+.sb-slider:disabled::-moz-range-thumb {
+  cursor: not-allowed;
+  background-color: var(--text-muted);
+  box-shadow: none;
+}
+
+.sb-row--disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* ── Segmented Choice Buttons ── */
 .sb-segmented-group {
   display: inline-flex;

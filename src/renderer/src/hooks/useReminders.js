@@ -143,13 +143,39 @@ export function useReminders({
     entranceTimerRef.current = setTimeout(() => {
       setReminderState(REMINDER_STATE.ACTIVE)
 
-      const timeoutMs = item.id === 'movementBreak' ? 6500 : 12000
-      if (autoDismissTimerRef.current) clearTimeout(autoDismissTimerRef.current)
-      autoDismissTimerRef.current = setTimeout(() => {
-        dismissReminder()
-      }, timeoutMs)
+      if (autoDismissTimerRef.current) {
+        clearTimeout(autoDismissTimerRef.current)
+        autoDismissTimerRef.current = null
+      }
+
+      if (item.id === 'movementBreak') {
+        autoDismissTimerRef.current = setTimeout(() => {
+          dismissReminder()
+        }, 6500)
+      } else if (settingsRef.current?.notificationAutoHide !== false) {
+        const timeoutMs = (settingsRef.current?.notificationDuration ?? 5) * 1000
+        autoDismissTimerRef.current = setTimeout(() => {
+          dismissReminder()
+        }, timeoutMs)
+      }
     }, ENTRANCE_DURATION_MS)
   }, [dismissReminder])
+
+  // Re-sync reminder auto-dismiss timer on duration or autoHide change
+  useEffect(() => {
+    if (reminderState === REMINDER_STATE.ACTIVE && currentReminderRef.current?.id !== 'movementBreak') {
+      if (autoDismissTimerRef.current) {
+        clearTimeout(autoDismissTimerRef.current)
+        autoDismissTimerRef.current = null
+      }
+      if (settings?.notificationAutoHide !== false) {
+        const dur = (settings?.notificationDuration ?? 5) * 1000
+        autoDismissTimerRef.current = setTimeout(() => {
+          dismissReminder()
+        }, dur)
+      }
+    }
+  }, [settings?.notificationAutoHide, settings?.notificationDuration, reminderState, dismissReminder])
 
   useEffect(() => {
     startReminderRef.current = startReminder

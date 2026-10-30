@@ -280,9 +280,6 @@ const DEFAULT_SETTINGS = {
   notificationSounds: false,
   notificationAutoHide: true,
   notificationDuration: 5,
-  notificationCardReminders: true,
-  notificationCardChat: true,
-  notificationCardHunger: true,
   notificationCardMusic: true,
   notificationCardUpdates: true,
 
@@ -398,6 +395,28 @@ function loadSettings() {
         delete saved.minimizeToTray
         needsSave = true
       }
+      if (saved.notificationCardReminders !== undefined) {
+        if (saved.reminderNotifications === undefined) {
+          saved.reminderNotifications = Boolean(saved.notificationCardReminders)
+        }
+        delete saved.notificationCardReminders
+        needsSave = true
+      }
+      if (saved.notificationCardHunger !== undefined) {
+        if (saved.hungerNotify === undefined) {
+          saved.hungerNotify = Boolean(saved.notificationCardHunger)
+        }
+        delete saved.notificationCardHunger
+        needsSave = true
+      }
+      if (saved.notificationCardChat !== undefined) {
+        delete saved.notificationCardChat
+        needsSave = true
+      }
+      if (saved.notificationPosition !== undefined) {
+        delete saved.notificationPosition
+        needsSave = true
+      }
       if (saved.developerMode) {
         process.env.SCREEN_BUDDY_DEBUG = '1'
       }
@@ -493,9 +512,6 @@ function validateSettingsUpdate(patch) {
       case 'notificationAnimations':
       case 'notificationSounds':
       case 'notificationAutoHide':
-      case 'notificationCardReminders':
-      case 'notificationCardChat':
-      case 'notificationCardHunger':
       case 'notificationCardMusic':
       case 'notificationCardUpdates':
       case 'remindersEnabled':
@@ -520,8 +536,28 @@ function validateSettingsUpdate(patch) {
         break
       }
 
+      case 'notificationCardReminders': {
+        if (typeof value === 'boolean') {
+          sanitized.reminderNotifications = value
+        } else {
+          debugLog(key, 'must be a boolean')
+        }
+        break
+      }
+
+      case 'notificationCardHunger': {
+        if (typeof value === 'boolean') {
+          sanitized.hungerNotify = value
+        } else {
+          debugLog(key, 'must be a boolean')
+        }
+        break
+      }
+
       case 'startMinimized':
-      case 'minimizeToTray': {
+      case 'minimizeToTray':
+      case 'notificationCardChat':
+      case 'notificationPosition': {
         // Dropped / ignored
         break
       }

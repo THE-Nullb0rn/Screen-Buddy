@@ -43,8 +43,11 @@ function getReminderIcon(typeOrIcon, fallback) {
 export default function BubbleApp() {
   const [activeNotification, setActiveNotification] = useState(null)
   const [cardState, setCardState] = useState(null)
+  const [settings, setSettings] = useState(null)
 
   useEffect(() => {
+    window.api.getSettings?.().then((s) => setSettings(s))
+    const offSettings = window.api.on?.('settings:updated', (s) => setSettings(s))
     const offNotifShow = window.api.on('notification:show', (notif) => {
       lastReportedSize.current = { w: 0, h: 0 }
       setActiveNotification(notif)
@@ -64,6 +67,7 @@ export default function BubbleApp() {
       }
     })
     return () => {
+      offSettings?.()
       offNotifShow()
       offNotifClose()
       offCardState()
@@ -92,6 +96,10 @@ export default function BubbleApp() {
 
   const handleReminderSnooze = useCallback(() => {
     window.api.bubble.action('reminder:snooze')
+  }, [])
+
+  const handleNowPlayingDismiss = useCallback(() => {
+    window.api.bubble.action('now-playing:dismiss')
   }, [])
 
   
@@ -256,11 +264,13 @@ export default function BubbleApp() {
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
   const reminderInfo = reminderData || REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
+  const isAnimationsDisabled = (cardState?.notificationAnimations === false) || (settings?.notificationAnimations === false)
+
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' }}>
       <div
         ref={contentRef}
-        className="sb-bubble-content-wrapper"
+        className={`sb-bubble-content-wrapper ${isAnimationsDisabled ? 'sb-no-animations' : ''}`}
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -304,6 +314,17 @@ export default function BubbleApp() {
           <div className="mascot-now-playing__bars" aria-hidden="true">
             <span /><span /><span /><span />
           </div>
+          <button
+            className="mascot-dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleNowPlayingDismiss()
+            }}
+            aria-label="Dismiss now playing"
+            title="Dismiss"
+          >
+            ✕
+          </button>
         </div>
       )}
 

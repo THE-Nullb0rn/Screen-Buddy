@@ -11,8 +11,9 @@ import {
   RefreshCw,
 } from 'lucide-react'
 
-export default function NotificationsTab({ settings, saveSettingsPatch }) {
+export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
   const currentDuration = settings.notificationDuration ?? 5
+  const autoHide = settings.notificationAutoHide !== false
 
   return (
     <>
@@ -37,7 +38,6 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
           icon={Sparkles}
           label="Show notification animations"
           hint="Play cat animations and motion when cards appear"
-          soon={true}
         >
           <Toggle
             checked={settings.notificationAnimations !== false}
@@ -63,10 +63,9 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
           icon={Clock}
           label="Auto-hide notifications"
           hint="Automatically dismiss card after display duration"
-          soon={true}
         >
           <Toggle
-            checked={settings.notificationAutoHide !== false}
+            checked={autoHide}
             onChange={(e) => saveSettingsPatch({ notificationAutoHide: e.target.checked })}
             ariaLabel="Auto-hide notifications"
           />
@@ -76,7 +75,7 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
           icon={Clock}
           label="Display duration"
           hint="How long cards stay visible before fading"
-          soon={true}
+          className={!autoHide ? 'sb-row--disabled' : ''}
         >
           <Slider
             value={currentDuration}
@@ -84,6 +83,7 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
             max={30}
             step={1}
             unit="s"
+            disabled={!autoHide}
             onChange={(e) => saveSettingsPatch({ notificationDuration: Number(e.target.value) })}
             ariaLabel="Display duration"
           />
@@ -99,25 +99,11 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
           icon={Bell}
           label="Reminders"
           hint="Hydration, eye rest, and movement nudges"
-          soon={true}
         >
           <Toggle
-            checked={settings.notificationCardReminders !== false}
-            onChange={(e) => saveSettingsPatch({ notificationCardReminders: e.target.checked })}
+            checked={settings.reminderNotifications !== false}
+            onChange={(e) => saveSettingsPatch({ reminderNotifications: e.target.checked })}
             ariaLabel="Reminder cards"
-          />
-        </Row>
-
-        <Row
-          icon={MessageCircle}
-          label="AI Chat"
-          hint="Responses and replies from your companion"
-          soon={true}
-        >
-          <Toggle
-            checked={settings.notificationCardChat !== false}
-            onChange={(e) => saveSettingsPatch({ notificationCardChat: e.target.checked })}
-            ariaLabel="AI Chat cards"
           />
         </Row>
 
@@ -125,11 +111,10 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
           icon={Utensils}
           label="Hunger & Needs"
           hint="Alerts when your buddy is hungry or needs care"
-          soon={true}
         >
           <Toggle
-            checked={settings.notificationCardHunger !== false}
-            onChange={(e) => saveSettingsPatch({ notificationCardHunger: e.target.checked })}
+            checked={settings.hungerNotify !== false}
+            onChange={(e) => saveSettingsPatch({ hungerNotify: e.target.checked })}
             ariaLabel="Hunger cards"
           />
         </Row>
@@ -138,7 +123,6 @@ export default function NotificationsTab({ settings, saveSettingsPatch }) {
           icon={Music}
           label="Music Playing"
           hint="Now-playing song alerts from supported players"
-          soon={true}
         >
           <Toggle
             checked={settings.notificationCardMusic !== false}

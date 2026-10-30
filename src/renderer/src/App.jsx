@@ -323,7 +323,11 @@ export default function App() {
     )
 
     const showTimer = timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE
-    const showNowPlaying = nowPlayingVisible && !!(mediaStatus.title || mediaStatus.artist) && !isReminderActive
+    const showNowPlaying =
+      settings?.notificationCardMusic !== false &&
+      nowPlayingVisible &&
+      Boolean(mediaStatus.title || mediaStatus.artist) &&
+      !isReminderActive
 
     const hasContent =
       (settings?.reminderNotifications !== false && isReminderActive) ||
@@ -334,6 +338,7 @@ export default function App() {
 
     window.api.bubble?.sendCardState({
       hasContent,
+      notificationAnimations: settings?.notificationAnimations !== false,
       chatState,
       chatReply,
       // Reminder
@@ -359,6 +364,8 @@ export default function App() {
     reminderType,
     reminderData,
     settings?.reminderNotifications,
+    settings?.notificationCardMusic,
+    settings?.notificationAnimations,
     showHunger,
     timerMode,
     timerSeconds,
@@ -375,6 +382,12 @@ export default function App() {
         dismissReminder()
       } else if (type === 'reminder:snooze') {
         snoozeReminder()
+      } else if (type === 'now-playing:dismiss') {
+        setNowPlayingVisible(false)
+        if (nowPlayingTimerRef.current) {
+          clearTimeout(nowPlayingTimerRef.current)
+          nowPlayingTimerRef.current = null
+        }
       } else if (type === 'hunger:feed') {
         handleFeed()
       } else if (type === 'hunger:later') {
@@ -439,15 +452,19 @@ export default function App() {
         // Track changed to a new track — update confirmed playing track
         lastPlayingTrackRef.current = { artist, title }
 
-        // Show popup and restart the 4.5s auto-hide timer
+        // Show popup and set auto-hide timer if enabled
         setNowPlayingVisible(true)
         if (nowPlayingTimerRef.current) {
           clearTimeout(nowPlayingTimerRef.current)
-        }
-        nowPlayingTimerRef.current = setTimeout(() => {
-          setNowPlayingVisible(false)
           nowPlayingTimerRef.current = null
-        }, 4500)
+        }
+        if (settingsRef.current?.notificationAutoHide !== false) {
+          const dur = (settingsRef.current?.notificationDuration ?? 5) * 1000
+          nowPlayingTimerRef.current = setTimeout(() => {
+            setNowPlayingVisible(false)
+            nowPlayingTimerRef.current = null
+          }, dur)
+        }
       }
     })
 
@@ -459,6 +476,23 @@ export default function App() {
       }
     }
   }, [])
+
+  // Re-sync now-playing auto-dismiss timer on duration or autoHide change
+  useEffect(() => {
+    if (nowPlayingVisible) {
+      if (nowPlayingTimerRef.current) {
+        clearTimeout(nowPlayingTimerRef.current)
+        nowPlayingTimerRef.current = null
+      }
+      if (settings?.notificationAutoHide !== false) {
+        const dur = (settings?.notificationDuration ?? 5) * 1000
+        nowPlayingTimerRef.current = setTimeout(() => {
+          setNowPlayingVisible(false)
+          nowPlayingTimerRef.current = null
+        }, dur)
+      }
+    }
+  }, [settings?.notificationAutoHide, settings?.notificationDuration, nowPlayingVisible])
 
   // ── Chat handlers and effects ─────────────────────────────────────────────
   

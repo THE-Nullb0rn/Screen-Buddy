@@ -1747,7 +1747,9 @@ function registerIpcHandlers() {
 
   async function logHyprlandClientBounds(tag) {
     if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) {
-      console.log(`[main] ${tag} hyprctl clients skipped (not on Hyprland)`)
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        console.log(`[main] ${tag} hyprctl clients skipped (not on Hyprland)`)
+      }
       return null
     }
     try {
@@ -1759,13 +1761,17 @@ function registerIpcHandlers() {
         return title === WINDOW_TITLE || title.includes('screen-buddy') || cls.toLowerCase().includes('screen-buddy') || cls.toLowerCase().includes('electron')
       })
       if (!matches.length) {
-        console.log(`[main] ${tag} hyprctl clients: no screen-buddy/electron window found (scanned ${clients.length} clients)`)
+        if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+          console.log(`[main] ${tag} hyprctl clients: no screen-buddy/electron window found (scanned ${clients.length} clients)`)
+        }
         return null
       }
-      for (const buddy of matches) {
-        console.log(
-          `[main] ${tag} hyprctl client title="${buddy.title}" class="${buddy.class}" initialClass="${buddy.initialClass}" at (${buddy.at?.[0]}, ${buddy.at?.[1]}) size ${buddy.size?.[0]}x${buddy.size?.[1]} floating=${buddy.floating} mapped=${buddy.mapped} hidden=${buddy.hidden} workspace=${buddy.workspace?.name}`
-        )
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        for (const buddy of matches) {
+          console.log(
+            `[main] ${tag} hyprctl client title="${buddy.title}" class="${buddy.class}" initialClass="${buddy.initialClass}" at (${buddy.at?.[0]}, ${buddy.at?.[1]}) size ${buddy.size?.[0]}x${buddy.size?.[1]} floating=${buddy.floating} mapped=${buddy.mapped} hidden=${buddy.hidden} workspace=${buddy.workspace?.name}`
+          )
+        }
       }
       // Size gating must use the overlay window, not some other Electron client
       // (Cursor, Vite, etc.) that also matches class=electron.

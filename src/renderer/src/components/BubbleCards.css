@@ -30,6 +30,19 @@
   box-sizing: border-box;
 }
 
+/* ── Disable entrance/exit card animations when notificationAnimations is false ── */
+.sb-no-animations .sb-bubble-card,
+.sb-no-animations .mascot-reminder-card,
+.sb-no-animations .mascot-now-playing,
+.sb-no-animations .mascot-chat-input-wrap,
+.sb-no-animations .mascot-chat-bubble,
+.sb-no-animations .mascot-hunger-card,
+.sb-no-animations .mascot-timer-badge,
+.sb-no-animations .sb-notification-bubble {
+  animation: none !important;
+  transition: none !important;
+}
+
 /* ── Common Card Base ────────────────────────────────────────────── */
 .sb-bubble-card,
 .mascot-reminder-card,
