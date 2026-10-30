@@ -621,7 +621,7 @@ async function reconcileHyprlandFullscreen(reason) {
   try {
     const { stdout } = await execFileAsync('hyprctl', ['activewindow', '-j'])
     const activeWindow = JSON.parse(stdout)
-    const isOverlay = activeWindow?.title === WINDOW_TITLE || activeWindow?.title === 'screen-buddy-bubbles'
+    const isOverlay = activeWindow?.title === WINDOW_TITLE || activeWindow?.title === 'screen-buddy-bubbles' || activeWindow?.title === 'screen-buddy-settings'
     const fullscreen = !isOverlay && Number(activeWindow?.fullscreen || 0) > 0
     console.log(`[main] Hyprland fullscreen check (${reason}): title=${JSON.stringify(activeWindow?.title || '')} fullscreen=${activeWindow?.fullscreen ?? 0} autoPause=${fullscreen}`)
     setFullscreenAutoPause(fullscreen, `Hyprland ${reason}`)
@@ -640,7 +640,8 @@ async function ensurePinned(title, reason) {
     const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
     const clients = JSON.parse(stdout)
     if (!Array.isArray(clients)) return
-    const client = clients.find((c) => c?.title === title)
+    const client = clients.find((c) => c?.title === title && (title !== WINDOW_TITLE || c?.floating === true))
+      || clients.find((c) => c?.title === title)
     if (!client) return
     if (client.pinned === false) {
       await execFileAsync('hyprctl', ['dispatch', 'pin', `title:^(${title})$`])
@@ -1107,7 +1108,7 @@ function openSettingsWindow() {
     return
   }
   settingsWindow = new BrowserWindow({
-    title: 'Screen Buddy Settings',
+    title: 'screen-buddy-settings',
     width: 1120,
     height: 740,
     minWidth: 900,
@@ -1123,11 +1124,21 @@ function openSettingsWindow() {
     }
   })
 
+  settingsWindow.on('page-title-updated', (e) => {
+    e.preventDefault()
+  })
+
   if (process.env.VITE_DEV_SERVER_URL) {
     settingsWindow.loadURL(process.env.VITE_DEV_SERVER_URL + '/#settings')
   } else {
     settingsWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'), { hash: 'settings' })
   }
+
+  settingsWindow.webContents.on('did-finish-load', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.setTitle('screen-buddy-settings')
+    }
+  })
 
   settingsWindow.on('closed', () => {
     settingsWindow = null
@@ -1712,9 +1723,25 @@ function registerIpcHandlers() {
       }
       // Size gating must use the overlay window, not some other Electron client
       // (Cursor, Vite, etc.) that also matches class=electron.
-      const overlay = matches.find((c) => c.title === WINDOW_TITLE)
-        || matches.find((c) => String(c.title || '').includes('screen-buddy'))
-        || matches.find((c) => String(c.class || c.initialClass || '').toLowerCase().includes('screen-buddy'))
+      // Deterministically select the cat overlay client: exact title WINDOW_TITLE ('screen-buddy-overlay'),
+      // excluding bubbles and settings windows, preferring floating=true if more than one matches.
+      const overlayCandidates = matches.filter((c) => {
+        const title = String(c.title || '')
+        return title === WINDOW_TITLE &&
+          title !== 'screen-buddy-bubbles' &&
+          title !== 'screen-buddy-settings' &&
+          !title.toLowerCase().includes('settings')
+      })
+      const overlay = overlayCandidates.find((c) => c.floating === true)
+        || overlayCandidates[0]
+        || matches.find((c) => {
+          const title = String(c.title || '')
+          return title.includes('screen-buddy') &&
+            title !== 'screen-buddy-bubbles' &&
+            title !== 'screen-buddy-settings' &&
+            !title.toLowerCase().includes('settings')
+        })
+        || null
       if (!overlay) {
         console.log(`[main] ${tag} hyprctl clients: overlay title=${WINDOW_TITLE} not found among ${matches.length} electron-like client(s)`)
         return null
@@ -1908,6 +1935,9 @@ function registerIpcHandlers() {
         clearTimeout(bubbleFollowTrailingTimer);
         bubbleFollowTrailingTimer = null;
       }
+      const bubbleWasVisible = Boolean(
+        bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible()
+      );
       // Block roam/move immediately while we expand — this is the drag guard.
       currentWindowMode = 'drag'
       if (bubbleWindow) {
@@ -1927,6 +1957,38 @@ function registerIpcHandlers() {
         `pollAttempts=${verify.attempts} pollElapsed=${verify.elapsedMs}ms ` +
         `handler ${Date.now() - modeEnteredAt}ms`
       )
+      if (!verify.applied) {
+        console.warn(`[main] window:mode drag-start failed size verification, recovering to mascot mode`)
+        currentWindowMode = 'mascot'
+        currentWinW = NORMAL_WIN_W
+        currentWinH = NORMAL_WIN_H
+        if (lastKnownCatWinX !== null && lastKnownCatWinY !== null) {
+          mainWindow?.setPosition(lastKnownCatWinX, lastKnownCatWinY)
+          if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+            _movePending = null
+            try {
+              await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${lastKnownCatWinX} ${lastKnownCatWinY},${HYPR_TITLE_MATCH}`])
+            } catch (err) {
+              console.error('[main] hyprctl drag-recovery move error:', err)
+            }
+          }
+        }
+        await applyMascotWindowSize('drag-start-recovery')
+        if (bubbleWasVisible && bubbleWindow && !bubbleWindow.isDestroyed()) {
+          bubbleMapped = false
+          bubbleSkipLogged = false
+          bubbleWindow.showInactive()
+          waitForBubbleMapped().then(async () => {
+            if (currentBubbleW !== 300 || currentBubbleH !== 120) {
+              await applyBubbleWindowSize(currentBubbleW, currentBubbleH)
+            } else if (lastKnownCatWinX !== null && lastKnownCatWinY !== null) {
+              await positionBubbleWindow(lastKnownCatWinX, lastKnownCatWinY)
+            }
+          }).catch((err) => {
+            console.warn('[bubble] drag-start recovery remap failed:', err.message)
+          })
+        }
+      }
       return { applied: verify.applied, width, height, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
     } else {
       bubblePositionGeneration++;

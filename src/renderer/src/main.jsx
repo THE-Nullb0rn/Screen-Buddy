@@ -13,6 +13,8 @@ import './styles/theme.css'
 
 if (window.location.hash === '#bubbles') {
   document.title = 'screen-buddy-bubbles'
+} else if (window.location.hash === '#settings') {
+  document.title = 'screen-buddy-settings'
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
