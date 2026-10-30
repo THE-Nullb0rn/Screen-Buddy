@@ -654,10 +654,10 @@ function validateSettingsUpdate(patch) {
       case 'geminiModel': {
         if (typeof value === 'string') {
           const trimmed = value.trim()
-          if (trimmed.length > 0 && trimmed.length <= 100) {
+          if (trimmed.length > 0 && trimmed.length <= 80 && /^[A-Za-z0-9._-]+$/.test(trimmed)) {
             sanitized.geminiModel = trimmed
           } else {
-            debugLog('geminiModel', 'must be non-empty and max 100 chars')
+            debugLog('geminiModel', 'must be non-empty, max 80 chars, matching [A-Za-z0-9._-]')
           }
         } else {
           debugLog('geminiModel', 'must be a string')
@@ -728,10 +728,10 @@ function validateSettingsUpdate(patch) {
 
       case 'chatWindowTransparency': {
         const num = Number(value)
-        if (Number.isFinite(num) && num >= 10 && num <= 100) {
+        if (Number.isFinite(num) && num >= 40 && num <= 100) {
           sanitized.chatWindowTransparency = Math.round(num)
         } else {
-          debugLog('chatWindowTransparency', 'must be a number between 10 and 100')
+          debugLog('chatWindowTransparency', 'must be a number between 40 and 100')
         }
         break
       }

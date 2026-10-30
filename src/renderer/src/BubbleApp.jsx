@@ -282,6 +282,7 @@ export default function BubbleApp() {
     reminderType,
     showReminderCard,
     reminderData,
+    canSnooze,
     showHunger,
     hungerExiting,
     showTimer,
@@ -295,9 +296,21 @@ export default function BubbleApp() {
     chatExiting,
     chatThinkingIndicator,
     chatReply,
+    chatWindowTransparency,
+    chatBlurBackground,
   } = cardState || {}
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
   const reminderInfo = reminderData || REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
+
+  const chatAlpha = Math.max(40, Math.min(100, chatWindowTransparency ?? settings?.chatWindowTransparency ?? 85)) / 100
+  const chatBlur = (chatBlurBackground ?? settings?.chatBlurBackground) !== false
+  const chatBg = `rgba(26, 22, 37, ${chatAlpha})`
+  const chatCardStyle = {
+    '--sb-bubble-bg': chatBg,
+    backgroundColor: chatBg,
+    backdropFilter: chatBlur ? 'blur(12px)' : 'none',
+    WebkitBackdropFilter: chatBlur ? 'blur(12px)' : 'none',
+  }
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -412,14 +425,16 @@ export default function BubbleApp() {
             </div>
           </div>
           <div className="mascot-reminder-card__actions">
-            <button
-              className="mascot-snooze-btn"
-              onClick={handleReminderSnooze}
-              aria-label="Snooze reminder"
-              title="Snooze"
-            >
-              Snooze
-            </button>
+            {canSnooze !== false && (
+              <button
+                className="mascot-snooze-btn"
+                onClick={handleReminderSnooze}
+                aria-label="Snooze reminder"
+                title="Snooze"
+              >
+                Snooze
+              </button>
+            )}
             <button
               className="mascot-dismiss"
               onClick={handleReminderDismiss}
@@ -436,6 +451,7 @@ export default function BubbleApp() {
       {chatState === 'input' && (
         <div
           className="mascot-chat-input-wrap"
+          style={{ '--sb-bubble-bg': chatBg }}
           onClick={(e) => {
             e.stopPropagation()
             handleChatActivity(Boolean(inputText.trim()), true)
@@ -446,6 +462,7 @@ export default function BubbleApp() {
           <textarea
             ref={chatInputRef}
             className="mascot-chat-input"
+            style={chatCardStyle}
             rows={1}
             placeholder="Talk to me..."
             value={inputText}
@@ -474,7 +491,7 @@ export default function BubbleApp() {
 
       {/* Chat Waiting Bubble */}
       {chatState === 'waiting' && chatThinkingIndicator !== false && (
-        <div className="mascot-chat-bubble mascot-chat-bubble--waiting">
+        <div className="mascot-chat-bubble mascot-chat-bubble--waiting" style={chatCardStyle}>
           <div className="mascot-chat-bubble__dots" aria-label="Thinking...">
             <span />
             <span />
@@ -492,6 +509,7 @@ export default function BubbleApp() {
         return (
           <div
             className={`mascot-reminder-card mascot-chat-bubble--reply ${isError ? 'mascot-chat-bubble--error' : ''} ${chatExiting ? 'sb-card-exit' : ''}`}
+            style={chatCardStyle}
             onMouseEnter={handleReplyMouseEnter}
             onMouseLeave={handleReplyMouseLeave}
             onClick={(e) => e.stopPropagation()}

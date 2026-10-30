@@ -53,12 +53,10 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
           icon={Volume2}
           label="Sound Effects"
           hint="Play sound effects for interactions"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.soundEffects)}
             onChange={(e) => saveSettingsPatch({ soundEffects: e.target.checked })}
-            disabled={true}
             ariaLabel="Sound Effects"
           />
         </Row>
@@ -66,7 +64,6 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
           icon={Volume}
           label="Volume"
           hint="Volume for sound effects"
-          soon={true}
         >
           <Slider
             value={settings.soundVolume ?? 70}
@@ -74,7 +71,6 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
             max={100}
             step={1}
             unit="%"
-            disabled={true}
             onChange={(e) => saveSettingsPatch({ soundVolume: Number(e.target.value) })}
             ariaLabel="Volume"
           />
@@ -83,12 +79,10 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
           icon={MessageSquare}
           label="Cat voice / meows"
           hint="Play meow sounds when interacting with the cat"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.catVoiceSounds)}
             onChange={(e) => saveSettingsPatch({ catVoiceSounds: e.target.checked })}
-            disabled={true}
             ariaLabel="Cat voice / meows"
           />
         </Row>

@@ -107,6 +107,11 @@ export default function Mascot({
   reminderCatAnimation = true,
   animationFps = 60,
   reduceResourceUsage = false,
+  onPetStart,
+  onEatStart,
+  onFeedComplete,
+  onLeftClickReact,
+  onWakeUpClick,
 }) {
   const containerRef = useRef(null)
   
@@ -294,14 +299,16 @@ export default function Mascot({
     setIsHoveringHead(false)
     poseRef.current = 'eat'
     setPose('eat')
+    onEatStart?.()
     eatTimeoutRef.current = setTimeout(() => {
       if (poseRef.current === 'eat') {
         poseRef.current = 'idle'
         setPose('idle')
+        onFeedComplete?.()
       }
       eatTimeoutRef.current = null
     }, EAT_DURATION_MS)
-  }, [wakeUp])
+  }, [wakeUp, onEatStart, onFeedComplete])
 
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
@@ -316,10 +323,12 @@ export default function Mascot({
         if (poseRef.current === 'sleep') {
           wakeUp()
           setRoamEpoch((n) => n + 1)
+          onWakeUpClick?.()
         } else if (hungerState === 'ACTIVE') {
           handleFeedTrigger()
         } else {
           triggerAccentRef.current('is-stretch')
+          onLeftClickReact?.()
         }
         break
       case 'chat':
@@ -335,7 +344,7 @@ export default function Mascot({
       default:
         break
     }
-  }, [hungerState, handleFeedTrigger, onChatOpen, onTogglePause, wakeUp])
+  }, [hungerState, handleFeedTrigger, onChatOpen, onTogglePause, wakeUp, onWakeUpClick, onLeftClickReact])
 
   const prevFeedSignalRef = useRef(feedSignal)
   useEffect(() => {
@@ -1237,6 +1246,7 @@ export default function Mascot({
       clearTimeout(idleBehaviorTimeoutRef.current)
       clearTimeout(eatTimeoutRef.current)
       setIsHoveringHead(true)
+      onPetStart?.()
     }
   }
 

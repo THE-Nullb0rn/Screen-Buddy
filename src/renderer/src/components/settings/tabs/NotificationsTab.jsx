@@ -50,7 +50,6 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
           icon={Volume2}
           label="Notification sounds"
           hint="Play soft audio cues with companion alerts"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.notificationSounds)}

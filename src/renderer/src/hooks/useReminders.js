@@ -3,6 +3,7 @@
  * auto-dismiss, and card state synchronization.
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { playSound } from '../soundManager'
 
 export const REMINDER_STATE = {
   IDLE_COUNTING: 'IDLE_COUNTING',
@@ -71,6 +72,8 @@ export function useReminders({
   const queueRef = useRef([])
   const remainingTimesRef = useRef(new Map())
   const snoozeTimesRef = useRef(new Map())
+  const snoozeCountsRef = useRef(new Map())
+  const missedCountRef = useRef(0)
 
   const entranceTimerRef = useRef(null)
   const exitTimerRef = useRef(null)
@@ -129,6 +132,10 @@ export function useReminders({
     setCurrentReminder(item)
     setReminderType(item.id)
 
+    if (!item._fromSnooze) {
+      snoozeCountsRef.current.delete(item.id)
+    }
+
     let data
     if (DEFAULT_BUILTIN_MESSAGES[item.id]) {
       data = DEFAULT_BUILTIN_MESSAGES[item.id]
@@ -142,6 +149,17 @@ export function useReminders({
     setReminderData(data)
 
     setReminderState(REMINDER_STATE.ENTRANCE)
+
+    const showCard =
+      settingsRef.current?.notificationsEnabled !== false &&
+      settingsRef.current?.reminderNotifications !== false
+    if (showCard) {
+      playSound('reminder', {
+        settings: settingsRef.current,
+        paused: pausedRef.current,
+        isAsleep: isAsleepRef.current,
+      })
+    }
 
     if (entranceTimerRef.current) clearTimeout(entranceTimerRef.current)
     entranceTimerRef.current = setTimeout(() => {
@@ -189,12 +207,25 @@ export function useReminders({
     const item = currentReminderRef.current
     if (!item) return
 
+    const maxLimit = settingsRef.current?.reminderAutoSnoozeLimit ?? 3
+    const curCount = snoozeCountsRef.current.get(item.id) || 0
+    if (curCount >= maxLimit) {
+      snoozeCountsRef.current.delete(item.id)
+      dismissReminder()
+      return
+    }
+
+    snoozeCountsRef.current.set(item.id, curCount + 1)
+
     const snoozeMinutes = settingsRef.current?.reminderSnoozeDuration || 5
     const snoozeSec = snoozeMinutes * 60
-    snoozeTimesRef.current.set(item.id, {
-      reminder: item,
-      remaining: snoozeSec,
-    })
+    const itemsToSnooze = item.groupedItems || [item]
+    for (const it of itemsToSnooze) {
+      snoozeTimesRef.current.set(it.id, {
+        reminder: { ...it, _fromSnooze: true },
+        remaining: snoozeSec,
+      })
+    }
 
     dismissReminder()
   }, [dismissReminder])
@@ -257,6 +288,8 @@ export function useReminders({
       queueRef.current = []
       snoozeTimesRef.current.clear()
       remainingTimesRef.current.clear()
+      snoozeCountsRef.current.clear()
+      missedCountRef.current = 0
       if (autoDismissTimerRef.current) clearTimeout(autoDismissTimerRef.current)
       if (entranceTimerRef.current) clearTimeout(entranceTimerRef.current)
       if (exitTimerRef.current) clearTimeout(exitTimerRef.current)
@@ -273,15 +306,17 @@ export function useReminders({
 
     const tick = setInterval(() => {
       const s = settingsRef.current
-      if (!s || s.remindersEnabled === false || pausedRef.current) {
+      if (!s || s.remindersEnabled === false) {
         return
       }
 
+      const isAway = Boolean(pausedRef.current || isAsleepRef.current)
       const list = s.remindersList || []
       const enabledItems = list.filter((r) => r.enabled !== false)
       const globalIntervalSec = (s.intervalMinutes || 20) * 60
 
       let minRemaining = Infinity
+      const dueItemsNow = []
 
       // 1. Process active reminder timers
       for (const item of enabledItems) {
@@ -301,12 +336,12 @@ export function useReminders({
           curRemaining = effectiveSec
           remainingTimesRef.current.set(item.id, effectiveSec)
 
-          // Add to queue if not duplicate
-          const isDuplicate =
-            currentReminderRef.current?.id === item.id ||
-            queueRef.current.some((q) => q.id === item.id)
-          if (!isDuplicate) {
-            queueRef.current.push(item)
+          if (isAway) {
+            if (s.reminderShowMissed !== false) {
+              missedCountRef.current += 1
+            }
+          } else {
+            dueItemsNow.push(item)
           }
         } else {
           remainingTimesRef.current.set(item.id, curRemaining)
@@ -317,16 +352,74 @@ export function useReminders({
         }
       }
 
+      // Group or enqueue due items
+      if (dueItemsNow.length > 0) {
+        if (s.reminderGroupSimilar !== false) {
+          const group = [...dueItemsNow]
+          for (const other of enabledItems) {
+            if (!group.some((g) => g.id === other.id)) {
+              const otherRem = remainingTimesRef.current.get(other.id)
+              if (otherRem !== undefined && otherRem <= 60) {
+                group.push(other)
+                const otherEffSec =
+                  typeof other.intervalMinutes === 'number' && other.intervalMinutes > 0
+                    ? other.intervalMinutes * 60
+                    : globalIntervalSec
+                remainingTimesRef.current.set(other.id, otherEffSec)
+              }
+            }
+          }
+
+          if (group.length > 1) {
+            const names = group.map(
+              (g) => g.name || DEFAULT_BUILTIN_MESSAGES[g.id]?.title || 'Reminder'
+            )
+            const groupedItem = {
+              id: 'grouped_' + group.map((g) => g.id).join('_'),
+              type: 'builtin',
+              name: 'Reminders',
+              message: names.join(' · '),
+              icon: 'Bell',
+              groupedItems: group,
+            }
+            queueRef.current.push(groupedItem)
+          } else {
+            const item = dueItemsNow[0]
+            const isDuplicate =
+              currentReminderRef.current?.id === item.id ||
+              queueRef.current.some((q) => q.id === item.id)
+            if (!isDuplicate) {
+              queueRef.current.push(item)
+            }
+          }
+        } else {
+          for (const item of dueItemsNow) {
+            const isDuplicate =
+              currentReminderRef.current?.id === item.id ||
+              queueRef.current.some((q) => q.id === item.id)
+            if (!isDuplicate) {
+              queueRef.current.push(item)
+            }
+          }
+        }
+      }
+
       // 2. Process snooze timers
       for (const [id, entry] of snoozeTimesRef.current.entries()) {
         entry.remaining -= 1
         if (entry.remaining <= 0) {
           snoozeTimesRef.current.delete(id)
-          const isDuplicate =
-            currentReminderRef.current?.id === id ||
-            queueRef.current.some((q) => q.id === id)
-          if (!isDuplicate) {
-            queueRef.current.push(entry.reminder)
+          if (isAway) {
+            if (s.reminderShowMissed !== false) {
+              missedCountRef.current += 1
+            }
+          } else {
+            const isDuplicate =
+              currentReminderRef.current?.id === id ||
+              queueRef.current.some((q) => q.id === id)
+            if (!isDuplicate) {
+              queueRef.current.push(entry.reminder)
+            }
           }
         } else if (entry.remaining < minRemaining) {
           minRemaining = entry.remaining
@@ -336,16 +429,29 @@ export function useReminders({
       setCountdown(Number.isFinite(minRemaining) && minRemaining !== Infinity ? minRemaining : 0)
 
       // 3. Process queue if idle and guards pass
-      if (
+      const canStart =
         reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING &&
-        queueRef.current.length > 0 &&
         !pausedRef.current &&
         chatStateRef.current === 'idle' &&
         !notificationVisibleRef.current &&
         !isAsleepRef.current
-      ) {
-        const next = queueRef.current.shift()
-        startReminder(next)
+
+      if (canStart) {
+        if (missedCountRef.current > 0) {
+          const count = missedCountRef.current
+          missedCountRef.current = 0
+          queueRef.current = [] // Show ONE card instead of firing all of them
+          startReminder({
+            id: 'missed_notice',
+            type: 'builtin',
+            name: 'Reminders',
+            message: `${count} reminder${count > 1 ? 's' : ''} while you were away`,
+            icon: 'Bell',
+          })
+        } else if (queueRef.current.length > 0) {
+          const next = queueRef.current.shift()
+          startReminder(next)
+        }
       }
     }, 1000)
 
@@ -361,12 +467,18 @@ export function useReminders({
     }
   }, [])
 
+  const canSnooze = currentReminder
+    ? (snoozeCountsRef.current.get(currentReminder.id) || 0) <
+      (settingsRef.current?.reminderAutoSnoozeLimit ?? 3)
+    : true
+
   return {
     reminderState,
     reminderType,
     currentReminder,
     reminderData,
     isReminderActive,
+    canSnooze,
     triggerReminder,
     dismissReminder,
     snoozeReminder,

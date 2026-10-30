@@ -19,10 +19,8 @@ import {
 } from 'lucide-react'
 
 const MODEL_OPTIONS = [
-  { value: 'gemini-3.5-flash-lite', label: 'gemini-3.5-flash-lite (Fast & Recommended)' },
-  { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
-  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
-  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro' },
+  { value: 'gemini-3.5-flash-lite', label: 'gemini-3.5-flash-lite (Default)' },
+  { value: 'custom', label: 'Custom model…' },
 ]
 
 const RESPONSE_LENGTH_OPTIONS = [
@@ -44,10 +42,54 @@ const WINDOW_STYLE_OPTIONS = [
 ]
 
 export default function ChatTab({ settings, saveSettingsPatch }) {
+  const currentSavedModel = settings.geminiModel || 'gemini-3.5-flash-lite'
+  const isCustomModel = currentSavedModel !== 'gemini-3.5-flash-lite'
+
+  const [selectedModelOption, setSelectedModelOption] = useState(
+    isCustomModel ? 'custom' : 'gemini-3.5-flash-lite'
+  )
+  const [customModelInput, setCustomModelInput] = useState(
+    isCustomModel ? currentSavedModel : ''
+  )
   const [apiKeyInput, setApiKeyInput] = useState(settings.geminiApiKey || '')
   const [showApiKey, setShowApiKey] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [testResult, setTestResult] = useState(null) // null | { ok: boolean, error?: string }
+
+  useEffect(() => {
+    const model = settings.geminiModel || 'gemini-3.5-flash-lite'
+    if (model !== 'gemini-3.5-flash-lite') {
+      setSelectedModelOption('custom')
+      setCustomModelInput(model)
+    } else {
+      setSelectedModelOption('gemini-3.5-flash-lite')
+    }
+  }, [settings.geminiModel])
+
+  const handleModelSelectChange = (e) => {
+    const val = e.target.value
+    setSelectedModelOption(val)
+    if (val === 'gemini-3.5-flash-lite') {
+      saveSettingsPatch({ geminiModel: 'gemini-3.5-flash-lite' })
+    } else if (customModelInput.trim()) {
+      saveSettingsPatch({ geminiModel: customModelInput.trim() })
+    }
+  }
+
+  const handleCustomModelChange = (e) => {
+    const sanitized = e.target.value.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80)
+    setCustomModelInput(sanitized)
+  }
+
+  const handleCustomModelSave = () => {
+    const trimmed = customModelInput.trim()
+    if (trimmed) {
+      saveSettingsPatch({ geminiModel: trimmed })
+    } else {
+      saveSettingsPatch({ geminiModel: 'gemini-3.5-flash-lite' })
+      setSelectedModelOption('gemini-3.5-flash-lite')
+    }
+  }
 
   useEffect(() => {
     setApiKeyInput(settings.geminiApiKey || '')
@@ -95,11 +137,6 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
     providerStatusText = 'Key saved'
     providerStatusVariant = 'accent'
   }
-
-  const currentModel = settings.geminiModel || 'gemini-3.5-flash-lite'
-  const modelOptions = MODEL_OPTIONS.some((o) => o.value === currentModel)
-    ? MODEL_OPTIONS
-    : [{ value: currentModel, label: currentModel }, ...MODEL_OPTIONS]
 
   return (
     <>
@@ -170,12 +207,31 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
           hint="Gemini 3.5 Flash Lite is fast, responsive, and cost-effective"
         >
           <Select
-            value={currentModel}
-            onChange={(e) => saveSettingsPatch({ geminiModel: e.target.value })}
-            options={modelOptions}
+            value={selectedModelOption}
+            onChange={handleModelSelectChange}
+            options={MODEL_OPTIONS}
             ariaLabel="Gemini Model"
           />
         </Row>
+        {selectedModelOption === 'custom' && (
+          <Row
+            icon={Cpu}
+            label="Custom model name"
+            hint="Plain text, max 80 chars (letters, digits, dots, underscores, hyphens)"
+          >
+            <TextInput
+              value={customModelInput}
+              onChange={handleCustomModelChange}
+              onBlur={handleCustomModelSave}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+              }}
+              placeholder="e.g. gemini-2.0-flash-exp"
+              maxLength={80}
+              ariaLabel="Custom model name"
+            />
+          </Row>
+        )}
         <Row
           icon={Sliders}
           label="Temperature"
@@ -390,16 +446,14 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
         <Row
           icon={Layers}
           label="Transparency"
-          hint="Adjust chat bubble background opacity"
-          soon={true}
+          hint="Adjust chat bubble background opacity (40-100%)"
         >
           <Slider
             value={settings.chatWindowTransparency ?? 85}
-            min={0}
+            min={40}
             max={100}
             step={1}
             unit="%"
-            disabled={true}
             onChange={(e) => saveSettingsPatch({ chatWindowTransparency: Number(e.target.value) })}
             ariaLabel="Transparency"
           />
@@ -408,12 +462,10 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
           icon={Layers}
           label="Blur background"
           hint="Apply backdrop blur to chat elements"
-          soon={true}
         >
           <Toggle
             checked={settings.chatBlurBackground !== false}
             onChange={(e) => saveSettingsPatch({ chatBlurBackground: e.target.checked })}
-            disabled={true}
             ariaLabel="Blur background"
           />
         </Row>

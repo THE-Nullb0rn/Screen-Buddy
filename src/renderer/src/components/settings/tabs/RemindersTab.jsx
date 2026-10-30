@@ -381,7 +381,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={Volume2}
           label="Play sound"
           hint="Play a cute sound when a reminder appears"
-          soon={true}
         >
           <Toggle
             checked={settings.reminderSound !== false}
@@ -537,7 +536,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={RotateCcw}
           label="Auto-snooze limit"
           hint="Maximum times a reminder can automatically snooze"
-          soon={true}
         >
           <Select
             value={String(settings.reminderAutoSnoozeLimit ?? 3)}
@@ -550,7 +548,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={Eye}
           label="Show missed reminders"
           hint="Notify if you were away when a reminder fired"
-          soon={true}
         >
           <Toggle
             checked={settings.reminderShowMissed !== false}
@@ -562,7 +559,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={Layers}
           label="Group similar reminders"
           hint="Bundle reminders scheduled around the same time"
-          soon={true}
         >
           <Toggle
             checked={settings.reminderGroupSimilar !== false}

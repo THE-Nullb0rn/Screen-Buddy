@@ -139,7 +139,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Music}
           label="Media playback"
           hint="React to background music or video playback"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.mediaReaction)}

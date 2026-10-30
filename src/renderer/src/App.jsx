@@ -15,6 +15,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Mascot, { NORMAL_CAT_CX, NORMAL_CAT_CY } from './components/Mascot'
 import { useHunger } from './hooks/useHunger'
 import { useReminders, REMINDER_STATE } from './hooks/useReminders'
+import { playSound } from './soundManager'
 
 const POMODORO_WORK_SEC = 25 * 60
 const POMODORO_BREAK_SEC = 5 * 60
@@ -53,6 +54,7 @@ export default function App() {
     reminderType,
     reminderData,
     isReminderActive,
+    canSnooze,
     triggerReminder,
     dismissReminder,
     snoozeReminder,
@@ -90,6 +92,20 @@ export default function App() {
     isReminderActive,
   })
 
+  const prevShowHungerRef = useRef(false)
+  useEffect(() => {
+    if (!prevShowHungerRef.current && showHunger) {
+      if (settings?.notificationsEnabled !== false) {
+        playSound('meow_hungry', {
+          settings,
+          paused,
+          isAsleep,
+        })
+      }
+    }
+    prevShowHungerRef.current = showHunger
+  }, [showHunger, settings, paused, isAsleep])
+
   const handleSleepChangeCombined = useCallback((sleeping) => {
     setIsAsleep(sleeping)
     handleSleepChange(sleeping)
@@ -97,9 +113,11 @@ export default function App() {
 
   const settingsRef = useRef(settings)
   const pausedRef = useRef(paused)
+  const isAsleepRef = useRef(isAsleep)
 
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { pausedRef.current = paused }, [paused])
+  useEffect(() => { isAsleepRef.current = isAsleep }, [isAsleep])
   useEffect(() => { window.api.sendReminderState?.(reminderState) }, [reminderState])
 
   const [hungerExiting, setHungerExiting] = useState(false)
@@ -421,6 +439,7 @@ export default function App() {
     const showTimer = timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE
     const effectiveShowNowPlaying = Boolean(
       masterCardsEnabled &&
+      Boolean(settings?.mediaReaction) &&
       settings?.notificationCardMusic !== false &&
       (nowPlayingVisible || nowPlayingExiting) &&
       Boolean(mediaStatus.title || mediaStatus.artist) &&
@@ -446,12 +465,15 @@ export default function App() {
       chatExiting,
       chatThinkingIndicator: settings?.chatThinkingIndicator !== false,
       chatReply,
+      chatWindowTransparency: settings?.chatWindowTransparency ?? 85,
+      chatBlurBackground: settings?.chatBlurBackground !== false,
       // Reminder
       reminderState,
       reminderType,
       isReminderActive,
       showReminderCard,
       reminderData,
+      canSnooze: canSnooze !== false,
       // Hunger
       showHunger: effectiveShowHunger,
       hungerExiting,
@@ -470,11 +492,15 @@ export default function App() {
     reminderState,
     reminderType,
     reminderData,
+    canSnooze,
     settings?.notificationsEnabled,
     settings?.reminderNotifications,
     settings?.notificationCardMusic,
     settings?.notificationAnimations,
     settings?.chatThinkingIndicator,
+    settings?.mediaReaction,
+    settings?.chatWindowTransparency,
+    settings?.chatBlurBackground,
     showHunger,
     hungerExiting,
     timerMode,
@@ -534,8 +560,8 @@ export default function App() {
       const status = rawStatus || { playing: false, artist: '', title: '' }
       setMediaStatus(status)
 
-      if (!status.playing) {
-        // Playback paused or stopped — hide the popup and cancel any active timer
+      if (!status.playing || !settingsRef.current?.mediaReaction) {
+        // Playback paused or stopped or mediaReaction disabled — hide the popup and cancel any active timer
         dismissNowPlaying()
         return
       }
@@ -580,6 +606,13 @@ export default function App() {
       }
     }
   }, [dismissNowPlaying])
+
+  // Dismiss now-playing immediately if mediaReaction is turned off
+  useEffect(() => {
+    if (!settings?.mediaReaction && nowPlayingVisible) {
+      dismissNowPlaying()
+    }
+  }, [settings?.mediaReaction, nowPlayingVisible, dismissNowPlaying])
 
   // Re-sync now-playing auto-dismiss timer on duration or autoHide change
   useEffect(() => {
@@ -716,8 +749,22 @@ export default function App() {
         clearTimeout(chatWaitingTimerRef.current)
         chatWaitingTimerRef.current = null
       }
-      setChatReply(result && typeof result === 'object' ? result : { ok: true, text: String(result) })
+      const replyData = result && typeof result === 'object' ? result : { ok: true, text: String(result) }
+      setChatReply(replyData)
       setChatState('reply')
+      const isSuccess = Boolean(
+        replyData &&
+        replyData.ok !== false &&
+        !replyData.error &&
+        (replyData.text || typeof replyData === 'string')
+      )
+      if (isSuccess) {
+        playSound('chat_reply', {
+          settings: settingsRef.current,
+          paused: pausedRef.current,
+          isAsleep: isAsleepRef.current,
+        })
+      }
     }).catch((err) => {
       if (timedOut || chatSendRequestIdRef.current !== currentRequestId) {
         return
@@ -763,7 +810,7 @@ export default function App() {
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}
         REMINDER_STATE={REMINDER_STATE}
-        mediaPlaying={mediaStatus.playing}
+        mediaPlaying={Boolean(settings.mediaReaction) && mediaStatus.playing}
         chatState={chatState}
         chatReply={chatReply}
         onChatSend={handleChatSend}
@@ -789,6 +836,11 @@ export default function App() {
         paused={paused}
         animationFps={settings.animationFps}
         reduceResourceUsage={settings.reduceResourceUsage}
+        onPetStart={() => playSound('purr', { settings, paused, isAsleep })}
+        onEatStart={() => playSound('munch', { settings, paused, isAsleep })}
+        onFeedComplete={() => playSound('meow_happy', { settings, paused, isAsleep })}
+        onLeftClickReact={() => playSound('meow_happy', { settings, paused, isAsleep })}
+        onWakeUpClick={() => playSound('meow_happy', { settings, paused, isAsleep: false })}
       />}
 
     </>
