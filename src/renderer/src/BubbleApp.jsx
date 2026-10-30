@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Droplet, Eye, Footprints, Timer, Briefcase, Utensils, Music, AlertCircle } from 'lucide-react'
+import { Droplet, Eye, Footprints, Timer, Briefcase, Utensils, Music, AlertCircle, Bell, Clock, Sparkles } from 'lucide-react'
 import NotificationBubble from './components/NotificationBubble'
 import ChatMarkdown from './components/ChatMarkdown'
 import './components/NotificationBubble.css'
@@ -13,20 +13,30 @@ const REMINDER_MESSAGES = {
   pomodoroBreakEnd: { title: "Break's Over", text: "Break's over — back to work!", icon: '💼' },
 }
 
-function getReminderIcon(type, fallback) {
-  switch (type) {
+function getReminderIcon(typeOrIcon, fallback) {
+  switch (typeOrIcon) {
+    case 'Droplet':
     case 'water':
       return <Droplet size={18} />
+    case 'Eye':
     case 'eyeRest':
       return <Eye size={18} />
+    case 'Footprints':
     case 'movementBreak':
       return <Footprints size={18} />
+    case 'Bell':
+      return <Bell size={18} />
+    case 'Clock':
+      return <Clock size={18} />
+    case 'Sparkles':
+      return <Sparkles size={18} />
+    case 'Timer':
     case 'pomodoroWorkEnd':
       return <Timer size={18} />
     case 'pomodoroBreakEnd':
       return <Briefcase size={18} />
     default:
-      return fallback || <Droplet size={18} />
+      return fallback || <Bell size={18} />
   }
 }
 
@@ -78,6 +88,10 @@ export default function BubbleApp() {
 
   const handleReminderDismiss = useCallback(() => {
     window.api.bubble.action('reminder:dismiss')
+  }, [])
+
+  const handleReminderSnooze = useCallback(() => {
+    window.api.bubble.action('reminder:snooze')
   }, [])
 
   
@@ -238,9 +252,9 @@ export default function BubbleApp() {
     return <div style={{ width: '100%', height: '100%' }} />
   }
 
-  const { isReminderActive, reminderState, reminderType, showHunger, showTimer, timerMode, timerFormatted, showNowPlaying, mediaTitle, mediaArtist, chatState, chatReply } = cardState || {}
+  const { isReminderActive, reminderState, reminderType, showReminderCard, reminderData, showHunger, showTimer, timerMode, timerFormatted, showNowPlaying, mediaTitle, mediaArtist, chatState, chatReply } = cardState || {}
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
-  const reminderInfo = REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
+  const reminderInfo = reminderData || REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -329,27 +343,37 @@ export default function BubbleApp() {
       )}
 
       {/* Reminder card */}
-      {isReminderActive && reminderState === 'ACTIVE' && (
+      {isReminderActive && reminderState === 'ACTIVE' && showReminderCard !== false && (
         <div
           className={`mascot-reminder-card ${isBigTreatment ? 'is-big' : 'is-small'}`}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="mascot-reminder-card__content">
             <span className="mascot-reminder-card__icon">
-              {getReminderIcon(reminderType, reminderInfo.icon)}
+              {getReminderIcon(reminderInfo.icon || reminderType, reminderInfo.icon)}
             </span>
             <div className="mascot-reminder-card__text-wrap">
               <div className="mascot-reminder-card__title">{reminderInfo.title}</div>
-              <div className="mascot-reminder-card__message">{reminderInfo.text}</div>
+              <div className="mascot-reminder-card__message">{reminderInfo.text || reminderInfo.message}</div>
             </div>
           </div>
-          <button
-            className="mascot-dismiss"
-            onClick={handleReminderDismiss}
-            aria-label="Dismiss reminder"
-          >
-            ✕
-          </button>
+          <div className="mascot-reminder-card__actions">
+            <button
+              className="mascot-snooze-btn"
+              onClick={handleReminderSnooze}
+              aria-label="Snooze reminder"
+              title="Snooze"
+            >
+              Snooze
+            </button>
+            <button
+              className="mascot-dismiss"
+              onClick={handleReminderDismiss}
+              aria-label="Dismiss reminder"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

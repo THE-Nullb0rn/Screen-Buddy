@@ -19,70 +19,75 @@ import {
   MessageCircle,
 } from 'lucide-react'
 
-const BUILTIN_REMINDERS = [
+const ICON_COMPONENTS = {
+  Droplet,
+  Eye,
+  Footprints,
+  Bell,
+  Clock,
+  Sparkles,
+  Timer,
+}
+
+const ICON_OPTIONS = [
+  { value: 'Bell', label: 'Bell' },
+  { value: 'Droplet', label: 'Water' },
+  { value: 'Eye', label: 'Eye' },
+  { value: 'Footprints', label: 'Walk' },
+  { value: 'Clock', label: 'Clock' },
+  { value: 'Sparkles', label: 'Sparkles' },
+  { value: 'Timer', label: 'Timer' },
+]
+
+const DEFAULT_REMINDERS_LIST = [
   {
     id: 'water',
-    title: 'Drink water',
-    defaultDesc: 'Stay hydrated with a sip of water.',
-    icon: Droplet,
-    defaultAnimation: 'wave',
-    defaultSound: 'default',
+    type: 'builtin',
+    name: 'Drink water',
+    icon: 'Droplet',
+    message: 'Stay hydrated with a sip of water.',
+    intervalMinutes: null,
+    enabled: true,
+    order: 0,
   },
   {
     id: 'eyeRest',
-    title: 'Rest your eyes',
-    defaultDesc: '20-20-20 rule: look 20 feet away for 20 seconds.',
-    icon: Eye,
-    defaultAnimation: 'sleepy',
-    defaultSound: 'soft',
+    type: 'builtin',
+    name: 'Rest your eyes',
+    icon: 'Eye',
+    message: '20-20-20 rule: look 20 feet away for 20 seconds.',
+    intervalMinutes: null,
+    enabled: true,
+    order: 1,
   },
   {
     id: 'movementBreak',
-    title: 'Movement break',
-    defaultDesc: 'Stand up, stretch your muscles, and take a quick walk.',
-    icon: Footprints,
-    defaultAnimation: 'stretch',
-    defaultSound: 'default',
+    type: 'builtin',
+    name: 'Movement break',
+    icon: 'Footprints',
+    message: 'Stand up, stretch your muscles, and take a quick walk.',
+    intervalMinutes: null,
+    enabled: true,
+    order: 2,
   },
 ]
 
-function getRepeatConfig(intervalMinutes) {
-  const standardPresets = [
-    { value: '15m', minutes: 15, label: 'Every 15 min' },
-    { value: '30m', minutes: 30, label: 'Every 30 min' },
-    { value: '1h', minutes: 60, label: 'Every 1 hour' },
-    { value: '2h', minutes: 120, label: 'Every 2 hours' },
-    { value: 'daily', minutes: null, label: 'Daily' },
-  ]
-
-  const match = standardPresets.find((p) => p.minutes === intervalMinutes)
-  if (match) {
-    return {
-      options: standardPresets.map(({ value, label }) => ({ value, label })),
-      defaultValue: match.value,
-    }
+function getRepeatOptions(globalInterval, isBuiltin) {
+  const options = []
+  if (isBuiltin) {
+    options.push({ value: 'default', label: `Default (${globalInterval} min)` })
   }
-
-  return {
-    options: [
-      { value: 'custom', label: `Every ${intervalMinutes} min` },
-      ...standardPresets.map(({ value, label }) => ({ value, label })),
-    ],
-    defaultValue: 'custom',
-  }
+  options.push(
+    { value: '15', label: 'Every 15 min' },
+    { value: '20', label: 'Every 20 min' },
+    { value: '30', label: 'Every 30 min' },
+    { value: '45', label: 'Every 45 min' },
+    { value: '60', label: 'Every 1 hour' },
+    { value: '120', label: 'Every 2 hours' },
+    { value: 'custom', label: 'Custom minutes...' }
+  )
+  return options
 }
-
-const ANIMATION_OPTIONS = [
-  { value: 'wave', label: 'Wave' },
-  { value: 'stretch', label: 'Stretch' },
-  { value: 'sleepy', label: 'Sleepy' },
-]
-
-const SOUND_OPTIONS = [
-  { value: 'default', label: 'Default' },
-  { value: 'soft', label: 'Soft' },
-  { value: 'none', label: 'None' },
-]
 
 const SNOOZE_OPTIONS = [
   { value: '5', label: '5 minutes' },
@@ -100,15 +105,24 @@ const AUTO_SNOOZE_OPTIONS = [
 export default function RemindersTab({ settings, saveSettingsPatch }) {
   const intervalMinutes = settings.intervalMinutes ?? 20
   const [intervalInput, setIntervalInput] = useState(String(intervalMinutes))
-  const [editingId, setEditingId] = useState(null)
+
+  const remindersList =
+    Array.isArray(settings.remindersList) && settings.remindersList.length > 0
+      ? settings.remindersList
+      : DEFAULT_REMINDERS_LIST
+
+  const customCount = remindersList.filter((r) => r.type === 'custom').length
+
+  const [editingItem, setEditingItem] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
+  const [draggedIndex, setDraggedIndex] = useState(null)
+
   const [draft, setDraft] = useState({
-    title: '',
-    description: '',
-    repeat: '30m',
-    startTime: '',
-    endTime: '',
-    animation: 'wave',
-    sound: 'default',
+    name: '',
+    message: '',
+    icon: 'Bell',
+    repeatType: '30',
+    customMinutes: '30',
   })
 
   const openerRef = useRef(null)
@@ -131,53 +145,158 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
     }
   }
 
-  const handleReminderToggle = (key, checked) => {
-    const current = settings.reminders || {
-      water: true,
-      eyeRest: true,
-      movementBreak: true,
-    }
-    saveSettingsPatch({
-      reminders: {
-        ...current,
-        [key]: checked,
-      },
-    })
+  const handleReminderToggle = (id, checked) => {
+    const updated = remindersList.map((r) =>
+      r.id === id ? { ...r, enabled: checked } : r
+    )
+    saveSettingsPatch({ remindersList: updated })
+  }
+
+  const handleDragStart = (e, index) => {
+    setDraggedIndex(index)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDrop = (e, targetIndex) => {
+    e.preventDefault()
+    if (draggedIndex === null || draggedIndex === targetIndex) return
+    const updated = [...remindersList]
+    const [moved] = updated.splice(draggedIndex, 1)
+    updated.splice(targetIndex, 0, moved)
+    const reordered = updated.map((item, idx) => ({ ...item, order: idx }))
+    setDraggedIndex(null)
+    saveSettingsPatch({ remindersList: reordered })
+  }
+
+  const handleDelete = (id) => {
+    const updated = remindersList
+      .filter((r) => r.id !== id)
+      .map((item, idx) => ({ ...item, order: idx }))
+    setDeletingId(null)
+    saveSettingsPatch({ remindersList: updated })
   }
 
   const handlePencilClick = (reminder, e) => {
     openerRef.current = e?.currentTarget || null
-    setEditingId(reminder.id)
-    const { defaultValue } = getRepeatConfig(intervalMinutes)
+    setEditingItem(reminder)
+    const isBuiltin = reminder.type === 'builtin'
+    let repeatType = 'custom'
+    let customMinutes = String(reminder.intervalMinutes || intervalMinutes)
+
+    if (isBuiltin && (reminder.intervalMinutes === null || reminder.intervalMinutes === undefined)) {
+      repeatType = 'default'
+      customMinutes = String(intervalMinutes)
+    } else if ([15, 20, 30, 45, 60, 120].includes(reminder.intervalMinutes)) {
+      repeatType = String(reminder.intervalMinutes)
+    }
+
     setDraft({
-      title: reminder.title,
-      description: reminder.defaultDesc,
-      repeat: defaultValue,
-      startTime: '',
-      endTime: '',
-      animation: reminder.defaultAnimation,
-      sound: reminder.defaultSound,
+      name: reminder.name,
+      message: reminder.message || '',
+      icon: reminder.icon || 'Bell',
+      repeatType,
+      customMinutes,
+    })
+  }
+
+  const handleOpenAdd = (e) => {
+    openerRef.current = e?.currentTarget || null
+    setEditingItem({ id: 'new', type: 'custom' })
+    setDraft({
+      name: '',
+      message: '',
+      icon: 'Bell',
+      repeatType: '30',
+      customMinutes: '30',
     })
   }
 
   const handleCloseEdit = () => {
-    setEditingId(null)
+    setEditingItem(null)
     openerRef.current?.focus()
+  }
+
+  const handleSaveReminder = () => {
+    if (!editingItem) return
+    const isBuiltin = editingItem.type === 'builtin'
+
+    let finalInterval = null
+    if (isBuiltin && draft.repeatType === 'default') {
+      finalInterval = null
+    } else if (draft.repeatType === 'custom') {
+      const parsed = parseInt(draft.customMinutes, 10)
+      finalInterval = isNaN(parsed) ? (isBuiltin ? null : 30) : Math.min(1440, Math.max(1, parsed))
+    } else {
+      const num = Number(draft.repeatType)
+      finalInterval = Number.isFinite(num) ? num : (isBuiltin ? null : 30)
+    }
+
+    if (isBuiltin) {
+      const updated = remindersList.map((r) =>
+        r.id === editingItem.id ? { ...r, intervalMinutes: finalInterval } : r
+      )
+      saveSettingsPatch({ remindersList: updated })
+      handleCloseEdit()
+      return
+    }
+
+    const name = draft.name.trim().slice(0, 40)
+    if (!name) return
+
+    const message = draft.message.trim().slice(0, 120)
+    const icon = ICON_COMPONENTS[draft.icon] ? draft.icon : 'Bell'
+    const effectiveInterval = finalInterval || 30
+
+    let updated
+    if (editingItem.id === 'new') {
+      const newCustom = {
+        id: `custom_${Date.now()}`,
+        type: 'custom',
+        name,
+        message,
+        icon,
+        intervalMinutes: effectiveInterval,
+        enabled: true,
+        order: remindersList.length,
+      }
+      updated = [...remindersList, newCustom].map((r, idx) => ({ ...r, order: idx }))
+    } else {
+      updated = remindersList.map((r) =>
+        r.id === editingItem.id
+          ? {
+              ...r,
+              name,
+              message,
+              icon,
+              intervalMinutes: effectiveInterval,
+            }
+          : r
+      )
+    }
+
+    saveSettingsPatch({ remindersList: updated })
+    handleCloseEdit()
   }
 
   // Focus Title input on open
   useEffect(() => {
-    if (editingId) {
+    if (editingItem) {
       const timer = setTimeout(() => {
         titleInputRef.current?.focus()
       }, 50)
       return () => clearTimeout(timer)
     }
-  }, [editingId])
+  }, [editingItem])
 
   // Escape key closes modal
   useEffect(() => {
-    if (!editingId) return
+    if (!editingItem) return
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -187,11 +306,11 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [editingId])
+  }, [editingItem])
 
   // Lock page scroll behind modal
   useEffect(() => {
-    if (!editingId) return
+    if (!editingItem) return
     const scrollContainer = document.querySelector('.sb-content')
     const originalOverflow = scrollContainer?.style.overflowY
     if (scrollContainer) {
@@ -202,10 +321,9 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
         scrollContainer.style.overflowY = originalOverflow || ''
       }
     }
-  }, [editingId])
+  }, [editingItem])
 
-  const editingReminder = BUILTIN_REMINDERS.find((r) => r.id === editingId)
-  const { options: repeatOptions } = getRepeatConfig(intervalMinutes)
+  const isBuiltin = editingItem?.type === 'builtin'
 
   return (
     <>
@@ -239,7 +357,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={Bell}
           label="Enable reminders"
           hint="Let Screen Buddy remind you about important habits"
-          soon={true}
         >
           <Toggle
             checked={settings.remindersEnabled !== false}
@@ -252,7 +369,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={MessageCircle}
           label="Show reminder notifications"
           hint="Show visual notification cards on screen"
-          soon={true}
         >
           <Toggle
             checked={settings.reminderNotifications !== false}
@@ -278,7 +394,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={Sparkles}
           label="Show cat animation"
           hint="Show special animation when reminding"
-          soon={true}
         >
           <Toggle
             checked={settings.reminderCatAnimation !== false}
@@ -295,13 +410,21 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
         className="sb-reminders-list-card"
       >
         <div className="sb-reminders-list">
-          {BUILTIN_REMINDERS.map((r) => {
-            const IconComp = r.icon
-            const isChecked = settings.reminders?.[r.id] !== false
-            const isEditing = editingId === r.id
+          {remindersList.map((r, idx) => {
+            const IconComp = ICON_COMPONENTS[r.icon] || Bell
+            const isChecked = r.enabled !== false
+            const isEditing = editingItem?.id === r.id
+            const effectiveMins = r.intervalMinutes || intervalMinutes
+            const isDeleting = deletingId === r.id
+
             return (
               <div
                 key={r.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, idx)}
+                onDragEnd={() => setDraggedIndex(null)}
                 className={`sb-reminder-item ${isEditing ? 'sb-reminder-item--editing' : ''}`}
               >
                 <GripVertical
@@ -313,39 +436,83 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
                   <IconComp size={16} />
                 </div>
                 <div className="sb-reminder-info">
-                  <div className="sb-reminder-title">{r.title}</div>
+                  <div className="sb-reminder-title">{r.name}</div>
                   <div className="sb-reminder-subline">
-                    Every {intervalMinutes} {intervalMinutes === 1 ? 'minute' : 'minutes'}
+                    Every {effectiveMins} {effectiveMins === 1 ? 'minute' : 'minutes'}
                   </div>
                 </div>
                 <div className="sb-reminder-actions">
                   <Toggle
                     checked={isChecked}
                     onChange={(e) => handleReminderToggle(r.id, e.target.checked)}
-                    ariaLabel={r.title}
+                    ariaLabel={r.name}
                   />
                   <button
                     type="button"
                     className={`sb-btn-icon ${isEditing ? 'sb-btn-icon--active' : ''}`}
                     onClick={(e) => handlePencilClick(r, e)}
                     title="Edit reminder"
-                    aria-label={`Edit ${r.title}`}
+                    aria-label={`Edit ${r.name}`}
                   >
                     <Pencil size={15} />
                   </button>
-                  <button
-                    type="button"
-                    className="sb-btn-icon"
-                    disabled
-                    title="Built-in reminders can't be deleted"
-                    aria-label="Built-in reminders can't be deleted"
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {r.type === 'builtin' ? (
+                    <button
+                      type="button"
+                      className="sb-btn-icon"
+                      disabled
+                      title="Built-in reminders can't be deleted"
+                      aria-label="Built-in reminders can't be deleted"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  ) : isDeleting ? (
+                    <div className="sb-delete-confirm">
+                      <span className="sb-delete-confirm-text">Delete?</span>
+                      <button
+                        type="button"
+                        className="sb-btn-text sb-btn-danger"
+                        onClick={() => handleDelete(r.id)}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        className="sb-btn-text"
+                        onClick={() => setDeletingId(null)}
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="sb-btn-icon"
+                      onClick={() => setDeletingId(r.id)}
+                      title="Delete reminder"
+                      aria-label={`Delete ${r.name}`}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               </div>
             )
           })}
+        </div>
+
+        <div className="sb-add-reminder-row">
+          <Button
+            variant="secondary"
+            onClick={handleOpenAdd}
+            disabled={customCount >= 20}
+            title={customCount >= 20 ? 'Maximum 20 custom reminders reached' : 'Add custom reminder'}
+          >
+            + Add reminder
+          </Button>
+          {customCount >= 20 && (
+            <span className="sb-add-limit-hint">Maximum 20 custom reminders reached</span>
+          )}
         </div>
       </Card>
 
@@ -358,7 +525,6 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           icon={Timer}
           label="Snooze duration"
           hint="How long to pause reminder when snoozed"
-          soon={true}
         >
           <Select
             value={String(settings.reminderSnoozeDuration ?? 5)}
@@ -406,8 +572,8 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
         </Row>
       </Card>
 
-      {/* Centered Modal Overlay for Edit Reminder */}
-      {editingReminder && (
+      {/* Centered Modal Overlay for Add/Edit Reminder */}
+      {editingItem && (
         <div
           className="sb-reminder-modal-overlay"
           onClick={(e) => {
@@ -426,7 +592,7 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
               <div className="sb-card__title-group">
                 <Pencil size={18} className="sb-card__icon" aria-hidden="true" />
                 <h3 id="sb-reminder-edit-modal-title" className="sb-card__title">
-                  Add / Edit Reminder
+                  {editingItem.id === 'new' ? 'Add Reminder' : isBuiltin ? 'Edit Built-in Reminder' : 'Edit Reminder'}
                 </h3>
               </div>
               <button
@@ -440,93 +606,79 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
             </header>
 
             <div className="sb-card__content">
-              <div className="sb-reminder-note">Custom reminders are coming soon.</div>
-
               <div className="sb-form-group">
-                <label className="sb-form-label">Title</label>
+                <label className="sb-form-label">
+                  Title {isBuiltin ? '(Built-in)' : ''}
+                </label>
                 <input
                   ref={titleInputRef}
                   type="text"
                   className="sb-input"
-                  value={draft.title}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
+                  maxLength={40}
+                  value={draft.name}
+                  disabled={isBuiltin}
+                  placeholder={isBuiltin ? draft.name : 'e.g. Posture check'}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
                   aria-label="Reminder title"
                 />
               </div>
 
               <div className="sb-form-group">
-                <label className="sb-form-label">Description (optional)</label>
+                <label className="sb-form-label">
+                  Description {isBuiltin ? '(Built-in)' : ''}
+                </label>
                 <input
                   type="text"
                   className="sb-input"
-                  value={draft.description}
-                  placeholder="Add a friendly description..."
+                  maxLength={120}
+                  value={draft.message}
+                  disabled={isBuiltin}
+                  placeholder={isBuiltin ? draft.message : 'Add a friendly message...'}
                   onChange={(e) =>
-                    setDraft((prev) => ({ ...prev, description: e.target.value }))
+                    setDraft((prev) => ({ ...prev, message: e.target.value }))
                   }
                   aria-label="Reminder description"
                 />
               </div>
 
               <div className="sb-form-group">
+                <label className="sb-form-label">
+                  Icon {isBuiltin ? '(Built-in)' : ''}
+                </label>
+                <Select
+                  value={draft.icon}
+                  options={ICON_OPTIONS}
+                  disabled={isBuiltin}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, icon: e.target.value }))}
+                  ariaLabel="Reminder icon"
+                />
+              </div>
+
+              <div className="sb-form-group">
                 <label className="sb-form-label">Repeat</label>
                 <Select
-                  value={draft.repeat}
-                  options={repeatOptions}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, repeat: e.target.value }))}
+                  value={draft.repeatType}
+                  options={getRepeatOptions(intervalMinutes, isBuiltin)}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, repeatType: e.target.value }))}
                   ariaLabel="Repeat frequency"
                 />
               </div>
 
-              <div className="sb-form-row-2col">
+              {draft.repeatType === 'custom' && (
                 <div className="sb-form-group">
-                  <label className="sb-form-label">Start Time</label>
-                  <input
-                    type="time"
-                    className="sb-time-input"
-                    value={draft.startTime}
-                    onChange={(e) =>
-                      setDraft((prev) => ({ ...prev, startTime: e.target.value }))
-                    }
-                    aria-label="Start time"
-                  />
+                  <label className="sb-form-label">Custom interval (1-1440 minutes)</label>
+                  <div className="sb-interval-control">
+                    <NumberInput
+                      min={1}
+                      max={1440}
+                      value={draft.customMinutes}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, customMinutes: e.target.value }))}
+                      aria-label="Custom interval minutes"
+                    />
+                    <span className="sb-unit-label">min</span>
+                  </div>
                 </div>
-                <div className="sb-form-group">
-                  <label className="sb-form-label">End Time (optional)</label>
-                  <input
-                    type="time"
-                    className="sb-time-input"
-                    value={draft.endTime}
-                    onChange={(e) =>
-                      setDraft((prev) => ({ ...prev, endTime: e.target.value }))
-                    }
-                    aria-label="End time"
-                  />
-                </div>
-              </div>
-
-              <div className="sb-form-row-2col">
-                <div className="sb-form-group">
-                  <label className="sb-form-label">Animation</label>
-                  <Select
-                    value={draft.animation}
-                    options={ANIMATION_OPTIONS}
-                    onChange={(e) =>
-                      setDraft((prev) => ({ ...prev, animation: e.target.value }))
-                    }
-                    ariaLabel="Animation style"
-                  />
-                </div>
-                <div className="sb-form-group">
-                  <label className="sb-form-label">Sound</label>
-                  <Select
-                    value={draft.sound}
-                    options={SOUND_OPTIONS}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, sound: e.target.value }))}
-                    ariaLabel="Sound option"
-                  />
-                </div>
-              </div>
+              )}
 
               <div className="sb-edit-actions">
                 <Button variant="secondary" onClick={handleCloseEdit}>
@@ -534,11 +686,11 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
                 </Button>
                 <Button
                   variant="primary"
-                  disabled
-                  aria-label="Save Reminder (Coming soon)"
+                  disabled={!isBuiltin && !draft.name.trim()}
+                  onClick={handleSaveReminder}
+                  aria-label="Save Reminder"
                 >
-                  <span className="sb-soon-pill">Soon</span>
-                  <span>Save Reminder</span>
+                  Save Reminder
                 </Button>
               </div>
             </div>

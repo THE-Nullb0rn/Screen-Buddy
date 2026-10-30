@@ -1086,9 +1086,13 @@
 
 .sb-reminder-drag-handle {
   color: var(--text-muted);
-  opacity: 0.35;
-  cursor: not-allowed;
+  opacity: 0.6;
+  cursor: grab;
   flex-shrink: 0;
+}
+
+.sb-reminder-drag-handle:active {
+  cursor: grabbing;
 }
 
 .sb-reminder-icon-box {
@@ -1158,6 +1162,59 @@
 .sb-btn-icon:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.sb-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+}
+
+.sb-delete-confirm-text {
+  color: var(--accent);
+  font-weight: 500;
+  margin-right: 2px;
+}
+
+.sb-btn-text {
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 130ms ease;
+}
+
+.sb-btn-text:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.sb-btn-text.sb-btn-danger {
+  color: #ef7b8f;
+  border-color: rgba(239, 123, 143, 0.35);
+}
+
+.sb-btn-text.sb-btn-danger:hover {
+  background-color: rgba(239, 123, 143, 0.15);
+  border-color: rgba(239, 123, 143, 0.6);
+}
+
+.sb-add-reminder-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.sb-add-limit-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
 }
 
 /* ── Edit Reminder Modal Overlay ── */

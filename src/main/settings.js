@@ -25,6 +25,167 @@ const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
 const CLICK_ACTIONS = ['none', 'react', 'chat', 'settings', 'pause']
 const DRAG_BUTTONS = ['left', 'right', 'middle']
 
+const ALLOWED_REMINDER_ICONS = [
+  'Droplet',
+  'Eye',
+  'Footprints',
+  'Bell',
+  'Clock',
+  'Sparkles',
+  'Timer',
+]
+
+const DEFAULT_REMINDERS_LIST = [
+  {
+    id: 'water',
+    type: 'builtin',
+    name: 'Drink water',
+    icon: 'Droplet',
+    message: 'Stay hydrated with a sip of water.',
+    intervalMinutes: null,
+    enabled: true,
+    order: 0,
+  },
+  {
+    id: 'eyeRest',
+    type: 'builtin',
+    name: 'Rest your eyes',
+    icon: 'Eye',
+    message: '20-20-20 rule: look 20 feet away for 20 seconds.',
+    intervalMinutes: null,
+    enabled: true,
+    order: 1,
+  },
+  {
+    id: 'movementBreak',
+    type: 'builtin',
+    name: 'Movement break',
+    icon: 'Footprints',
+    message: 'Stand up, stretch your muscles, and take a quick walk.',
+    intervalMinutes: null,
+    enabled: true,
+    order: 2,
+  },
+]
+
+/**
+ * Sanitize and normalize the remindersList array.
+ * Ensures the 3 built-in reminders are present, caps custom reminders at 20,
+ * clamps strings (name <= 40, message <= 120), intervals (1-1440 min),
+ * strips HTML tags, and validates icons.
+ *
+ * @param {Array} list
+ * @param {object} [fallbackRemindersObj]
+ * @returns {Array} Sanitized remindersList
+ */
+function sanitizeRemindersList(list, fallbackRemindersObj) {
+  if (!Array.isArray(list)) {
+    return DEFAULT_REMINDERS_LIST.map((item, index) => ({
+      ...item,
+      order: index,
+      enabled:
+        fallbackRemindersObj && typeof fallbackRemindersObj[item.id] === 'boolean'
+          ? fallbackRemindersObj[item.id]
+          : item.enabled,
+    }))
+  }
+
+  const builtinMap = new Map()
+  for (const b of DEFAULT_REMINDERS_LIST) {
+    builtinMap.set(b.id, { ...b })
+  }
+
+  const customItems = []
+  let customCount = 0
+
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const id = String(item.id || '')
+    if (builtinMap.has(id)) {
+      const def = builtinMap.get(id)
+      const rawName =
+        typeof item.name === 'string'
+          ? item.name.replace(/<[^>]*>?/gm, '').trim()
+          : def.name
+      const name = rawName.slice(0, 40) || def.name
+      const rawMsg =
+        typeof item.message === 'string'
+          ? item.message.replace(/<[^>]*>?/gm, '').trim()
+          : def.message
+      const message = rawMsg.slice(0, 120) || def.message
+      const icon = ALLOWED_REMINDER_ICONS.includes(item.icon) ? item.icon : def.icon
+      let intervalMinutes = null
+      if (item.intervalMinutes !== null && item.intervalMinutes !== undefined) {
+        const num = Number(item.intervalMinutes)
+        if (Number.isFinite(num)) {
+          intervalMinutes = Math.min(1440, Math.max(1, Math.round(num)))
+        }
+      }
+      const enabled =
+        typeof item.enabled === 'boolean'
+          ? item.enabled
+          : fallbackRemindersObj && typeof fallbackRemindersObj[id] === 'boolean'
+            ? fallbackRemindersObj[id]
+            : def.enabled
+      const order =
+        typeof item.order === 'number' && Number.isFinite(item.order)
+          ? Math.round(item.order)
+          : def.order
+
+      builtinMap.set(id, {
+        id,
+        type: 'builtin',
+        name,
+        icon,
+        message,
+        intervalMinutes,
+        enabled,
+        order,
+      })
+    } else if (customCount < 20) {
+      customCount++
+      const rawName =
+        typeof item.name === 'string'
+          ? item.name.replace(/<[^>]*>?/gm, '').trim()
+          : 'Reminder'
+      const name = rawName.slice(0, 40) || 'Reminder'
+      const rawMsg =
+        typeof item.message === 'string'
+          ? item.message.replace(/<[^>]*>?/gm, '').trim()
+          : ''
+      const message = rawMsg.slice(0, 120)
+      const icon = ALLOWED_REMINDER_ICONS.includes(item.icon) ? item.icon : 'Bell'
+      let intervalMinutes = 30
+      if (item.intervalMinutes !== null && item.intervalMinutes !== undefined) {
+        const num = Number(item.intervalMinutes)
+        if (Number.isFinite(num)) {
+          intervalMinutes = Math.min(1440, Math.max(1, Math.round(num)))
+        }
+      }
+      const enabled = typeof item.enabled === 'boolean' ? item.enabled : true
+      const order =
+        typeof item.order === 'number' && Number.isFinite(item.order)
+          ? Math.round(item.order)
+          : 10 + customCount
+      customItems.push({
+        id: id || `custom_${Date.now()}_${customCount}`,
+        type: 'custom',
+        name,
+        icon,
+        message,
+        intervalMinutes,
+        enabled,
+        order,
+      })
+    }
+  }
+
+  const combined = [...builtinMap.values(), ...customItems]
+  combined.sort((a, b) => a.order - b.order)
+  return combined.map((item, index) => ({ ...item, order: index }))
+}
+
+
 // ─── Defaults ────────────────────────────────────────────────────────────────
 /**
  * Default settings object.
@@ -52,6 +213,9 @@ const DEFAULT_SETTINGS = {
     eyeRest: true,
     movementBreak: true,
   },
+
+  /** Full list of builtin and custom reminders */
+  remindersList: DEFAULT_REMINDERS_LIST,
 
   /** Master toggle for reminders */
   remindersEnabled: true,
@@ -179,6 +343,23 @@ function loadSettings() {
       }
       delete saved.reminders.posture
       delete saved.reminders.stretch
+    }
+
+    // Migration for remindersList: ensure builtins exist, sync with saved.reminders, limit custom to 20
+    if (saved && typeof saved === 'object') {
+      const hadRemindersList = Array.isArray(saved.remindersList)
+      saved.remindersList = sanitizeRemindersList(saved.remindersList, saved.reminders)
+      if (!saved.reminders) {
+        saved.reminders = {}
+      }
+      for (const item of saved.remindersList) {
+        if (item.type === 'builtin') {
+          saved.reminders[item.id] = item.enabled
+        }
+      }
+      if (!hadRemindersList) {
+        needsSave = true
+      }
     }
 
     // Migration for interaction actions: only drop values that are invalid for the new enums
@@ -371,6 +552,23 @@ function validateSettingsUpdate(patch) {
           sanitized.reminders = cleanedReminders
         } else {
           debugLog('reminders', 'must be an object')
+        }
+        break
+      }
+
+      case 'remindersList': {
+        if (Array.isArray(value)) {
+          const sanitizedList = sanitizeRemindersList(value)
+          sanitized.remindersList = sanitizedList
+          const syncedReminders = {}
+          for (const item of sanitizedList) {
+            if (item.type === 'builtin') {
+              syncedReminders[item.id] = item.enabled
+            }
+          }
+          sanitized.reminders = syncedReminders
+        } else {
+          debugLog('remindersList', 'must be an array')
         }
         break
       }
@@ -600,6 +798,8 @@ function deepMerge(defaults, override) {
 }
 
 module.exports = {
+  ALLOWED_REMINDER_ICONS,
+  DEFAULT_REMINDERS_LIST,
   DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,

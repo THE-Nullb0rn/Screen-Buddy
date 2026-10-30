@@ -104,6 +104,7 @@ export default function Mascot({
   catAnimationSpeed = 'normal',
   mouseReaction = false,
   paused = false,
+  reminderCatAnimation = true,
 }) {
   const containerRef = useRef(null)
   
@@ -141,6 +142,7 @@ export default function Mascot({
 
   // Idle behavior timeout ref
   const idleBehaviorTimeoutRef = useRef(null)
+  const eatTimeoutRef = useRef(null)
   
   // Typing event tracking for real typing detection
   const typingEventsRef = useRef([])
@@ -211,7 +213,7 @@ export default function Mascot({
     reminderState === REMINDER_STATE.ACTIVE ||
     reminderState === REMINDER_STATE.EXIT
 
-  const isBigTreatment = isReminder && reminderType === 'movementBreak'
+  const isBigTreatment = isReminder && (reminderCatAnimation !== false) && reminderType === 'movementBreak'
 
   const isEating = pose === 'eat'
   const isRoamBlocked = Boolean(
@@ -285,9 +287,18 @@ export default function Mascot({
     setWalkMs(0)
     clearTimeout(roamTimeoutRef.current)
     clearTimeout(idleBehaviorTimeoutRef.current)
+    clearTimeout(eatTimeoutRef.current)
     setIsHoveringHead(false)
-    startIdleBehavior('eat', EAT_DURATION_MS)
-  }, [wakeUp, startIdleBehavior])
+    poseRef.current = 'eat'
+    setPose('eat')
+    eatTimeoutRef.current = setTimeout(() => {
+      if (poseRef.current === 'eat') {
+        poseRef.current = 'idle'
+        setPose('idle')
+      }
+      eatTimeoutRef.current = null
+    }, EAT_DURATION_MS)
+  }, [wakeUp])
 
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
@@ -785,6 +796,7 @@ export default function Mascot({
     clearTimeout(roamTimeoutRef.current)
     clearTimeout(accentTimerRef.current)
     clearTimeout(idleBehaviorTimeoutRef.current)
+    clearTimeout(eatTimeoutRef.current)
 
     roamGenRef.current += 1
     setWalkMs(0)
@@ -1220,6 +1232,7 @@ export default function Mascot({
       setWalkMs(0)
       clearTimeout(roamTimeoutRef.current)
       clearTimeout(idleBehaviorTimeoutRef.current)
+      clearTimeout(eatTimeoutRef.current)
       setIsHoveringHead(true)
     }
   }
@@ -1246,6 +1259,7 @@ export default function Mascot({
       clearTimeout(leftClickTimerRef.current)
       clearTimeout(rightClickTimerRef.current)
       clearTimeout(petLeaveTimeoutRef.current)
+      clearTimeout(eatTimeoutRef.current)
     }
   }, [])
 
@@ -1254,7 +1268,7 @@ export default function Mascot({
     currentPose = 'pet'
   }
 
-  const displayPose = isReminder ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
+  const displayPose = (isReminder && reminderCatAnimation !== false) ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
 
   let stateClass = 'is-idle'
@@ -1275,7 +1289,7 @@ export default function Mascot({
   } else if (dragging) {
     animationName = 'drag'
     flipped = false
-  } else if (isReminder) {
+  } else if (isReminder && reminderCatAnimation !== false) {
     animationName = isBigTreatment ? 'stretch' : 'talk'
     flipped = false
   } else if (displayPose === 'walk-left') {
@@ -1317,7 +1331,7 @@ export default function Mascot({
     !dragging &&
     !falling &&
     !pomodoroCelebrating &&
-    !isReminder
+    !(isReminder && reminderCatAnimation !== false)
   )
 
   useEffect(() => {

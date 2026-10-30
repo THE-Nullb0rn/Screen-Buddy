@@ -14,29 +14,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Mascot, { NORMAL_CAT_CX, NORMAL_CAT_CY } from './components/Mascot'
 import { useHunger } from './hooks/useHunger'
-
-// ─── State machine constants ─────────────────────────────────────────────────
-const REMINDER_STATE = {
-  IDLE_COUNTING: 'IDLE_COUNTING',
-  ENTRANCE: 'ENTRANCE',
-  ACTIVE: 'ACTIVE',
-  EXIT: 'EXIT',
-}
-
-const ENTRANCE_DURATION_MS = 1000
-const EXIT_DURATION_MS = 800
+import { useReminders, REMINDER_STATE } from './hooks/useReminders'
 
 const POMODORO_WORK_SEC = 25 * 60
 const POMODORO_BREAK_SEC = 5 * 60
 const POMODORO_CELEBRATION_MS = 1200
-
-const ALL_REMINDER_TYPES = ['water', 'eyeRest', 'movementBreak']
-
-function getEnabledReminderTypes(s) {
-  const reminders = s?.reminders || {}
-  const enabled = ALL_REMINDER_TYPES.filter((t) => reminders[t] !== false)
-  return enabled.length > 0 ? enabled : ALL_REMINDER_TYPES
-}
 
 function formatTime(sec) {
   const m = Math.floor(sec / 60)
@@ -54,14 +36,34 @@ export default function App() {
   // ── Settings ───────────────────────────────────────────────────────────────
   const [settings, setSettingsState] = useState(null)
 
-  // ── Reminder state machine ─────────────────────────────────────────────────
-  const [reminderState, setReminderState] = useState(REMINDER_STATE.IDLE_COUNTING)
-  const [reminderType, setReminderType] = useState('water')
+  // Whether reminders/timers are paused
+  const [paused, setPaused] = useState(false)
 
-  const isReminderActive =
-    reminderState === REMINDER_STATE.ENTRANCE ||
-    reminderState === REMINDER_STATE.ACTIVE ||
-    reminderState === REMINDER_STATE.EXIT
+  // ── Chat state ─────────────────────────────────────────────────────────────
+  const [chatState, setChatState] = useState('idle') // 'idle' | 'input' | 'waiting' | 'reply'
+  const [chatReply, setChatReply] = useState('')
+  const [notificationVisible, setNotificationVisible] = useState(false)
+
+  // Cat sleep state
+  const [isAsleep, setIsAsleep] = useState(false)
+
+  // ── Reminders hook ─────────────────────────────────────────────────────────
+  const {
+    reminderState,
+    reminderType,
+    reminderData,
+    isReminderActive,
+    triggerReminder,
+    dismissReminder,
+    snoozeReminder,
+    countdown,
+  } = useReminders({
+    settings,
+    paused,
+    chatState,
+    notificationVisible,
+    isAsleep,
+  })
 
   // ── Pomodoro & Stopwatch state ─────────────────────────────────────────────
   const [timerMode, setTimerMode] = useState('none') // 'none' | 'pomodoro-work' | 'pomodoro-break' | 'stopwatch'
@@ -69,20 +71,9 @@ export default function App() {
   const [timerRunning, setTimerRunning] = useState(false)
   const [pomodoroCelebrating, setPomodoroCelebrating] = useState(false)
 
-  // ── Chat state ─────────────────────────────────────────────────────────────
-  const [chatState, setChatState] = useState('idle') // 'idle' | 'input' | 'waiting' | 'reply'
-  const [chatReply, setChatReply] = useState('')
-  const [notificationVisible, setNotificationVisible] = useState(false)
-
-  // Whether reminders/timers are paused
-  const [paused, setPaused] = useState(false)
-
   // ── Media playback state ───────────────────────────────────────────────────
   const [mediaStatus, setMediaStatus] = useState({ playing: false, artist: '', title: '' })
   const [nowPlayingVisible, setNowPlayingVisible] = useState(false)
-
-  // Countdown displayed in development / debug overlay
-  const [countdown, setCountdown] = useState(0)
 
   // ── Hunger state ───────────────────────────────────────────────────────────
   const {
@@ -99,14 +90,16 @@ export default function App() {
     isReminderActive,
   })
 
-  const pausedRef = useRef(paused)
-  const settingsRef = useRef(settings)
-  const reminderStateRef = useRef(reminderState)
-  const reminderIndexRef = useRef(0)
+  const handleSleepChangeCombined = useCallback((sleeping) => {
+    setIsAsleep(sleeping)
+    handleSleepChange(sleeping)
+  }, [handleSleepChange])
 
-  useEffect(() => { pausedRef.current = paused }, [paused])
+  const settingsRef = useRef(settings)
+  const pausedRef = useRef(paused)
+
   useEffect(() => { settingsRef.current = settings }, [settings])
-  useEffect(() => { reminderStateRef.current = reminderState }, [reminderState])
+  useEffect(() => { pausedRef.current = paused }, [paused])
   useEffect(() => { window.api.sendReminderState?.(reminderState) }, [reminderState])
 
   // ── Load settings from main process on mount ──────────────────────────────
@@ -121,79 +114,6 @@ export default function App() {
     })
     return off
   }, [])
-
-
-
-  // ── State machine transitions ─────────────────────────────────────────────
-  const triggerReminder = useCallback((type) => {
-    let resolvedType = type
-    if (!resolvedType) {
-      const enabled = getEnabledReminderTypes(settingsRef.current)
-      resolvedType = enabled[reminderIndexRef.current % enabled.length]
-      reminderIndexRef.current = (reminderIndexRef.current + 1) % enabled.length
-    }
-    setReminderType(resolvedType)
-    setReminderState(REMINDER_STATE.ENTRANCE)
-
-    setTimeout(() => {
-      setReminderState(REMINDER_STATE.ACTIVE)
-    }, ENTRANCE_DURATION_MS)
-  }, [])
-
-  const dismissReminder = useCallback(() => {
-    setReminderState(REMINDER_STATE.EXIT)
-
-    setTimeout(() => {
-      setReminderState(REMINDER_STATE.IDLE_COUNTING)
-    }, EXIT_DURATION_MS)
-  }, [])
-
-  // ── Auto-dismiss after a few seconds if not manually dismissed ────────────
-  useEffect(() => {
-    if (reminderState !== REMINDER_STATE.ACTIVE) return
-
-    const isBig = reminderType === 'movementBreak'
-    const timeoutMs = isBig ? 6500 : 12000
-
-    const timer = setTimeout(() => {
-      dismissReminder()
-    }, timeoutMs)
-
-    return () => clearTimeout(timer)
-  }, [reminderState, reminderType, dismissReminder])
-
-  // ── Timer: drives IDLE_COUNTING countdown & rotation ──────────────────────
-  useEffect(() => {
-    if (!settings) return
-
-    const intervalSec = (settings.intervalMinutes || 20) * 60
-    let remaining = intervalSec
-    setCountdown(remaining)
-
-    const tick = setInterval(() => {
-      if (
-        pausedRef.current ||
-        reminderStateRef.current !== REMINDER_STATE.IDLE_COUNTING
-      ) {
-        return
-      }
-
-      remaining -= 1
-      setCountdown(remaining)
-
-      if (remaining <= 0) {
-        remaining = intervalSec
-        setCountdown(remaining)
-
-        const enabled = getEnabledReminderTypes(settingsRef.current)
-        const nextType = enabled[reminderIndexRef.current % enabled.length]
-        reminderIndexRef.current = (reminderIndexRef.current + 1) % enabled.length
-        triggerReminder(nextType)
-      }
-    }, 1000)
-
-    return () => clearInterval(tick)
-  }, [settings, triggerReminder])
 
   // ── Pomodoro / Stopwatch Controls ─────────────────────────────────────────
   const startPomodoro = useCallback((workSec = POMODORO_WORK_SEC) => {
@@ -324,15 +244,11 @@ export default function App() {
   // ── IPC: tray push events ─────────────────────────────────────────────────
   useEffect(() => {
     const offTest = window.api.on('tray:test-reminder', (data) => {
-      if (reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING) {
-        triggerReminder(data?.type)
-      }
+      triggerReminder(data?.type)
     })
 
     const offTrigger = window.api.on('reminder:trigger', (data) => {
-      if (reminderStateRef.current === REMINDER_STATE.IDLE_COUNTING) {
-        triggerReminder(data?.type)
-      }
+      triggerReminder(data?.type)
     })
 
     const offStartPomodoro = window.api.on('timer:start-pomodoro', () => {
@@ -400,15 +316,21 @@ export default function App() {
   // Computed once and sent whenever any relevant state changes.
   // hasContent drives the bubble window visibility decision in main.js.
   useEffect(() => {
-    const isReminderActive =
-      reminderState === REMINDER_STATE.ENTRANCE ||
-      reminderState === REMINDER_STATE.ACTIVE ||
-      reminderState === REMINDER_STATE.EXIT
+    const showReminderCard = Boolean(
+      isReminderActive &&
+      reminderState === REMINDER_STATE.ACTIVE &&
+      settings?.reminderNotifications !== false
+    )
 
     const showTimer = timerMode !== 'none' && reminderState !== REMINDER_STATE.ACTIVE
     const showNowPlaying = nowPlayingVisible && !!(mediaStatus.title || mediaStatus.artist) && !isReminderActive
 
-    const hasContent = isReminderActive || showTimer || showHunger || showNowPlaying || chatState !== 'idle'
+    const hasContent =
+      (settings?.reminderNotifications !== false && isReminderActive) ||
+      showTimer ||
+      showHunger ||
+      showNowPlaying ||
+      chatState !== 'idle'
 
     window.api.bubble?.sendCardState({
       hasContent,
@@ -418,6 +340,8 @@ export default function App() {
       reminderState,
       reminderType,
       isReminderActive,
+      showReminderCard,
+      reminderData,
       // Hunger
       showHunger,
       // Timer
@@ -429,13 +353,28 @@ export default function App() {
       mediaTitle: mediaStatus.title,
       mediaArtist: mediaStatus.artist,
     })
-  }, [reminderState, reminderType, showHunger, timerMode, timerSeconds, nowPlayingVisible, mediaStatus, chatState, chatReply])
+  }, [
+    isReminderActive,
+    reminderState,
+    reminderType,
+    reminderData,
+    settings?.reminderNotifications,
+    showHunger,
+    timerMode,
+    timerSeconds,
+    nowPlayingVisible,
+    mediaStatus,
+    chatState,
+    chatReply,
+  ])
 
   // ── Handle actions forwarded from the bubble renderer (BubbleApp.jsx) ─────
   useEffect(() => {
     const offAction = window.api.on('bubble:action', (type, payload) => {
       if (type === 'reminder:dismiss') {
         dismissReminder()
+      } else if (type === 'reminder:snooze') {
+        snoozeReminder()
       } else if (type === 'hunger:feed') {
         handleFeed()
       } else if (type === 'hunger:later') {
@@ -462,7 +401,7 @@ export default function App() {
       }
     })
     return () => offAction()
-  }, [dismissReminder, handleFeed, handleSnooze])
+  }, [dismissReminder, snoozeReminder, handleFeed, handleSnooze])
 
 
   // ── IPC: media playback status ────────────────────────────────────────────
@@ -679,11 +618,12 @@ export default function App() {
       {settings && <Mascot
         reminderState={reminderState}
         reminderType={reminderType}
+        reminderCatAnimation={settings.reminderCatAnimation !== false}
         hungerState={hungerState}
         onFeed={handleFeed}
         feedSignal={feedSignal}
         hungerBehavior={settings.hungerBehavior || 'search-food'}
-        onSleepChange={handleSleepChange}
+        onSleepChange={handleSleepChangeCombined}
         pomodoroCelebrating={pomodoroCelebrating}
         timerMode={timerMode}
         REMINDER_STATE={REMINDER_STATE}
