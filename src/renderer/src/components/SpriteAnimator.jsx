@@ -2,101 +2,176 @@ import React, { useEffect, useRef, useState } from 'react'
 import defaultManifest from '../assets/cat-sprite/manifest.json'
 import defaultSheetSrc from '../assets/cat-sprite/spritesheet.png'
 import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
+import listeningManifest from '../assets/cat-sprite/listening-manifest.json'
+import animsManifest from '../assets/cat-sprite/anims/anims.json'
 import './SpriteAnimator.css'
 
-// Shared image cache to avoid re-decoding across re-renders/mounts
-const imageCache = new Map()
-const imageLoadListeners = new Map()
+// ── Lazy strip loaders via import.meta.glob ───────────────────────────────────
+const stripModules = import.meta.glob('../assets/cat-sprite/anims/*.png', { query: '?url', import: 'default' })
+const stripLoaders = {}
+for (const [path, loader] of Object.entries(stripModules)) {
+  const name = path.split('/').pop().replace(/\.png$/, '')
+  stripLoaders[name] = loader
+}
 
-function getSpritesheetImage(src, onLoaded) {
-  let img = imageCache.get(src)
+// ── LRU strip image cache (at most 3 strips decoded) ──────────────────────────
+const stripCache = new Map() // url -> Image
+const stripUrlCache = new Map() // animName -> Promise<string>
+
+export function loadStripUrl(animName) {
+  if (stripUrlCache.has(animName)) return stripUrlCache.get(animName)
+  const loader = stripLoaders[animName]
+  if (!loader) return Promise.resolve(null)
+  const p = loader().then((mod) => (typeof mod === 'string' ? mod : mod?.default || mod))
+  stripUrlCache.set(animName, p)
+  return p
+}
+
+export function loadStripImage(url) {
+  if (!url) return Promise.resolve(null)
+  if (stripCache.has(url)) {
+    const img = stripCache.get(url)
+    stripCache.delete(url)
+    stripCache.set(url, img)
+    if (img.complete && img.naturalWidth > 0) return Promise.resolve(img)
+  }
+  return new Promise((resolve) => {
+    let img = stripCache.get(url)
+    if (!img) {
+      img = new Image()
+      stripCache.set(url, img)
+      // Evict oldest if cache size exceeds 3
+      while (stripCache.size > 3) {
+        const oldestKey = stripCache.keys().next().value
+        const oldestImg = stripCache.get(oldestKey)
+        if (oldestImg && oldestImg !== img) {
+          oldestImg.src = ''
+        }
+        stripCache.delete(oldestKey)
+      }
+      img.src = url
+    }
+    if (img.complete && img.naturalWidth > 0) {
+      resolve(img)
+    } else {
+      img.onload = () => resolve(img)
+      img.onerror = () => resolve(null)
+    }
+  })
+}
+
+// Shared image cache for old sheets
+const sheetCache = new Map()
+function getOldSheetImage(src, onLoaded) {
+  let img = sheetCache.get(src)
   if (img && img.complete && img.naturalWidth > 0) {
     onLoaded(img)
     return () => {}
   }
-
   if (!img) {
     img = new Image()
-    imageCache.set(src, img)
-    imageLoadListeners.set(src, [])
+    sheetCache.set(src, img)
     img.src = src
   }
-
   const listener = () => onLoaded(img)
   if (img.complete && img.naturalWidth > 0) {
     listener()
     return () => {}
   }
-
-  const listeners = imageLoadListeners.get(src) || []
-  listeners.push(listener)
-  imageLoadListeners.set(src, listeners)
-
-  img.onload = () => {
-    const list = imageLoadListeners.get(src) || []
-    list.forEach((fn) => fn())
-    imageLoadListeners.set(src, [])
-  }
-
+  img.addEventListener('load', listener, { once: true })
   return () => {
-    const list = imageLoadListeners.get(src) || []
-    imageLoadListeners.set(src, list.filter((fn) => fn !== listener))
+    img.removeEventListener('load', listener)
   }
 }
 
-if (typeof window !== 'undefined') {
-  getSpritesheetImage(defaultSheetSrc, () => {})
-  getSpritesheetImage(listeningSheetSrc, () => {})
-}
-
-const SPEED_FACTORS = {
+export const SPEED_FACTORS = {
   slow: 0.5,
   normal: 1,
   fast: 2,
 }
 
-export const ANIMATION_FALLBACKS = {
+// Fallbacks for LISTENING mode where new art is not yet provided
+export const LISTENING_FALLBACKS = {
   curious: 'idle',
   purr: 'pet',
   sad: 'loaf',
   annoyed: 'idle',
   toyplay: 'play',
   drink: 'eat',
+  crouchpounce: 'pounce',
 }
 
-export function resolveAnimation(name, manifest) {
-  if (!name) return 'idle'
-  const anims = manifest?.animations || defaultManifest.animations
-  if (anims[name]) return name
-  const fallback = ANIMATION_FALLBACKS[name]
-  if (fallback && anims[fallback]) return fallback
-  return 'idle'
+export function resolveAnimation(name, isListening = false) {
+  if (!name) return { type: 'strip', name: 'idle', config: animsManifest.animations?.idle }
+
+  let animName = name
+  if (animName === 'crouch' || animName === 'pounce') {
+    animName = 'crouchpounce'
+  }
+
+  if (isListening) {
+    if (listeningManifest.animations[animName]) {
+      return { type: 'sheet', name: animName }
+    }
+    const fallback = LISTENING_FALLBACKS[animName] || LISTENING_FALLBACKS[name]
+    if (fallback && listeningManifest.animations[fallback]) {
+      return { type: 'sheet', name: fallback }
+    }
+    return { type: 'sheet', name: 'idle' }
+  }
+
+  // Non-listening cat: check per-animation strip
+  const strip = animsManifest.animations?.[animName]
+  if (strip) {
+    return { type: 'strip', name: animName, config: strip }
+  }
+
+  // Fall back to old sheet
+  if (defaultManifest.animations[name]) {
+    return { type: 'sheet', name }
+  }
+  if (defaultManifest.animations[animName]) {
+    return { type: 'sheet', name: animName }
+  }
+
+  return { type: 'strip', name: 'idle', config: animsManifest.animations?.idle }
 }
 
 /**
- * Custom hook to drive sprite sheet frame stepping based on manifest animations
+ * Custom hook to drive frame stepping based on manifest or strip config
  */
 export function useSpriteAnimation({
-  manifest = defaultManifest,
   animation = 'idle',
+  manifest = defaultManifest,
+  stripConfig = null,
   loop: propLoop,
   onAnimationEnd,
   speed = 'normal',
   fpsCap = 60,
 }) {
-  const resolvedAnim = resolveAnimation(animation, manifest)
-  const baseConfig =
-    manifest.animations[resolvedAnim] ||
-    manifest.animations.idle || { frames: [0], fps: 1, loop: true }
+  const isStrip = Boolean(stripConfig)
+  let totalFrames = 1
+  let fps = 1
+  let loop = true
+  let frameDurations = null
 
-  const animConfig = {
-    ...baseConfig,
-    loop: propLoop !== undefined ? propLoop : baseConfig.loop,
+  if (isStrip) {
+    totalFrames = stripConfig.frames || 1
+    fps = stripConfig.fps || 1
+    loop = propLoop !== undefined ? propLoop : (stripConfig.mode === 'loop')
+  } else {
+    const baseConfig = manifest.animations[animation] || manifest.animations.idle || { frames: [0], fps: 1, loop: true }
+    totalFrames = baseConfig.frames.length
+    fps = baseConfig.fps || 1
+    loop = propLoop !== undefined ? propLoop : baseConfig.loop
+    frameDurations = baseConfig.frameDurations || null
   }
 
   const [frameIndex, setFrameIndex] = useState(0)
 
-  const animRef = useRef(animConfig)
+  const animRef = useRef({ totalFrames, fps, loop, frameDurations, isStrip })
+  animRef.current = { totalFrames, fps, loop, frameDurations, isStrip }
+
   const currentAnimationRef = useRef(animation)
   const onEndRef = useRef(onAnimationEnd)
   const frameIndexRef = useRef(0)
@@ -109,12 +184,10 @@ export function useSpriteAnimation({
     isSecondBlinkOpen: false,
   })
 
-  animRef.current = animConfig
   onEndRef.current = onAnimationEnd
   speedFactorRef.current = SPEED_FACTORS[speed] || 1
   fpsCapRef.current = fpsCap
 
-  // Reset frame when animation name or manifest changes
   useEffect(() => {
     if (currentAnimationRef.current !== animation) {
       currentAnimationRef.current = animation
@@ -129,14 +202,13 @@ export function useSpriteAnimation({
         }
       }
     }
-  }, [animation, manifest])
+  }, [animation])
 
   useEffect(() => {
     let animFrameId
     let lastTime = performance.now()
     let lastStepTime = 0
     let accumulated = 0
-    const { frames, fps, loop, frameDurations } = animRef.current
 
     const tick = (now) => {
       const cap = fpsCapRef.current || 60
@@ -149,15 +221,14 @@ export function useSpriteAnimation({
       accumulated += now - lastTime
       lastTime = now
 
-      const totalFrames = frames.length
+      const { totalFrames: tf, fps: fRate, loop: isLoop, frameDurations: fDurs, isStrip: sMode } = animRef.current
       let idx = frameIndexRef.current
       const speedFactor = speedFactorRef.current || 1
 
-      // Drain accumulated time frame-by-frame so no frame is ever skipped
       let safety = 0
-      while (safety++ < totalFrames + 1) {
+      while (safety++ < tf + 1) {
         let rawDuration
-        const isTwoFrameIdle = currentAnimationRef.current === 'idle' && totalFrames === 2
+        const isTwoFrameIdle = !sMode && currentAnimationRef.current === 'idle' && tf === 2
         if (isTwoFrameIdle) {
           if (idx === 0) {
             rawDuration = idleBlinkStateRef.current.isSecondBlinkOpen
@@ -167,9 +238,9 @@ export function useSpriteAnimation({
             rawDuration = idleBlinkStateRef.current.blinkDuration
           }
         } else {
-          rawDuration = frameDurations
-            ? (frameDurations[idx] ?? (1000 / (fps || 1)))
-            : (1000 / (fps || 1))
+          rawDuration = fDurs
+            ? (fDurs[idx] ?? (1000 / (fRate || 1)))
+            : (1000 / (fRate || 1))
         }
         const duration = rawDuration / speedFactor
 
@@ -178,8 +249,8 @@ export function useSpriteAnimation({
         accumulated -= duration
 
         const next = idx + 1
-        if (next >= totalFrames) {
-          if (loop) {
+        if (next >= tf) {
+          if (isLoop) {
             idx = 0
             if (isTwoFrameIdle) {
               if (idleBlinkStateRef.current.doubleBlinkPending) {
@@ -194,13 +265,14 @@ export function useSpriteAnimation({
               }
             }
           } else {
-            idx = totalFrames - 1
+            // Mode "once": hold the last frame and notify end
+            idx = tf - 1
             if (idx !== frameIndexRef.current) {
               frameIndexRef.current = idx
               setFrameIndex(idx)
             }
-            onEndRef.current?.(animation)
-            return // End of non-looping animation
+            onEndRef.current?.(currentAnimationRef.current)
+            return
           }
         } else {
           idx = next
@@ -217,27 +289,30 @@ export function useSpriteAnimation({
 
     animFrameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animFrameId)
-  }, [animation, manifest])
+  }, [animation])
 
-  const safeFrameIndex = Math.min(frameIndex, animConfig.frames.length - 1)
-  const currentFrame = animConfig.frames[safeFrameIndex] ?? animConfig.frames[0] ?? 0
+  let currentFrame = frameIndex
+  if (!isStrip) {
+    const baseConfig = manifest.animations[animation] || manifest.animations.idle || { frames: [0] }
+    const safeIdx = Math.min(frameIndex, baseConfig.frames.length - 1)
+    currentFrame = baseConfig.frames[safeIdx] ?? baseConfig.frames[0] ?? 0
+  }
 
   return {
     currentFrame,
-    frameIndex: safeFrameIndex,
-    animConfig,
-    cellWidth: manifest.cellWidth,
-    cellHeight: manifest.cellHeight,
-    columns: manifest.columns,
-    scale: manifest.scale || 1,
+    frameIndex,
+    cellWidth: isStrip ? (stripConfig?.cellWidth || 210) : manifest.cellWidth,
+    cellHeight: isStrip ? (stripConfig?.cellHeight || 300) : manifest.cellHeight,
+    columns: isStrip ? (stripConfig?.frames || totalFrames) : manifest.columns,
+    scale: manifest.scale || 0.6,
   }
 }
 
 const eyeShiftCache = new Map()
 
-function getEyeShiftedCanvas(spritesheetSrc, img, cellW, cellH, col, row, dx, dy) {
+function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isStrip = false) {
   if (dx === 0 && dy === 0) return null
-  const cacheKey = `${spritesheetSrc}:${col},${row}:${dx},${dy}`
+  const cacheKey = `${imageSrc}:${col},${row}:${dx},${dy}`
   if (eyeShiftCache.has(cacheKey)) {
     return eyeShiftCache.get(cacheKey)
   }
@@ -256,68 +331,110 @@ function getEyeShiftedCanvas(spritesheetSrc, img, cellW, cellH, col, row, dx, dy
   const imgData = ctx.getImageData(0, 0, cellW, cellH)
   const data = imgData.data
 
-  const isListening = spritesheetSrc.includes('listening')
-  const eyeBoxes = isListening
-    ? [
-        { minX: 99, maxX: 122, minY: 204, maxY: 223 },
-        { minX: 124, maxX: 142, minY: 204, maxY: 223 },
-      ]
-    : [
-        { minX: 104, maxX: 145, minY: 191, maxY: 219 },
-        { minX: 147, maxX: 172, minY: 193, maxY: 219 },
-      ]
-
   const furR = 0x28
   const furG = 0x2c
   const furB = 0x38
 
-  let totalEyePixels = 0
+  const eyePixels = []
 
-  for (const box of eyeBoxes) {
-    const eyePixels = []
-    for (let y = box.minY; y <= box.maxY; y++) {
-      for (let x = box.minX; x <= box.maxX; x++) {
+  if (isStrip) {
+    // New strip: per-frame green-pixel detection over upper ~75% of cell (y <= 225)
+    let greenCount = 0
+    const maxY = Math.min(cellH - 1, 225)
+    for (let y = 0; y <= maxY; y++) {
+      for (let x = 0; x < cellW; x++) {
         const off = (y * cellW + x) * 4
+        const a = data[off + 3]
+        if (a < 100) continue
         const r = data[off]
         const g = data[off + 1]
         const b = data[off + 2]
-        const a = data[off + 3]
         const isGreen = g > 60 && g > r * 1.15 && g > b * 1.15
-        const isGleam = r > 150 && g > 150 && b < 120
-        const isPupil = r < 30 && g < 35 && b < 55
-        if (a > 100 && (isGreen || isGleam || isPupil)) {
-          eyePixels.push({ x, y, r, g, b, a })
+        if (isGreen) {
+          greenCount++
         }
       }
     }
 
-    if (eyePixels.length === 0) continue
-    totalEyePixels += eyePixels.length
-
-    for (const ep of eyePixels) {
-      const off = (ep.y * cellW + ep.x) * 4
-      data[off] = furR
-      data[off + 1] = furG
-      data[off + 2] = furB
-      data[off + 3] = 255
+    // Skip frames with fewer than 6 green pixels (closed eyes)
+    if (greenCount < 6) {
+      eyeShiftCache.set(cacheKey, null)
+      return null
     }
 
-    for (const ep of eyePixels) {
-      const nx = ep.x + dx
-      const ny = ep.y + dy
-      if (nx >= 0 && nx < cellW && ny >= 0 && ny < cellH) {
-        const off = (ny * cellW + nx) * 4
-        data[off] = ep.r
-        data[off + 1] = ep.g
-        data[off + 2] = ep.b
-        data[off + 3] = ep.a
+    // Collect eye pixels (green, gleam, pupil) in the detected eye region
+    for (let y = 0; y <= maxY; y++) {
+      for (let x = 0; x < cellW; x++) {
+        const off = (y * cellW + x) * 4
+        const a = data[off + 3]
+        if (a < 100) continue
+        const r = data[off]
+        const g = data[off + 1]
+        const b = data[off + 2]
+        const isGreen = g > 60 && g > r * 1.15 && g > b * 1.15
+        const isGleam = r > 150 && g > 150 && b < 120
+        const isPupil = r < 30 && g < 35 && b < 55
+        if (isGreen || isGleam || isPupil) {
+          eyePixels.push({ x, y, r, g, b, a })
+        }
+      }
+    }
+  } else {
+    // Old logic for old spritesheet
+    const isListening = (imageSrc || '').includes('listening')
+    const eyeBoxes = isListening
+      ? [
+          { minX: 99, maxX: 122, minY: 204, maxY: 223 },
+          { minX: 124, maxX: 142, minY: 204, maxY: 223 },
+        ]
+      : [
+          { minX: 104, maxX: 145, minY: 191, maxY: 219 },
+          { minX: 147, maxX: 172, minY: 193, maxY: 219 },
+        ]
+
+    for (const box of eyeBoxes) {
+      for (let y = box.minY; y <= box.maxY; y++) {
+        for (let x = box.minX; x <= box.maxX; x++) {
+          const off = (y * cellW + x) * 4
+          const a = data[off + 3]
+          if (a < 100) continue
+          const r = data[off]
+          const g = data[off + 1]
+          const b = data[off + 2]
+          const isGreen = g > 60 && g > r * 1.15 && g > b * 1.15
+          const isGleam = r > 150 && g > 150 && b < 120
+          const isPupil = r < 30 && g < 35 && b < 55
+          if (isGreen || isGleam || isPupil) {
+            eyePixels.push({ x, y, r, g, b, a })
+          }
+        }
       }
     }
   }
 
-  if (totalEyePixels === 0) {
+  if (eyePixels.length === 0) {
     eyeShiftCache.set(cacheKey, null)
     return null
+  }
+
+  for (const ep of eyePixels) {
+    const off = (ep.y * cellW + ep.x) * 4
+    data[off] = furR
+    data[off + 1] = furG
+    data[off + 2] = furB
+    data[off + 3] = 255
+  }
+
+  for (const ep of eyePixels) {
+    const nx = ep.x + dx
+    const ny = ep.y + dy
+    if (nx >= 0 && nx < cellW && ny >= 0 && ny < cellH) {
+      const off = (ny * cellW + nx) * 4
+      data[off] = ep.r
+      data[off + 1] = ep.g
+      data[off + 2] = ep.b
+      data[off + 3] = ep.a
+    }
   }
 
   ctx.putImageData(imgData, 0, 0)
@@ -333,7 +450,7 @@ export default function SpriteAnimator({
   flipped = false,
   loop,
   manifest = defaultManifest,
-  spritesheet = defaultSheetSrc,
+  spritesheet,
   scale: propScale,
   className = '',
   style = {},
@@ -347,14 +464,55 @@ export default function SpriteAnimator({
   ...rest
 }) {
   const canvasRef = useRef(null)
-  const cached = imageCache.get(spritesheet)
-  const currentImg = cached?.complete && cached?.naturalWidth > 0 ? cached : null
-  const imageRef = useRef(currentImg)
-  const [imageLoaded, setImageLoaded] = useState(Boolean(imageRef.current))
 
-  if (currentImg && imageRef.current !== currentImg) {
-    imageRef.current = currentImg
-  }
+  const isListeningMode = Boolean(
+    spritesheet === listeningSheetSrc ||
+    manifest === listeningManifest ||
+    (typeof spritesheet === 'string' && spritesheet.includes('listening'))
+  )
+
+  const resolved = resolveAnimation(animation, isListeningMode)
+  const isStrip = resolved.type === 'strip'
+  const activeAnimName = resolved.name
+  const activeStripConfig = isStrip ? resolved.config : null
+
+  // Image references for seamless switching (no blank flash)
+  const currentImgRef = useRef(null)
+  const [activeImage, setActiveImage] = useState(null)
+  const [activeAnimKey, setActiveAnimKey] = useState(activeAnimName)
+
+  // Load strip or old sheet
+  useEffect(() => {
+    let cancelled = false
+
+    if (isStrip) {
+      loadStripUrl(activeAnimName).then((url) => {
+        if (cancelled || !url) return
+        loadStripImage(url).then((img) => {
+          if (cancelled || !img) return
+          currentImgRef.current = img
+          setActiveImage(img)
+          setActiveAnimKey(activeAnimName)
+        })
+      })
+    } else {
+      const sheetSrc = isListeningMode ? listeningSheetSrc : (spritesheet || defaultSheetSrc)
+      const unsub = getOldSheetImage(sheetSrc, (img) => {
+        if (cancelled || !img) return
+        currentImgRef.current = img
+        setActiveImage(img)
+        setActiveAnimKey(activeAnimName)
+      })
+      return () => {
+        cancelled = true
+        unsub()
+      }
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeAnimName, isStrip, isListeningMode, spritesheet])
 
   let eyeDx = 0
   let eyeDy = 0
@@ -377,37 +535,27 @@ export default function SpriteAnimator({
     }
   }
 
-  const scale = propScale ?? manifest.scale ?? 1
-  const cellWidth = manifest.cellWidth
-  const cellHeight = manifest.cellHeight
-  const columns = manifest.columns
-  const displayWidth = Math.round(cellWidth * scale)
-  const displayHeight = Math.round(cellHeight * scale)
-
   const effectiveSpeed = catAnimationSpeed || animationSpeed || speed || 'normal'
 
-  const { currentFrame } = useSpriteAnimation({
-    manifest,
-    animation,
+  const { currentFrame, cellWidth, cellHeight, columns } = useSpriteAnimation({
+    animation: activeAnimKey,
+    manifest: isListeningMode ? listeningManifest : manifest,
+    stripConfig: isStrip ? activeStripConfig : null,
     loop,
     onAnimationEnd,
     speed: effectiveSpeed,
     fpsCap,
   })
 
-  // Load / listen to spritesheet
-  useEffect(() => {
-    return getSpritesheetImage(spritesheet, (img) => {
-      imageRef.current = img
-      setImageLoaded(true)
-    })
-  }, [spritesheet])
+  const scale = propScale ?? manifest.scale ?? 0.6
+  const displayWidth = Math.round(cellWidth * scale)
+  const displayHeight = Math.round(cellHeight * scale)
 
   // Draw current frame to canvas
   useEffect(() => {
     const canvas = canvasRef.current
-    const img = imageRef.current
-    if (!canvas || !img || !imageLoaded) return
+    const img = currentImgRef.current || activeImage
+    if (!canvas || !img) return
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -415,13 +563,30 @@ export default function SpriteAnimator({
     ctx.clearRect(0, 0, displayWidth, displayHeight)
     ctx.imageSmoothingEnabled = false
 
-    const row = Math.floor(currentFrame / columns)
-    const col = currentFrame % columns
-    const sx = col * cellWidth
-    const sy = row * cellHeight
+    let sx = 0
+    let sy = 0
+    if (isStrip) {
+      sx = currentFrame * cellWidth
+      sy = 0
+    } else {
+      const row = Math.floor(currentFrame / columns)
+      const col = currentFrame % columns
+      sx = col * cellWidth
+      sy = row * cellHeight
+    }
 
-    const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0))
-      ? getEyeShiftedCanvas(spritesheet, img, cellWidth, cellHeight, col, row, eyeDx, eyeDy)
+    const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && activeAnimKey === 'idle')
+      ? getEyeShiftedCanvas(
+          isStrip ? activeAnimKey : (spritesheet || defaultSheetSrc),
+          img,
+          cellWidth,
+          cellHeight,
+          isStrip ? currentFrame : (currentFrame % columns),
+          isStrip ? 0 : Math.floor(currentFrame / columns),
+          eyeDx,
+          eyeDy,
+          isStrip
+        )
       : null
 
     if (shiftedCanvas) {
@@ -449,7 +614,21 @@ export default function SpriteAnimator({
         displayHeight
       )
     }
-  }, [currentFrame, imageLoaded, spritesheet, cellWidth, cellHeight, columns, displayWidth, displayHeight, eyeTracking, eyeDx, eyeDy])
+  }, [
+    currentFrame,
+    activeImage,
+    activeAnimKey,
+    isStrip,
+    cellWidth,
+    cellHeight,
+    columns,
+    displayWidth,
+    displayHeight,
+    eyeTracking,
+    eyeDx,
+    eyeDy,
+    spritesheet
+  ])
 
   return (
     <canvas

@@ -444,7 +444,7 @@ async function triggerCallCat() {
   try {
     let cursorX = 0
     let cursorY = 0
-    if (isHyprlandSession) {
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
       try {
         const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
         const trimmed = (stdout || '').trim()
@@ -497,7 +497,7 @@ function removeCallHotkeyFallback() {
 }
 
 function registerGlobalCallShortcut() {
-  const callShortcut = currentSettings?.shortcutCallCat || 'Control+Alt+C'
+  const callShortcut = settings?.shortcutCallCat || 'Control+Alt+C'
   try {
     globalShortcut.register(callShortcut, () => {
       triggerCallCat()

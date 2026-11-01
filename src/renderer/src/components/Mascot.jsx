@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import './Mascot.css'
-import SpriteAnimator from './SpriteAnimator'
+import SpriteAnimator, { SPEED_FACTORS } from './SpriteAnimator'
 import listeningManifest from '../assets/cat-sprite/listening-manifest.json'
 import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
+import animsManifest from '../assets/cat-sprite/anims/anims.json'
 
 const MARGIN = 16
 const SPRITE_WIDTH = 126
@@ -26,21 +27,37 @@ const IDLE_PAUSE_MIN_MS = 5000
 const IDLE_PAUSE_MAX_MS = 15000
 const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
-const EAT_DURATION_MS = 6000
 
 // Idle behavior chances (checked each idle pause between walks)
 const PLAY_CHANCE = 0.15         // Increased to compensate for removed typing roll
 
-export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'wakeup'])
+export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff'])
+
+export function getAnimationDuration(name, speed = 'normal') {
+  let animName = name
+  if (animName === 'crouch' || animName === 'pounce') {
+    animName = 'crouchpounce'
+  }
+  const anim = animsManifest?.animations?.[animName]
+  const speedFactor = typeof speed === 'number' ? speed : (SPEED_FACTORS[speed] || 1)
+  if (anim && anim.frames && anim.fps) {
+    return Math.round((anim.frames / (anim.fps * speedFactor)) * 1000 + 800)
+  }
+  return 2000
+}
 
 export function getIdleWeights() {
   return [
-    { pose: 'groom', type: 'loop', duration: 3000, weight: 20 },
-    { pose: 'yawn', type: 'oneshot', weight: 20 },
-    { pose: 'loaf', type: 'hold', duration: 6000, weight: 15 },
-    { pose: 'siderest', type: 'hold', duration: 6000, weight: 15 },
-    { pose: 'proud', type: 'loop', duration: 2000, weight: 15 },
-    { pose: 'play', type: 'loop', duration: 4000, weight: 15 },
+    { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 20 },
+    { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 20 },
+    { pose: 'loaf', type: 'hold', duration: getAnimationDuration('loaf'), weight: 15 },
+    { pose: 'siderest', type: 'hold', duration: getAnimationDuration('siderest'), weight: 15 },
+    { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 15 },
+    { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 15 },
+    { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: 5 },
+    { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: 5 },
+    { pose: 'gift', type: 'oneshot', duration: getAnimationDuration('gift'), weight: 5 },
+    { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 5 },
   ]
 }
 
@@ -321,27 +338,48 @@ export default function Mascot({
     wakeUp()
   }, [wakeUp, cancelIdleAndOneShot])
 
-  // ── Helper: play a one-shot animation (yawn, pounce, wakeup) ──
+  // ── Helper: play a one-shot animation (yawn, pounce, wakeup, crouchpounce, etc.) ──
   const playOneShot = useCallback((animName, onComplete) => {
+    let targetAnim = animName
+    if (targetAnim === 'crouch' || targetAnim === 'pounce') {
+      targetAnim = 'crouchpounce'
+    }
     cancelIdleAndOneShot()
-    oneShotPoseRef.current = animName
-    setOneShotPose(animName)
+    oneShotPoseRef.current = targetAnim
+    setOneShotPose(targetAnim)
     oneShotCallbackRef.current = onComplete || null
-  }, [cancelIdleAndOneShot])
+
+    const duration = getAnimationDuration(targetAnim, catAnimationSpeed)
+    if (oneShotTimeoutRef.current) clearTimeout(oneShotTimeoutRef.current)
+    oneShotTimeoutRef.current = setTimeout(() => {
+      oneShotTimeoutRef.current = null
+      if (oneShotPoseRef.current === targetAnim) {
+        oneShotPoseRef.current = null
+        setOneShotPose(null)
+        const cb = oneShotCallbackRef.current
+        oneShotCallbackRef.current = null
+        cb?.()
+      }
+    }, duration)
+  }, [cancelIdleAndOneShot, catAnimationSpeed])
 
   const handleAnimationEnd = useCallback((anim) => {
-    if (ONE_SHOT_ANIMATIONS.has(anim) && oneShotPoseRef.current === anim) {
+    let animName = anim
+    if (animName === 'crouch' || animName === 'pounce') {
+      animName = 'crouchpounce'
+    }
+    if (ONE_SHOT_ANIMATIONS.has(animName) && oneShotPoseRef.current === animName) {
       if (oneShotTimeoutRef.current) clearTimeout(oneShotTimeoutRef.current)
       oneShotTimeoutRef.current = setTimeout(() => {
         oneShotTimeoutRef.current = null
-        if (oneShotPoseRef.current === anim) {
+        if (oneShotPoseRef.current === animName) {
           oneShotPoseRef.current = null
           setOneShotPose(null)
           const cb = oneShotCallbackRef.current
           oneShotCallbackRef.current = null
           cb?.()
         }
-      }, 350)
+      }, 800)
     }
   }, [])
 
@@ -350,14 +388,17 @@ export default function Mascot({
     cancelIdleAndOneShot()
     poseRef.current = behaviorPose
     setPose(behaviorPose)
+    const duration = getAnimationDuration(behaviorPose, catAnimationSpeed) || durationMs || 3000
+    if (idleBehaviorTimeoutRef.current) clearTimeout(idleBehaviorTimeoutRef.current)
     idleBehaviorTimeoutRef.current = setTimeout(() => {
       // Only revert if still in the behavior pose (wasn't interrupted)
       if (poseRef.current === behaviorPose) {
         poseRef.current = 'idle'
         setPose('idle')
       }
-    }, durationMs)
-  }, [cancelIdleAndOneShot])
+      idleBehaviorTimeoutRef.current = null
+    }, duration)
+  }, [cancelIdleAndOneShot, catAnimationSpeed])
 
   const startEating = useCallback(() => {
     wakeUp()
@@ -371,6 +412,7 @@ export default function Mascot({
     poseRef.current = 'eat'
     setPose('eat')
     onEatStart?.()
+    const eatDuration = getAnimationDuration('eat', catAnimationSpeed)
     eatTimeoutRef.current = setTimeout(() => {
       if (poseRef.current === 'eat') {
         poseRef.current = 'idle'
@@ -378,8 +420,8 @@ export default function Mascot({
         onFeedComplete?.()
       }
       eatTimeoutRef.current = null
-    }, EAT_DURATION_MS)
-  }, [wakeUp, onEatStart, onFeedComplete])
+    }, eatDuration)
+  }, [wakeUp, onEatStart, onFeedComplete, catAnimationSpeed])
 
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
@@ -516,7 +558,7 @@ export default function Mascot({
       }
       
       // Do not interrupt important interactive/idle behaviors
-      if (['eat', 'pet', 'play', 'sleep'].includes(poseRef.current) && poseRef.current !== 'sleep') {
+      if (['eat', 'pet', 'purr', 'play', 'sleep', 'toyplay'].includes(poseRef.current) && poseRef.current !== 'sleep') {
         return
       }
 
@@ -689,7 +731,7 @@ export default function Mascot({
       // Don't interrupt active idle behaviors or one-shots
       if (
         oneShotPoseRef.current ||
-        ['eat', 'pet', 'typing', 'typingfast', 'play', 'groom', 'yawn', 'loaf', 'siderest', 'proud', 'crouch', 'pounce', 'wakeup'].includes(poseRef.current)
+        (poseRef.current !== 'idle' && !poseRef.current.startsWith('walk'))
       ) {
         later(walkOnce, 1000)
         return
@@ -811,11 +853,18 @@ export default function Mascot({
       // Must be awake and completely idle
       if (
         poseRef.current !== 'idle' ||
+        poseRef.current === 'sleep' ||
+        poseRef.current === 'typing' ||
+        poseRef.current === 'typingfast' ||
+        hungerState === 'ACTIVE' ||
+        chatState !== 'idle' ||
+        isReminder ||
+        notificationVisible ||
+        isRoamBlocked ||
         oneShotPoseRef.current ||
         walkTweenRef.current ||
         draggingRef.current ||
         dragPointerDownRef.current ||
-        isRoamBlockedRef.current ||
         mediaPlayingRef.current
       ) {
         return
@@ -840,14 +889,11 @@ export default function Mascot({
       }
     }
 
-    const isRoamBlockedRef = { current: isRoamBlocked }
-    isRoamBlockedRef.current = isRoamBlocked
-
     scheduleNextIdle()
     return () => {
       if (timerId) clearTimeout(timerId)
     }
-  }, [isRoamBlocked, playOneShot, startIdleBehavior])
+  }, [isReminder, notificationVisible, isRoamBlocked, hungerState, chatState, playOneShot, startIdleBehavior])
 
   // ── Part 3: Chase Cursor Effect ───────────────────────────────────────────
   useEffect(() => {
@@ -896,26 +942,17 @@ export default function Mascot({
       const speed = movedDist / dt
 
       if (speed > 250) {
-        // Trigger crouch -> pounce
+        // Trigger crouch -> pounce as crouchpounce
         isChasingRef.current = true
         lastChaseTimeRef.current = Date.now()
         chaseFlippedRef.current = offset.x < 0
 
         cancelIdleAndOneShot()
-        poseRef.current = 'crouch'
-        setPose('crouch')
-
-        idleBehaviorTimeoutRef.current = setTimeout(() => {
-          if (isChasingRef.current && poseRef.current === 'crouch') {
-            poseRef.current = 'idle'
-            setPose('idle')
-            playOneShot('pounce', () => {
-              isChasingRef.current = false
-              chaseFlippedRef.current = null
-            })
-            onTriggerRemark?.('pounce')
-          }
-        }, 600)
+        playOneShot('crouchpounce', () => {
+          isChasingRef.current = false
+          chaseFlippedRef.current = null
+        })
+        onTriggerRemark?.('pounce')
       }
     })
 
@@ -1616,7 +1653,7 @@ export default function Mascot({
 
   let currentPose = oneShotPose || pose
   if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep') {
-    currentPose = 'pet'
+    currentPose = 'purr'
   }
 
   const displayPose = (isReminder && reminderCatAnimation !== false) ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
@@ -1655,8 +1692,8 @@ export default function Mascot({
   } else if (displayPose === 'eat') {
     animationName = 'eat'
     flipped = false
-  } else if (displayPose === 'pet') {
-    animationName = 'pet'
+  } else if (displayPose === 'pet' || displayPose === 'purr') {
+    animationName = 'purr'
     flipped = false
   } else if (displayPose === 'typing') {
     animationName = 'typing'
@@ -1670,12 +1707,12 @@ export default function Mascot({
   } else if (chatState === 'reply') {
     animationName = 'talk'
     flipped = false
-  } else if (displayPose === 'crouch') {
-    animationName = 'crouch'
+  } else if (displayPose === 'crouch' || displayPose === 'pounce' || displayPose === 'crouchpounce') {
+    animationName = 'crouchpounce'
     flipped = chaseFlippedRef.current ?? false
-  } else if (displayPose === 'pounce') {
-    animationName = 'pounce'
-    flipped = chaseFlippedRef.current ?? false
+  } else if (animsManifest?.animations && displayPose in animsManifest.animations) {
+    animationName = displayPose
+    flipped = false
   } else if (['groom', 'yawn', 'loaf', 'siderest', 'proud', 'wakeup'].includes(displayPose)) {
     animationName = displayPose
     flipped = false
@@ -1842,7 +1879,7 @@ export default function Mascot({
           <SpriteAnimator
             animation={animationName}
             flipped={flipped}
-            loop={!ONE_SHOT_ANIMATIONS.has(animationName)}
+            loop={!ONE_SHOT_ANIMATIONS.has(animationName) && animsManifest?.animations?.[animationName]?.mode !== 'once'}
             onAnimationEnd={handleAnimationEnd}
             manifest={useListening ? listeningManifest : undefined}
             spritesheet={useListening ? listeningSheetSrc : undefined}

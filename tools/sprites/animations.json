@@ -1,0 +1,209 @@
+{
+  "curious": {
+    "source": "curious.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "sad": {
+    "source": "sad.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 3,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "annoyed": {
+    "source": "annoyed.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 4,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "purr": {
+    "source": "purr.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 4,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "toyplay": {
+    "source": "toyplay.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "drink": {
+    "source": "drink.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 3,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "idle": {
+    "source": "Upgrade/idle.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 2.5,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "walk": {
+    "source": "Upgrade/walk.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 12,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "old:walk"
+  },
+  "sleep": {
+    "source": "Upgrade/sleep.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 1.6,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "old:sleep"
+  },
+  "eat": {
+    "source": "Upgrade/eat.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 3,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "typing": {
+    "source": "Upgrade/typing.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 8,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "old:typing"
+  },
+  "typingfast": {
+    "source": "Upgrade/typingfast.png",
+    "grid": "3x3",
+    "frames": 9,
+    "fps": 12,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "old:typingfast"
+  },
+  "crouchpounce": {
+    "source": "Upgrade/crouch-pounce.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 8,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "drag": {
+    "source": "Upgrade/drag.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 8,
+    "mode": "loop",
+    "anchor": "top",
+    "ref": "old:drag"
+  },
+  "fall": {
+    "source": "Upgrade/fall.png",
+    "grid": "4x1",
+    "frames": 4,
+    "fps": 8,
+    "mode": "loop",
+    "anchor": "center",
+    "ref": "old:fall"
+  },
+  "gift": {
+    "source": "Upgrade/gift.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 4,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "groom": {
+    "source": "Upgrade/groom.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "jump": {
+    "source": "Upgrade/jump.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 10,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:7"
+  },
+  "knockoff": {
+    "source": "Upgrade/knockoff.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 4,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "proud": {
+    "source": "Upgrade/proud.png",
+    "grid": "4x1",
+    "frames": 4,
+    "fps": 3,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "talk": {
+    "source": "Upgrade/talk.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 8,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "idle:0"
+  },
+  "wakeup": {
+    "source": "Upgrade/wakeup.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:5"
+  },
+  "yawn": {
+    "source": "Upgrade/yawn.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0"
+  }
+}

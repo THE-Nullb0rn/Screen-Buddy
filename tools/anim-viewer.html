@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cat animation viewer</title>
+<style>
+  :root { --bg:#14141a; --card:#1d1d26; --line:#2c2c3a; --txt:#e8e8f0; --dim:#8c8ca0; --acc:#f6b93b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.4 system-ui,sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:#101016; border-bottom:1px solid var(--line); padding:10px 16px; display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  header label { display:flex; gap:6px; align-items:center; color:var(--dim); }
+  select, button, input[type=range] { background:#23232f; color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--acc); }
+  #status { color:var(--dim); margin-left:auto; }
+  main { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  .card h3 { margin:0 0 2px; font-size:15px; color:var(--acc); }
+  .meta { color:var(--dim); font-size:12px; margin-bottom:8px; }
+  .stage { display:flex; justify-content:center; align-items:flex-end; padding:8px; border-radius:6px; min-height:120px; overflow:auto; }
+  .bg-dark { background:#1b1b22; } .bg-light { background:#e8e8e8; } .bg-green { background:#00b140; }
+  .bg-checker { background:repeating-conic-gradient(#bbb 0 25%, #eee 0 50%) 0 0/16px 16px; }
+  canvas { display:block; }
+  .ctl { display:flex; gap:6px; margin-top:8px; align-items:center; }
+  .ctl span { margin-left:auto; color:var(--dim); font-size:12px; }
+  .err { padding:16px; color:#ff8080; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Cat animation viewer</strong>
+  <label>Background
+    <select id="bg"><option value="dark">dark</option><option value="light">light</option><option value="checker">checker</option><option value="green">green</option></select>
+  </label>
+  <label>Zoom
+    <select id="zoom"><option>1</option><option selected>2</option><option>3</option></select>
+  </label>
+  <label>Speed <input type="range" id="speed" min="0.25" max="2" step="0.25" value="1"></label>
+  <label><input type="checkbox" id="app"> like the app (0.6 smooth)</label>
+  <label><input type="checkbox" id="fringe"> highlight magenta fringe</label>
+  <label><input type="checkbox" id="guides"> guides (ground / centre)</label>
+  <label><input type="checkbox" id="replay" checked> auto-replay one-shots</label>
+  <button id="pauseAll">Pause all</button>
+  <span id="status">loading...</span>
+</header>
+<main id="grid"></main>
+<script>
+const BASE = '../src/renderer/src/assets/cat-sprite/anims/';
+const CW = 210, CH = 300;
+const S = { bg:'dark', zoom:2, speed:1, app:false, fringe:false, guides:false, replay:true, paused:false };
+const cards = [];
+const $ = id => document.getElementById(id);
+
+function loadImg(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('cannot load ' + src)); i.src = src; });
+}
+
+function fringeCount(data) {
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i+3] === 0) continue;
+    const r = data[i], g = data[i+1], b = data[i+2];
+    if (r > g + 25 && b > g + 25 && Math.abs(r - b) < 70) n++;
+  }
+  return n;
+}
+
+function draw(c) {
+  const z = S.app ? 0.6 * S.zoom : S.zoom;
+  const W = Math.round(CW * z), H = Math.round(CH * z);
+  if (c.canvas.width !== W || c.canvas.height !== H) { c.canvas.width = W; c.canvas.height = H; }
+  const ctx = c.ctx;
+  ctx.clearRect(0, 0, W, H);
+  let flagged = null;
+  if (S.fringe && !S.app) {
+    const off = document.createElement('canvas'); off.width = CW; off.height = CH;
+    const o = off.getContext('2d');
+    o.drawImage(c.img, c.frame * CW, 0, CW, CH, 0, 0, CW, CH);
+    const id = o.getImageData(0, 0, CW, CH), d = id.data;
+    flagged = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i+3] === 0) continue;
+      const r = d[i], g = d[i+1], b = d[i+2];
+      if (r > g + 25 && b > g + 25 && Math.abs(r - b) < 70) { d[i] = 0; d[i+1] = 255; d[i+2] = 255; flagged++; }
+    }
+    o.putImageData(id, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, 0, 0, W, H);
+  } else {
+    ctx.imageSmoothingEnabled = S.app;
+    ctx.drawImage(c.img, c.frame * CW, 0, CW, CH, 0, 0, W, H);
+  }
+  if (S.guides) {
+    ctx.strokeStyle = 'rgba(255,60,60,.8)'; ctx.beginPath(); ctx.moveTo(0, 291 * z); ctx.lineTo(W, 291 * z); ctx.stroke();
+    ctx.strokeStyle = 'rgba(80,160,255,.8)'; ctx.beginPath(); ctx.moveTo(105 * z, 0); ctx.lineTo(105 * z, H); ctx.stroke();
+  }
+  c.counter.textContent = 'frame ' + (c.frame + 1) + '/' + c.frames + (flagged !== null ? '  fringe px: ' + flagged : '');
+}
+
+function tick(now) {
+  if (!S.paused) {
+    for (const c of cards) {
+      if (!c.playing) continue;
+      if (c.holdUntil && now < c.holdUntil) continue;
+      if (c.holdUntil && now >= c.holdUntil) { c.holdUntil = 0; c.frame = 0; c.last = now; draw(c); continue; }
+      const iv = 1000 / (c.fps * S.speed);
+      if (now - c.last < iv) continue;
+      c.last = now;
+      if (c.mode === 'loop') c.frame = (c.frame + 1) % c.frames;
+      else if (c.frame < c.frames - 1) c.frame++;
+      else if (S.replay) c.holdUntil = now + 900;
+      else c.playing = false;
+      draw(c);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function build(list) {
+  const grid = $('grid');
+  for (const c of list) {
+    const el = document.createElement('div'); el.className = 'card';
+    el.innerHTML = '<h3></h3><div class="meta"></div><div class="stage"></div><div class="ctl"><button data-a="play">Play/Pause</button><button data-a="prev">&lt;</button><button data-a="next">&gt;</button><button data-a="redo">Replay</button><span></span></div>';
+    el.querySelector('h3').textContent = c.name;
+    el.querySelector('.meta').textContent = c.frames + ' frames, ' + c.fps + ' fps, ' + c.mode;
+    c.canvas = document.createElement('canvas'); c.ctx = c.canvas.getContext('2d');
+    c.stage = el.querySelector('.stage'); c.stage.appendChild(c.canvas);
+    c.counter = el.querySelector('.ctl span');
+    c.frame = 0; c.last = 0; c.playing = true; c.holdUntil = 0;
+    el.querySelector('.ctl').addEventListener('click', e => {
+      const a = e.target.dataset.a; if (!a) return;
+      if (a === 'play') c.playing = !c.playing;
+      if (a === 'prev') { c.playing = false; c.frame = (c.frame - 1 + c.frames) % c.frames; }
+      if (a === 'next') { c.playing = false; c.frame = (c.frame + 1) % c.frames; }
+      if (a === 'redo') { c.frame = 0; c.playing = true; c.holdUntil = 0; }
+      draw(c);
+    });
+    grid.appendChild(el); cards.push(c);
+  }
+  applyBg(); cards.forEach(draw);
+}
+
+function applyBg() { cards.forEach(c => { c.stage.className = 'stage bg-' + S.bg; }); }
+
+async function init() {
+  try {
+    const m = await (await fetch(BASE + 'anims.json')).json();
+    const raw = m.animations || m;
+    const entries = Array.isArray(raw) ? raw : Object.entries(raw).map(([k, v]) => Object.assign({ name: k }, v));
+    const list = [];
+    for (const e of entries) {
+      const img = await loadImg(BASE + e.name + '.png');
+      const cw = e.cellWidth || CW;
+      list.push({ name: e.name, img, frames: Math.round(img.width / cw), fps: e.fps || 8, mode: e.mode || 'loop' });
+    }
+    build(list);
+    $('status').textContent = list.length + ' animations';
+    requestAnimationFrame(tick);
+  } catch (err) {
+    $('grid').innerHTML = '<div class="err">Could not load: ' + err.message + '<br>Start the server from the repo root: python3 -m http.server 8765</div>';
+    $('status').textContent = 'error';
+  }
+}
+
+$('bg').onchange = e => { S.bg = e.target.value; applyBg(); };
+$('zoom').onchange = e => { S.zoom = +e.target.value; cards.forEach(draw); };
+$('speed').oninput = e => { S.speed = +e.target.value; };
+$('app').onchange = e => { S.app = e.target.checked; cards.forEach(draw); };
+$('fringe').onchange = e => { S.fringe = e.target.checked; cards.forEach(draw); };
+$('guides').onchange = e => { S.guides = e.target.checked; cards.forEach(draw); };
+$('replay').onchange = e => { S.replay = e.target.checked; };
+$('pauseAll').onclick = e => { S.paused = !S.paused; e.target.textContent = S.paused ? 'Play all' : 'Pause all'; };
+init();
+</script>
+</body>
+</html>
