@@ -27,6 +27,7 @@ const IDLE_PAUSE_MIN_MS = 5000
 const IDLE_PAUSE_MAX_MS = 15000
 const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
+export const WALK_PX_PER_CYCLE = 70
 
 // Idle behavior chances (checked each idle pause between walks)
 const PLAY_CHANCE = 0.15         // Increased to compensate for removed typing roll
@@ -146,6 +147,7 @@ export default function Mascot({
   onTriggerRemark,
   onCallMeow,
   onLaunchMeow,
+  developerMode = false,
 }) {
   const containerRef = useRef(null)
   
@@ -155,6 +157,9 @@ export default function Mascot({
   )
   const effectiveOpacity = clampedOpacity / 100
   const effectiveFps = reduceResourceUsage ? 30 : (animationFps || 60)
+  const isDebug = Boolean(developerMode) || process.env.NODE_ENV === 'development' || (typeof process !== 'undefined' && process.env?.SCREEN_BUDDY_DEBUG === '1')
+  const isDebugRef = useRef(isDebug)
+  isDebugRef.current = isDebug
   
 
   const [cursorOffset, setCursorOffset] = useState(null)
@@ -162,6 +167,7 @@ export default function Mascot({
   const [x, setX] = useState(() => Number.isFinite(initialPosition?.x) ? initialPosition.x : defaultPosition().x)
   const [y, setY] = useState(() => Number.isFinite(initialPosition?.y) ? initialPosition.y : defaultPosition().y)
   const [walkMs, setWalkMs] = useState(0)
+  const [walkSpeedRate, setWalkSpeedRate] = useState(1)
   const [dragging, setDragging] = useState(false)
   const [treatmentWindowReady, setTreatmentWindowReady] = useState(false)
   const [falling, setFalling] = useState(false)
@@ -696,6 +702,8 @@ export default function Mascot({
     const step = (now) => {
       if (roamBlockedRef.current) {
         walkTweenRef.current = null
+        setWalkMs(0)
+        setWalkSpeedRate(1)
         if (poseRef.current.startsWith('walk')) {
           poseRef.current = 'idle'
           setPose('idle')
@@ -706,11 +714,21 @@ export default function Mascot({
         const elapsed = now - tween.startTime
         const t = Math.min(1, elapsed / tween.duration)
         const eased = easeInOut(t)
-        const newX = tween.startX + (tween.targetX - tween.startX) * eased
+        const targetX = tween.targetX
+        const newX = tween.startX + (targetX - tween.startX) * eased
         posRef.current = { x: newX, y: posRef.current.y }
         setX(newX)
-        if (t >= 1) {
+
+        const reachedTarget = t >= 1 || Math.abs(newX - targetX) < 0.5
+        if (reachedTarget) {
           walkTweenRef.current = null
+          setWalkMs(0)
+          setWalkSpeedRate(1)
+          if (poseRef.current.startsWith('walk')) {
+            poseRef.current = 'idle'
+            setPose('idle')
+          }
+          triggerAccentRef.current('is-squash')
         }
       }
       rafId = requestAnimationFrame(step)
@@ -857,21 +875,51 @@ export default function Mascot({
       let dir = Math.random() < 0.5 ? 'left' : 'right'
       if (currentX <= minX + 24) dir = 'right'
       if (currentX >= maxX - 24) dir = 'left'
-      facingRef.current = dir
 
       const span = Math.max(80, (maxX - minX) * 0.4)
       const distance = randBetween(span * 0.45, span)
-      const targetX = clamp(
+
+      // Compute clamped destination BEFORE starting the walk
+      let targetX = clamp(
         dir === 'left' ? currentX - distance : currentX + distance,
         minX,
         maxX
       )
+      let realDist = Math.abs(targetX - currentX)
+
+      // If the real distance in chosen direction is < 40 px, pick opposite direction if room, else skip
+      if (realDist < 40) {
+        const oppDir = dir === 'left' ? 'right' : 'left'
+        const oppTargetX = clamp(
+          oppDir === 'left' ? currentX - distance : currentX + distance,
+          minX,
+          maxX
+        )
+        const oppDist = Math.abs(oppTargetX - currentX)
+        if (oppDist >= 40) {
+          dir = oppDir
+          targetX = oppTargetX
+          realDist = oppDist
+        } else {
+          // Neither direction has room: skip this roam and stay idle
+          later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
+          return
+        }
+      }
+
+      facingRef.current = dir
       const duration = randBetween(WALK_MIN_MS, WALK_MAX_MS)
+
+      // Compute playback rate proportional to real speed so one full leg cycle (8 frames) covers WALK_PX_PER_CYCLE (70px)
+      const speedPxPerSec = realDist / (duration / 1000)
+      const targetFps = (speedPxPerSec / WALK_PX_PER_CYCLE) * 8
+      const walkRate = clamp(targetFps / 12, 0.4, 1.5)
+      setWalkSpeedRate(walkRate)
 
       poseRef.current = dir === 'left' ? 'walk-left' : 'walk-right'
       setPose(poseRef.current)
       setWalkMs(duration)
-      console.log(`[Renderer] walkOnce START gen=${gen} dir=${dir} currentX=${currentX.toFixed(1)} targetX=${targetX.toFixed(1)} duration=${Math.round(duration)}ms`)
+      console.log(`[Renderer] walkOnce START gen=${gen} dir=${dir} currentX=${currentX.toFixed(1)} targetX=${targetX.toFixed(1)} realDist=${realDist.toFixed(1)} speed=${speedPxPerSec.toFixed(1)}px/s walkRate=${walkRate.toFixed(2)} duration=${Math.round(duration)}ms`)
 
       // Stretch: body-gather moment as the walk leg launches
       triggerAccentRef.current('is-stretch')
@@ -890,6 +938,7 @@ export default function Mascot({
         if (roamBlockedRef.current) {
           walkTweenRef.current = null
           setWalkMs(0)
+          setWalkSpeedRate(1)
           if (poseRef.current.startsWith('walk')) {
             poseRef.current = 'idle'
             setPose('idle')
@@ -898,6 +947,7 @@ export default function Mascot({
         }
         walkTweenRef.current = null
         setWalkMs(0)
+        setWalkSpeedRate(1)
         if (poseRef.current.startsWith('walk')) {
           poseRef.current = 'idle'
           setPose('idle')
@@ -944,7 +994,7 @@ export default function Mascot({
       else if (roamBlockedRef.current) blockReason = 'roam blocked'
 
       if (blockReason) {
-        if (process.env.NODE_ENV === 'development') {
+        if (isDebugRef.current) {
           console.log(`[Mascot] idleLife skipped: ${blockReason}, retrying in ~5s`)
         }
         return randBetween(4000, 6000)
@@ -966,7 +1016,7 @@ export default function Mascot({
       }
 
       lastIdleBehaviorRef.current = selected.pose
-      if (process.env.NODE_ENV === 'development') {
+      if (isDebugRef.current) {
         console.log(`[Mascot] idleLife picked: ${selected.pose} (type=${selected.type})`)
       }
 
@@ -1152,7 +1202,7 @@ export default function Mascot({
       const targetX = clamp(typeof destX === 'number' ? destX : posRef.current.x, minX, maxX)
 
       const dist = Math.abs(targetX - posRef.current.x)
-      if (dist < 20) {
+      if (dist < 40) {
         triggerAccentRef.current('is-squash')
         onCallMeow?.()
         return
@@ -1161,6 +1211,12 @@ export default function Mascot({
       const dir = targetX < posRef.current.x ? 'left' : 'right'
       facingRef.current = dir
       const duration = clamp(dist * 5, 1200, 5000)
+
+      // Compute playback rate proportional to real speed so one full leg cycle covers WALK_PX_PER_CYCLE (70px)
+      const speedPxPerSec = dist / (duration / 1000)
+      const targetFps = (speedPxPerSec / WALK_PX_PER_CYCLE) * 8
+      const walkRate = clamp(targetFps / 12, 0.4, 1.5)
+      setWalkSpeedRate(walkRate)
 
       walkTweenRef.current = null
       setWalkMs(duration)
@@ -1181,6 +1237,7 @@ export default function Mascot({
         callWalkTimeoutRef.current = null
         walkTweenRef.current = null
         setWalkMs(0)
+        setWalkSpeedRate(1)
         if (poseRef.current.startsWith('walk')) {
           poseRef.current = 'idle'
           setPose('idle')
@@ -1850,7 +1907,7 @@ export default function Mascot({
 
       timer = setTimeout(() => {
         const next = isOld ? 'new' : 'old'
-        if (process.env.NODE_ENV === 'development') {
+        if (isDebugRef.current) {
           console.log(`[Mascot] idleVariant -> ${next}`)
         }
         setIdleVariant(next)
@@ -2092,7 +2149,7 @@ export default function Mascot({
             onAnimationEnd={handleAnimationEnd}
             manifest={useListening ? listeningManifest : undefined}
             spritesheet={useListening ? listeningSheetSrc : undefined}
-            catAnimationSpeed={catAnimationSpeed}
+            catAnimationSpeed={displayPose.startsWith('walk') ? walkSpeedRate : catAnimationSpeed}
             eyeTracking={isEyeTrackingEligible}
             cursorOffset={cursorOffset}
             fpsCap={effectiveFps}

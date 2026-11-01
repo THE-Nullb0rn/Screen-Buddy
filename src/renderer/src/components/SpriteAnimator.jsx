@@ -192,7 +192,7 @@ export function useSpriteAnimation({
   })
 
   onEndRef.current = onAnimationEnd
-  speedFactorRef.current = SPEED_FACTORS[speed] || 1
+  speedFactorRef.current = typeof speed === 'number' ? speed : (SPEED_FACTORS[speed] || 1)
   fpsCapRef.current = fpsCap
 
   useEffect(() => {
@@ -349,9 +349,21 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
   const eyePixels = []
 
   if (isStrip) {
-    // New strip: per-frame green-pixel detection over upper ~75% of cell (y <= 225)
-    let greenCount = 0
+    // Clamp displacement to at most 1 source pixel horizontally and 1 vertically
+    const shiftX = Math.max(-1, Math.min(1, dx))
+    const shiftY = Math.max(-1, Math.min(1, dy))
+    if (shiftX === 0 && shiftY === 0) {
+      eyeShiftCache.set(cacheKey, null)
+      return null
+    }
+
+    // Collect green iris pixels to find iris region and iris color
+    const greens = []
+    let totalR = 0
+    let totalG = 0
+    let totalB = 0
     const maxY = Math.min(cellH - 1, 225)
+
     for (let y = 0; y <= maxY; y++) {
       for (let x = 0; x < cellW; x++) {
         const off = (y * cellW + x) * 4
@@ -360,36 +372,88 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
         const r = data[off]
         const g = data[off + 1]
         const b = data[off + 2]
-        const isGreen = g > 60 && g > r * 1.15 && g > b * 1.15
-        if (isGreen) {
-          greenCount++
+        if (g > 60 && g > r * 1.15 && g > b * 1.15) {
+          greens.push({ x, y })
+          totalR += r
+          totalG += g
+          totalB += b
         }
       }
     }
 
     // Skip frames with fewer than 6 green pixels (closed eyes)
-    if (greenCount < 6) {
+    if (greens.length < 6) {
       eyeShiftCache.set(cacheKey, null)
       return null
     }
 
-    // Collect eye pixels (green, gleam, pupil) in the detected eye region
-    for (let y = 0; y <= maxY; y++) {
-      for (let x = 0; x < cellW; x++) {
+    const irisR = Math.round(totalR / greens.length)
+    const irisG = Math.round(totalG / greens.length)
+    const irisB = Math.round(totalB / greens.length)
+
+    let minGx = cellW
+    let maxGx = 0
+    let minGy = cellH
+    let maxGy = 0
+    for (const gp of greens) {
+      if (gp.x < minGx) minGx = gp.x
+      if (gp.x > maxGx) maxGx = gp.x
+      if (gp.y < minGy) minGy = gp.y
+      if (gp.y > maxGy) maxGy = gp.y
+    }
+
+    // Find pupil pixels: dark pixels strictly within the iris bounding box (with 2px margin)
+    const pupilPixels = []
+    const boxMinX = Math.max(0, minGx - 2)
+    const boxMaxX = Math.min(cellW - 1, maxGx + 2)
+    const boxMinY = Math.max(0, minGy - 2)
+    const boxMaxY = Math.min(maxY, maxGy + 2)
+
+    for (let y = boxMinY; y <= boxMaxY; y++) {
+      for (let x = boxMinX; x <= boxMaxX; x++) {
         const off = (y * cellW + x) * 4
         const a = data[off + 3]
         if (a < 100) continue
         const r = data[off]
         const g = data[off + 1]
         const b = data[off + 2]
-        const isGreen = g > 60 && g > r * 1.15 && g > b * 1.15
-        const isGleam = r > 150 && g > 150 && b < 120
         const isPupil = r < 30 && g < 35 && b < 55
-        if (isGreen || isGleam || isPupil) {
-          eyePixels.push({ x, y, r, g, b, a })
+        if (isPupil) {
+          pupilPixels.push({ x, y, r, g, b, a })
         }
       }
     }
+
+    if (pupilPixels.length === 0) {
+      eyeShiftCache.set(cacheKey, null)
+      return null
+    }
+
+    // 1. Fill original pupil pixel positions with iris green color
+    for (const pp of pupilPixels) {
+      const off = (pp.y * cellW + pp.x) * 4
+      data[off] = irisR
+      data[off + 1] = irisG
+      data[off + 2] = irisB
+      data[off + 3] = 255
+    }
+
+    // 2. Draw pupil pixels shifted by (shiftX, shiftY)
+    for (const pp of pupilPixels) {
+      const nx = pp.x + shiftX
+      const ny = pp.y + shiftY
+      if (nx >= 0 && nx < cellW && ny >= 0 && ny < cellH) {
+        const off = (ny * cellW + nx) * 4
+        data[off] = pp.r
+        data[off + 1] = pp.g
+        data[off + 2] = pp.b
+        data[off + 3] = pp.a
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0)
+    eyeShiftCache.set(cacheKey, offscreen)
+    return offscreen
   } else {
     // Old logic for old spritesheet
     const isListening = (imageSrc || '').includes('listening')

@@ -957,6 +957,7 @@ export default function App() {
         onTriggerRemark={triggerRemark}
         onCallMeow={() => playSound('meow_happy', { settings, paused, isAsleep: false })}
         onLaunchMeow={() => playSound('meow_happy', { settings, paused: false, isAsleep: false })}
+        developerMode={Boolean(settings.developerMode)}
       />}
 
     </>
