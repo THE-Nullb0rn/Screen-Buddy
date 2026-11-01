@@ -961,6 +961,7 @@ export default function App() {
         moodEnabled={settings.moodEnabled !== false}
         moodIndicator={settings.moodIndicator || 'hover'}
         catRemarks={settings.catRemarks !== false}
+        catSize={settings.catSize ?? 100}
       />}
 
     </>

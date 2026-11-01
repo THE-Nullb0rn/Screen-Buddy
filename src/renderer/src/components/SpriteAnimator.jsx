@@ -94,12 +94,21 @@ export const SPEED_FACTORS = {
 export const LISTENING_FALLBACKS = {
   curious: 'idle',
   purr: 'pet',
-  sad: 'loaf',
+  sad: 'idle',
   annoyed: 'idle',
   toyplay: 'play',
   drink: 'eat',
   crouchpounce: 'pounce',
 }
+
+// Draw-time / display vertical offsets for animations that need headroom adjustment
+export const DISPLAY_OFFSET_Y = {
+  fall: 34,
+}
+
+// 40-entry ring buffer tracer for sprite draw calls
+export const drawTracer = []
+const MAX_TRACER_SIZE = 40
 
 export function resolveAnimation(name, isListening = false) {
   if (!name) return { type: 'strip', name: 'idle', config: animsManifest.animations?.idle }
@@ -644,6 +653,8 @@ export default function SpriteAnimator({
   const displayWidth = Math.round(cellWidth * scale)
   const displayHeight = Math.round(cellHeight * scale)
 
+  const offsetY = DISPLAY_OFFSET_Y[activeAsset.animName] || 0
+
   // Draw current frame to canvas
   useEffect(() => {
     const canvas = canvasRef.current
@@ -666,6 +677,46 @@ export default function SpriteAnimator({
       const col = currentFrame % columns
       sx = col * cellWidth
       sy = row * cellHeight
+    }
+
+    const requestedAnim = animation
+    const resolvedAnim = activeAsset.animName
+    const imageKey = activeAsset.imageKey
+    const currentOffsetY = DISPLAY_OFFSET_Y[resolvedAnim] || 0
+
+    drawTracer.push({
+      timestamp: Date.now(),
+      requestedAnim,
+      resolvedAnim,
+      imageKey,
+      frameIndex: currentFrame,
+      sx,
+      sy,
+      sWidth: cellWidth,
+      sHeight: cellHeight,
+      dx: 0,
+      dy: currentOffsetY,
+      dWidth: displayWidth,
+      dHeight: displayHeight,
+    })
+    if (drawTracer.length > MAX_TRACER_SIZE) {
+      drawTracer.shift()
+    }
+
+    const isSpuriousAnim = resolvedAnim !== requestedAnim && requestedAnim !== 'idle-old'
+    const isSpuriousDrag = String(imageKey).includes('drag') && requestedAnim !== 'drag' && requestedAnim !== 'fall'
+
+    if (isSpuriousAnim || isSpuriousDrag) {
+      console.warn('[sprite-flash] Spurious draw detected!', {
+        requestedAnim,
+        resolvedAnim,
+        imageKey,
+        recentDraws: drawTracer.slice(-5),
+      })
+    }
+
+    if (isSpuriousDrag) {
+      return
     }
 
     const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && (activeAsset.animName === 'idle' || activeAsset.animName === 'idle-old'))
@@ -708,6 +759,7 @@ export default function SpriteAnimator({
       )
     }
   }, [
+    animation,
     currentFrame,
     activeAsset,
     cellWidth,
@@ -730,7 +782,7 @@ export default function SpriteAnimator({
       style={{
         width: `${displayWidth}px`,
         height: `${displayHeight}px`,
-        transform: flipped ? 'scaleX(-1)' : 'none',
+        transform: `${flipped ? 'scaleX(-1)' : ''} ${offsetY ? `translateY(${offsetY}px)` : ''}`.trim() || 'none',
         transformOrigin: 'center center',
         ...style,
       }}

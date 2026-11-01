@@ -1801,6 +1801,21 @@ function buildTrayMenu() {
   tray.setContextMenu(menu)
 }
 
+function redactSettings(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+  const redacted = Array.isArray(obj) ? [] : {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && /(?:key|token|secret|password|auth)/i.test(k)) {
+      redacted[k] = '[redacted]'
+    } else if (v && typeof v === 'object') {
+      redacted[k] = redactSettings(v)
+    } else {
+      redacted[k] = v
+    }
+  }
+  return redacted
+}
+
 // ─── IPC handlers ────────────────────────────────────────────────────────────
 /**
  * Register all IPC handlers that the renderer can call via window.api.*
@@ -1855,7 +1870,7 @@ function registerIpcHandlers() {
 
     notificationsManager?.applySettings()
 
-    console.log('[main] Settings applied:', settings)
+    console.log('[main] Settings applied:', redactSettings(settings))
     return settings
   }
 

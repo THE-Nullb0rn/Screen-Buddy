@@ -60,7 +60,6 @@ export function getIdleWeights(mood = null) {
   const base = [
     { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 15 * mods.groom },
     { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 15 * mods.yawn },
-    { pose: 'loaf', type: 'hold', duration: getAnimationDuration('loaf'), weight: 12 },
     { pose: 'siderest', type: 'hold', duration: getAnimationDuration('siderest'), weight: 12 },
     { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 12 * mods.proud },
     { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 12 * mods.play },
@@ -78,6 +77,8 @@ export function getIdleWeights(mood = null) {
 // Click vs drag distinction
 const CLICK_MAX_DISTANCE = 5     // pixels
 const CLICK_MAX_DURATION = 300   // ms
+
+const DEBUG_MOVE_WINDOW = false
 
 
 function randBetween(min, max) {
@@ -159,6 +160,7 @@ export default function Mascot({
   moodEnabled = true,
   moodIndicator = 'hover',
   catRemarks = true,
+  catSize = 100,
 }) {
   const containerRef = useRef(null)
   
@@ -499,6 +501,7 @@ export default function Mascot({
 
   const {
     mood,
+    stats,
     recentMoodChange,
     handlePetStart: moodHandlePetStart,
     handlePetStateChange: moodHandlePetStateChange,
@@ -515,6 +518,11 @@ export default function Mascot({
     developerMode,
     isIdleForRemarks,
   })
+
+  // Log mood changes and initial state on mount
+  useEffect(() => {
+    console.log(`[mood] enabled=${moodEnabled} indicator=${moodIndicator} mood=${mood} stats=${JSON.stringify(stats)}`)
+  }, [moodEnabled, moodIndicator, mood, stats])
 
   const moodRef = useRef(mood)
   moodRef.current = mood
@@ -1735,6 +1743,8 @@ export default function Mascot({
       }
       fallRafRef.current = requestAnimationFrame(fallStep)
     } else {
+      poseRef.current = 'idle'
+      setPose('idle')
       triggerAccent('is-squash')
       if (!isReminder) {
         justDroppedRef.current = true
@@ -2019,8 +2029,19 @@ export default function Mascot({
   }, [])
 
   let currentPose = oneShotPose || pose
-  if (currentPose === 'drag' && !dragging) {
+  if (currentPose === 'drag' && !dragging && !draggingRef.current) {
     currentPose = 'idle'
+    if (pose === 'drag') {
+      poseRef.current = 'idle'
+      setPose('idle')
+    }
+  }
+  if (currentPose === 'fall' && !falling && !fallRafRef.current) {
+    currentPose = 'idle'
+    if (pose === 'fall') {
+      poseRef.current = 'idle'
+      setPose('idle')
+    }
   }
   if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep') {
     currentPose = 'purr'
@@ -2113,12 +2134,28 @@ export default function Mascot({
   } else if (animsManifest?.animations && displayPose in animsManifest.animations) {
     animationName = displayPose
     flipped = facingRef.current === 'left'
-  } else if (['groom', 'yawn', 'loaf', 'siderest', 'proud', 'wakeup'].includes(displayPose)) {
+  } else if (['groom', 'yawn', 'siderest', 'proud', 'wakeup'].includes(displayPose)) {
     animationName = displayPose
     flipped = facingRef.current === 'left'
   } else {
     animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
     flipped = facingRef.current === 'left'
+  }
+
+  // Debug warnings with stack trace if pose/animation ever becomes drag or fall unexpectedly
+  if ((pose === 'drag' || poseRef.current === 'drag') && !dragging && !draggingRef.current) {
+    console.warn('[Mascot] Spurious drag pose detected while not dragging!', new Error().stack)
+  }
+  if ((pose === 'fall' || poseRef.current === 'fall') && !falling && !fallRafRef.current) {
+    console.warn('[Mascot] Spurious fall pose detected while not falling!', new Error().stack)
+  }
+  if (animationName === 'drag' && !dragging && !draggingRef.current) {
+    console.warn('[Mascot] Spurious drag animationName detected while not dragging!', new Error().stack)
+    animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
+  }
+  if (animationName === 'fall' && !falling && !fallRafRef.current) {
+    console.warn('[Mascot] Spurious fall animationName detected while not falling!', new Error().stack)
+    animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
   }
 
   const isEyeTrackingEligible = Boolean(
@@ -2210,7 +2247,9 @@ export default function Mascot({
         return
       }
       lastSentMoveRef.current = { x: targetX, y: targetY }
-      console.log(`[Renderer] calling moveWindow(${targetX}, ${targetY}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
+      if (DEBUG_MOVE_WINDOW) {
+        console.log(`[Renderer] calling moveWindow(${targetX}, ${targetY}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
+      }
       window.api.moveWindow(targetX, targetY)
     }
   }, [targetX, targetY])
@@ -2235,6 +2274,41 @@ export default function Mascot({
     !isOverlayShowing &&
     (moodIndicator === 'always' || (moodIndicator === 'hover' && (isCursorNear || recentMoodChange)))
   )
+
+  const indicatorRef = useRef(null)
+  const lastIndicatorDecisionRef = useRef('')
+
+  useEffect(() => {
+    let logMsg = ''
+    if (!moodEnabled) {
+      logMsg = '[mood-indicator] hide reason=disabled'
+    } else if (!mood) {
+      logMsg = '[mood-indicator] hide reason=no_mood'
+    } else if (isOverlayShowing) {
+      logMsg = '[mood-indicator] hide reason=overlay_showing'
+    } else if (!isIndicatorVisible) {
+      logMsg = `[mood-indicator] hide reason=condition_not_met indicator=${moodIndicator} isCursorNear=${isCursorNear} recentChange=${recentMoodChange}`
+    } else {
+      const el = indicatorRef.current
+      const rect = el ? el.getBoundingClientRect() : null
+      const bounds = rect ? {
+        top: Math.round(rect.top),
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        bottom: Math.round(rect.bottom),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      } : null
+      const win = { w: window.innerWidth, h: window.innerHeight }
+      logMsg = `[mood-indicator] show emoji=${MOOD_EMOJIS[mood]} bounds=${JSON.stringify(bounds)} win=${JSON.stringify(win)}`
+    }
+    if (logMsg && logMsg !== lastIndicatorDecisionRef.current) {
+      lastIndicatorDecisionRef.current = logMsg
+      console.log(logMsg)
+    }
+  })
+
+  const emojiSize = Math.max(16, Math.min(26, Math.round(22 * ((catSize || 100) / 100))))
 
   return (
     <div
@@ -2293,29 +2367,6 @@ export default function Mascot({
           onPointerLeave={handleHeadPointerLeave}
           title="Pet me!"
         />
-        {/* Mood indicator emoji */}
-        {moodEnabled && mood && MOOD_EMOJIS[mood] && (
-          <div
-            className="mascot-mood-indicator"
-            style={{
-              position: 'absolute',
-              top: '25%',
-              left: flipped ? '28%' : '72%',
-              transform: 'translate(-50%, -50%)',
-              fontSize: '18px',
-              lineHeight: 1,
-              pointerEvents: 'none',
-              userSelect: 'none',
-              zIndex: 12,
-              transition: 'opacity 0.25s ease-in-out',
-              opacity: isIndicatorVisible ? 1 : 0,
-              filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4))',
-            }}
-            aria-hidden="true"
-          >
-            {MOOD_EMOJIS[mood]}
-          </div>
-        )}
         <div
           className="mascot-opacity-wrap"
           style={{ opacity: effectiveOpacity }}
@@ -2335,7 +2386,35 @@ export default function Mascot({
         </div>
       </div>
 
+      {/* Mood indicator emoji - placed directly inside .mascot-container at top-right beside her head */}
+      {moodEnabled && mood && MOOD_EMOJIS[mood] && (
+        <div
+          ref={indicatorRef}
+          className="mascot-mood-indicator"
+          style={{
+            position: 'absolute',
+            top: '66px',
+            right: '-9px',
+            width: `${emojiSize}px`,
+            height: `${emojiSize}px`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: `${emojiSize}px`,
+            lineHeight: 1,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            zIndex: 12,
+            transition: 'opacity 0.25s ease-in-out',
+            opacity: isIndicatorVisible ? 1 : 0,
+            filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4))',
+          }}
+          aria-hidden="true"
+        >
+          {MOOD_EMOJIS[mood]}
+        </div>
+      )}
 
-      </div>
+    </div>
   )
 }
