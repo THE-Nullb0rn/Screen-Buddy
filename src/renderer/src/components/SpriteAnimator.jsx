@@ -110,7 +110,7 @@ export function resolveAnimation(name, isListening = false) {
   }
 
   if (animName === 'idle-old' && !isListening) {
-    return { type: 'sheet', name: 'idle' }
+    return { type: 'sheet', name: 'idle-old' }
   }
 
   if (isListening) {
@@ -164,7 +164,8 @@ export function useSpriteAnimation({
     fps = stripConfig.fps || 1
     loop = propLoop !== undefined ? propLoop : (stripConfig.mode === 'loop')
   } else {
-    const baseConfig = manifest.animations[animation] || manifest.animations.idle || { frames: [0], fps: 1, loop: true }
+    const sheetAnimName = animation === 'idle-old' ? 'idle' : animation
+    const baseConfig = manifest.animations[sheetAnimName] || manifest.animations.idle || { frames: [0], fps: 1, loop: true }
     totalFrames = baseConfig.frames.length
     fps = baseConfig.fps || 1
     loop = propLoop !== undefined ? propLoop : baseConfig.loop
@@ -177,6 +178,8 @@ export function useSpriteAnimation({
   animRef.current = { totalFrames, fps, loop, frameDurations, isStrip }
 
   const currentAnimationRef = useRef(animation)
+  const isAnimSwitch = currentAnimationRef.current !== animation
+  const activeFrameIndex = isAnimSwitch ? 0 : frameIndex
   const onEndRef = useRef(onAnimationEnd)
   const frameIndexRef = useRef(0)
   const speedFactorRef = useRef(1)
@@ -295,11 +298,15 @@ export function useSpriteAnimation({
     return () => cancelAnimationFrame(animFrameId)
   }, [animation])
 
-  let currentFrame = frameIndex
+  let currentFrame = activeFrameIndex
   if (!isStrip) {
-    const baseConfig = manifest.animations[animation] || manifest.animations.idle || { frames: [0] }
-    const safeIdx = Math.min(frameIndex, baseConfig.frames.length - 1)
-    currentFrame = baseConfig.frames[safeIdx] ?? baseConfig.frames[0] ?? 0
+    const sheetAnimName = animation === 'idle-old' ? 'idle' : animation
+    const baseConfig = manifest.animations[sheetAnimName] || manifest.animations.idle || { frames: [0] }
+    const safeIdx = Math.min(activeFrameIndex, baseConfig.frames.length - 1)
+    currentFrame = baseConfig.frames[Math.max(0, safeIdx)] ?? baseConfig.frames[0] ?? 0
+  } else {
+    const safeIdx = Math.min(activeFrameIndex, totalFrames - 1)
+    currentFrame = Math.max(0, safeIdx)
   }
 
   return {
@@ -475,28 +482,41 @@ export default function SpriteAnimator({
     (typeof spritesheet === 'string' && spritesheet.includes('listening'))
   )
 
-  const resolved = resolveAnimation(animation, isListeningMode)
-  const isStrip = resolved.type === 'strip'
-  const activeAnimName = resolved.name
-  const activeStripConfig = isStrip ? resolved.config : null
-
   // Image references for seamless switching (no blank flash)
   const currentImgRef = useRef(null)
-  const [activeImage, setActiveImage] = useState(null)
-  const [activeAnimKey, setActiveAnimKey] = useState(activeAnimName)
+  const [activeAsset, setActiveAsset] = useState(() => {
+    const initialResolved = resolveAnimation(animation, isListeningMode)
+    const initialIsStrip = initialResolved.type === 'strip'
+    return {
+      animName: initialResolved.name,
+      isStrip: initialIsStrip,
+      stripConfig: initialIsStrip ? initialResolved.config : null,
+      image: null,
+      imageKey: initialResolved.name,
+    }
+  })
 
   // Load strip or old sheet
   useEffect(() => {
     let cancelled = false
+    const targetResolved = resolveAnimation(animation, isListeningMode)
+    const targetIsStrip = targetResolved.type === 'strip'
+    const targetName = targetResolved.name
+    const targetConfig = targetIsStrip ? targetResolved.config : null
 
-    if (isStrip) {
-      loadStripUrl(activeAnimName).then((url) => {
+    if (targetIsStrip) {
+      loadStripUrl(targetName).then((url) => {
         if (cancelled || !url) return
         loadStripImage(url).then((img) => {
           if (cancelled || !img) return
           currentImgRef.current = img
-          setActiveImage(img)
-          setActiveAnimKey(activeAnimName)
+          setActiveAsset({
+            animName: targetName,
+            isStrip: true,
+            stripConfig: targetConfig,
+            image: img,
+            imageKey: targetName,
+          })
         })
       })
     } else {
@@ -504,8 +524,13 @@ export default function SpriteAnimator({
       const unsub = getOldSheetImage(sheetSrc, (img) => {
         if (cancelled || !img) return
         currentImgRef.current = img
-        setActiveImage(img)
-        setActiveAnimKey(activeAnimName)
+        setActiveAsset({
+          animName: targetName,
+          isStrip: false,
+          stripConfig: null,
+          image: img,
+          imageKey: sheetSrc,
+        })
       })
       return () => {
         cancelled = true
@@ -516,7 +541,7 @@ export default function SpriteAnimator({
     return () => {
       cancelled = true
     }
-  }, [activeAnimName, isStrip, isListeningMode, spritesheet])
+  }, [animation, isListeningMode, spritesheet])
 
   let eyeDx = 0
   let eyeDy = 0
@@ -542,9 +567,9 @@ export default function SpriteAnimator({
   const effectiveSpeed = catAnimationSpeed || animationSpeed || speed || 'normal'
 
   const { currentFrame, cellWidth, cellHeight, columns } = useSpriteAnimation({
-    animation: activeAnimKey,
+    animation: activeAsset.animName,
     manifest: isListeningMode ? listeningManifest : manifest,
-    stripConfig: isStrip ? activeStripConfig : null,
+    stripConfig: activeAsset.isStrip ? activeAsset.stripConfig : null,
     loop,
     onAnimationEnd,
     speed: effectiveSpeed,
@@ -558,7 +583,7 @@ export default function SpriteAnimator({
   // Draw current frame to canvas
   useEffect(() => {
     const canvas = canvasRef.current
-    const img = currentImgRef.current || activeImage
+    const img = currentImgRef.current || activeAsset.image
     if (!canvas || !img) return
 
     const ctx = canvas.getContext('2d')
@@ -569,7 +594,7 @@ export default function SpriteAnimator({
 
     let sx = 0
     let sy = 0
-    if (isStrip) {
+    if (activeAsset.isStrip) {
       sx = currentFrame * cellWidth
       sy = 0
     } else {
@@ -579,17 +604,17 @@ export default function SpriteAnimator({
       sy = row * cellHeight
     }
 
-    const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && (activeAnimKey === 'idle' || activeAnimKey === 'idle-old'))
+    const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && (activeAsset.animName === 'idle' || activeAsset.animName === 'idle-old'))
       ? getEyeShiftedCanvas(
-          isStrip ? activeAnimKey : (spritesheet || defaultSheetSrc),
+          activeAsset.isStrip ? activeAsset.animName : (spritesheet || defaultSheetSrc),
           img,
           cellWidth,
           cellHeight,
-          isStrip ? currentFrame : (currentFrame % columns),
-          isStrip ? 0 : Math.floor(currentFrame / columns),
+          activeAsset.isStrip ? currentFrame : (currentFrame % columns),
+          activeAsset.isStrip ? 0 : Math.floor(currentFrame / columns),
           eyeDx,
           eyeDy,
-          isStrip
+          activeAsset.isStrip
         )
       : null
 
@@ -620,9 +645,7 @@ export default function SpriteAnimator({
     }
   }, [
     currentFrame,
-    activeImage,
-    activeAnimKey,
-    isStrip,
+    activeAsset,
     cellWidth,
     cellHeight,
     columns,

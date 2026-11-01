@@ -49,16 +49,16 @@ export function getAnimationDuration(name, speed = 'normal', holdMs = 800) {
 
 export function getIdleWeights() {
   return [
-    { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 20 },
-    { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 20 },
-    { pose: 'loaf', type: 'hold', duration: getAnimationDuration('loaf'), weight: 15 },
-    { pose: 'siderest', type: 'hold', duration: getAnimationDuration('siderest'), weight: 15 },
-    { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 15 },
-    { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 15 },
-    { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: 5 },
-    { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: 5 },
-    { pose: 'gift', type: 'oneshot', duration: getAnimationDuration('gift'), weight: 5 },
-    { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 5 },
+    { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 15 },
+    { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 15 },
+    { pose: 'loaf', type: 'hold', duration: getAnimationDuration('loaf'), weight: 12 },
+    { pose: 'siderest', type: 'hold', duration: getAnimationDuration('siderest'), weight: 12 },
+    { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 12 },
+    { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 12 },
+    { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: 14 },
+    { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: 14 },
+    { pose: 'gift', type: 'oneshot', duration: getAnimationDuration('gift'), weight: 14 },
+    { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 14 },
   ]
 }
 
@@ -193,12 +193,14 @@ export default function Mascot({
   const [oneShotPose, setOneShotPose] = useState(null)
 
   // Chase and movement tracking refs
+  const facingRef = useRef('right')
   const chaseFlippedRef = useRef(null)
   const isChasingRef = useRef(false)
   const lastChaseTimeRef = useRef(0)
   const cursorHistoryRef = useRef([])
   const chaseStartTimeoutRef = useRef(null)
   const chaseRafRef = useRef(null)
+  const lastIdleBehaviorRef = useRef(null)
 
   // Wakeup from sleep transition refs
   const wakingUpRef = useRef(false)
@@ -212,7 +214,6 @@ export default function Mascot({
 
   // Idle variant alternating between 'old' (2-frame blink) and 'new' (6-frame ear twitch)
   const [idleVariant, setIdleVariant] = useState('old')
-  const idleVariantTimerRef = useRef(null)
 
   // Battery and launch refs
   const isLowBatteryRef = useRef(false)
@@ -460,6 +461,11 @@ export default function Mascot({
       idleBehaviorTimeoutRef.current = null
     }, duration)
   }, [cancelIdleAndOneShot, catAnimationSpeed])
+
+  const playOneShotRef = useRef(playOneShot)
+  playOneShotRef.current = playOneShot
+  const startIdleBehaviorRef = useRef(startIdleBehavior)
+  startIdleBehaviorRef.current = startIdleBehavior
 
   const startEating = useCallback(() => {
     // Interrupt whatever it was doing to eat
@@ -851,6 +857,7 @@ export default function Mascot({
       let dir = Math.random() < 0.5 ? 'left' : 'right'
       if (currentX <= minX + 24) dir = 'right'
       if (currentX >= maxX - 24) dir = 'left'
+      facingRef.current = dir
 
       const span = Math.max(80, (maxX - minX) * 0.4)
       const distance = randBetween(span * 0.45, span)
@@ -915,45 +922,42 @@ export default function Mascot({
     }
   }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible, wakeUp, isRoamBlocked, isEating])
 
-  // ── Part 2: Idle Life Scheduler (every 20–60s) ────────────────────────────
+  // ── Part 2: Idle Life Scheduler (every 10–25s) ────────────────────────────
   useEffect(() => {
     let timerId = null
 
-    const scheduleNextIdle = () => {
-      const delay = randBetween(20000, 60000)
+    const scheduleNextIdle = (delay) => {
       timerId = setTimeout(() => {
-        triggerIdleLife()
-        scheduleNextIdle()
+        const nextDelay = triggerIdleLife()
+        scheduleNextIdle(nextDelay)
       }, delay)
     }
 
     const triggerIdleLife = () => {
-      // Must be awake and completely idle
-      if (
-        Date.now() < calmUntilRef.current ||
-        poseRef.current !== 'idle' ||
-        poseRef.current === 'sleep' ||
-        poseRef.current === 'typing' ||
-        poseRef.current === 'typingfast' ||
-        hungerState === 'ACTIVE' ||
-        chatState !== 'idle' ||
-        isReminder ||
-        notificationVisible ||
-        isRoamBlocked ||
-        oneShotPoseRef.current ||
-        walkTweenRef.current ||
-        draggingRef.current ||
-        dragPointerDownRef.current ||
-        mediaPlayingRef.current
-      ) {
-        return
+      let blockReason = null
+      if (Date.now() < calmUntilRef.current) blockReason = 'calm window'
+      else if (poseRef.current !== 'idle') blockReason = `pose is ${poseRef.current}`
+      else if (oneShotPoseRef.current) blockReason = `oneShot is ${oneShotPoseRef.current}`
+      else if (walkTweenRef.current) blockReason = 'walking/roaming'
+      else if (draggingRef.current || dragPointerDownRef.current) blockReason = 'dragging'
+      else if (mediaPlayingRef.current) blockReason = 'media playing'
+      else if (roamBlockedRef.current) blockReason = 'roam blocked'
+
+      if (blockReason) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[Mascot] idleLife skipped: ${blockReason}, retrying in ~5s`)
+        }
+        return randBetween(4000, 6000)
       }
 
-      const weights = getIdleWeights()
-      const totalWeight = weights.reduce((acc, w) => acc + w.weight, 0)
+      const allWeights = getIdleWeights()
+      let availableWeights = allWeights.filter((item) => item.pose !== lastIdleBehaviorRef.current)
+      if (availableWeights.length === 0) availableWeights = allWeights
+
+      const totalWeight = availableWeights.reduce((acc, w) => acc + w.weight, 0)
       let r = Math.random() * totalWeight
-      let selected = weights[0]
-      for (const item of weights) {
+      let selected = availableWeights[0]
+      for (const item of availableWeights) {
         if (r < item.weight) {
           selected = item
           break
@@ -961,18 +965,25 @@ export default function Mascot({
         r -= item.weight
       }
 
-      if (selected.type === 'oneshot') {
-        playOneShot(selected.pose)
-      } else {
-        startIdleBehavior(selected.pose, selected.duration)
+      lastIdleBehaviorRef.current = selected.pose
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[Mascot] idleLife picked: ${selected.pose} (type=${selected.type})`)
       }
+
+      if (selected.type === 'oneshot') {
+        playOneShotRef.current?.(selected.pose)
+      } else {
+        startIdleBehaviorRef.current?.(selected.pose, selected.duration)
+      }
+
+      return randBetween(10000, 25000)
     }
 
-    scheduleNextIdle()
+    scheduleNextIdle(randBetween(10000, 25000))
     return () => {
       if (timerId) clearTimeout(timerId)
     }
-  }, [isReminder, notificationVisible, isRoamBlocked, hungerState, chatState, playOneShot, startIdleBehavior])
+  }, [])
 
   // ── Part 3: Chase Cursor Effect ───────────────────────────────────────────
   useEffect(() => {
@@ -995,9 +1006,9 @@ export default function Mascot({
 
       // Check horizontal distance: between 100px and 300px away horizontally
       const absX = Math.abs(offset.x)
-      if (absX < 100) return // too close, return early without starting cooldown
+      if (absX < 100 || absX > 300 || Math.abs(offset.y) > 300) return
 
-      // Eligible: cat is idle, not dragging, not in reminder/chat/walk, not chasing, cooldown 45s, not in calm window
+      // Eligible: cat is idle, not dragging, not in reminder/chat/walk, not chasing, cooldown 30s, not in calm window
       if (
         poseRef.current !== 'idle' ||
         oneShotPoseRef.current ||
@@ -1008,7 +1019,7 @@ export default function Mascot({
         isRoamBlocked ||
         isChasingRef.current ||
         Date.now() < calmUntilRef.current ||
-        Date.now() - lastChaseTimeRef.current < 45000 ||
+        Date.now() - lastChaseTimeRef.current < 30000 ||
         mediaPlayingRef.current ||
         hungerState === 'ACTIVE' ||
         chatState !== 'idle' ||
@@ -1018,16 +1029,37 @@ export default function Mascot({
         return
       }
 
-      if (absX > 300 || Math.abs(offset.y) > 300) return
+      // Check if cursor is ahead of her in the direction she is currently facing
+      const facing = facingRef.current || 'right'
+      const isAhead = (facing === 'right' && offset.x > 0) || (facing === 'left' && offset.x < 0)
+      if (!isAhead) {
+        // Behind her: do nothing (no pounce, no move, no remark, NO cooldown started)
+        return
+      }
+
       if (hist.length < 2) return
 
       const dt = (now - hist[0].time) / 1000
       if (dt < 0.25) return
 
-      // Trigger crouch -> pounce as crouchpounce
-      isChasingRef.current = true
+      const dx = offset.x - hist[0].x
+      const dy = offset.y - hist[0].y
+      const cursorSpeed = Math.hypot(dx, dy) / dt
+      if (cursorSpeed < 250) return
+
+      // Random chance: roll Math.random() < 0.4
+      if (Math.random() >= 0.4) {
+        // Roll failed: short re-roll cooldown (8s) so she doesn't re-test every tick
+        lastChaseTimeRef.current = Date.now() - 22000
+        return
+      }
+
+      // Roll succeeded: start chase with 30s cooldown
       lastChaseTimeRef.current = Date.now()
-      chaseFlippedRef.current = offset.x < 0
+      isChasingRef.current = true
+
+      // Never turn her around just to chase the cursor. Facing must NOT change.
+      chaseFlippedRef.current = facing === 'left'
 
       // Lock target position before mouse moves
       const { width } = measure()
@@ -1127,6 +1159,7 @@ export default function Mascot({
       }
 
       const dir = targetX < posRef.current.x ? 'left' : 'right'
+      facingRef.current = dir
       const duration = clamp(dist * 5, 1200, 5000)
 
       walkTweenRef.current = null
@@ -1347,6 +1380,8 @@ export default function Mascot({
       unbindDragPointerListeners()
       draggingRef.current = false
       setDragging(false)
+      poseRef.current = 'idle'
+      setPose('idle')
       return
     }
 
@@ -1354,6 +1389,8 @@ export default function Mascot({
       unbindDragPointerListeners()
       draggingRef.current = false
       setDragging(false)
+      poseRef.current = 'idle'
+      setPose('idle')
       return
     }
 
@@ -1791,6 +1828,9 @@ export default function Mascot({
   }, [])
 
   let currentPose = oneShotPose || pose
+  if (currentPose === 'drag' && !dragging) {
+    currentPose = 'idle'
+  }
   if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep') {
     currentPose = 'purr'
   }
@@ -1800,44 +1840,30 @@ export default function Mascot({
 
   // ── Idle Variant Alternating (old 2-frame vs new 6-frame) ──────────────────
   useEffect(() => {
-    const isActuallyIdle =
-      pose === 'idle' &&
-      !oneShotPose &&
-      !moving &&
-      !dragging &&
-      !falling &&
-      !isHoveringHead &&
-      !isReminder &&
-      chatState === 'idle'
+    let timer = null
 
-    if (!isActuallyIdle) {
-      if (idleVariant !== 'old') setIdleVariant('old')
-      if (idleVariantTimerRef.current) {
-        clearTimeout(idleVariantTimerRef.current)
-        idleVariantTimerRef.current = null
-      }
-      return
+    const scheduleNextVariant = (current) => {
+      const isOld = current === 'old'
+      const delay = isOld
+        ? randBetween(8000, 20000)
+        : (Math.random() < 0.5 ? 2400 : 4800)
+
+      timer = setTimeout(() => {
+        const next = isOld ? 'new' : 'old'
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[Mascot] idleVariant -> ${next}`)
+        }
+        setIdleVariant(next)
+        scheduleNextVariant(next)
+      }, delay)
     }
 
-    if (idleVariant === 'old') {
-      const oldDuration = 15000 + Math.random() * 15000
-      idleVariantTimerRef.current = setTimeout(() => {
-        setIdleVariant('new')
-      }, oldDuration)
-    } else {
-      const newDuration = Math.random() < 0.5 ? 2400 : 4800
-      idleVariantTimerRef.current = setTimeout(() => {
-        setIdleVariant('old')
-      }, newDuration)
-    }
+    scheduleNextVariant('old')
 
     return () => {
-      if (idleVariantTimerRef.current) {
-        clearTimeout(idleVariantTimerRef.current)
-        idleVariantTimerRef.current = null
-      }
+      if (timer) clearTimeout(timer)
     }
-  }, [pose, oneShotPose, moving, dragging, falling, isHoveringHead, isReminder, chatState, idleVariant])
+  }, [])
 
   let stateClass = 'is-idle'
   if (moving) stateClass = 'is-walking'
@@ -1889,16 +1915,19 @@ export default function Mascot({
     flipped = false
   } else if (displayPose === 'crouch' || displayPose === 'pounce' || displayPose === 'crouchpounce') {
     animationName = 'crouchpounce'
-    flipped = chaseFlippedRef.current ?? false
+    flipped = chaseFlippedRef.current ?? (facingRef.current === 'left')
+  } else if (displayPose === 'idle') {
+    animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
+    flipped = facingRef.current === 'left'
   } else if (animsManifest?.animations && displayPose in animsManifest.animations) {
     animationName = displayPose
-    flipped = false
+    flipped = facingRef.current === 'left'
   } else if (['groom', 'yawn', 'loaf', 'siderest', 'proud', 'wakeup'].includes(displayPose)) {
     animationName = displayPose
-    flipped = false
+    flipped = facingRef.current === 'left'
   } else {
     animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
-    flipped = false
+    flipped = facingRef.current === 'left'
   }
 
   const isEyeTrackingEligible = Boolean(
