@@ -211,13 +211,18 @@ export default function BubbleApp() {
     window.api.bubble.action('hunger:later')
   }, [])
 
+  const handleRemarkDismiss = useCallback(() => {
+    window.api.bubble.action('remark:dismiss')
+  }, [])
+
   const isAnimationsDisabled = (cardState?.notificationAnimations === false) || (settings?.notificationAnimations === false)
 
   const isAnyExiting = !isAnimationsDisabled && Boolean(
     (cardState?.reminderState === 'EXIT') ||
     cardState?.hungerExiting ||
     cardState?.nowPlayingExiting ||
-    cardState?.chatExiting
+    cardState?.chatExiting ||
+    cardState?.remarkExiting
   )
   const isAnyExitingRef = useRef(isAnyExiting)
   useEffect(() => {
@@ -298,6 +303,9 @@ export default function BubbleApp() {
     chatReply,
     chatWindowTransparency,
     chatBlurBackground,
+    showRemark,
+    remarkExiting,
+    remarkText,
   } = cardState || {}
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
   const reminderInfo = reminderData || REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
@@ -403,6 +411,31 @@ export default function BubbleApp() {
             }}
             aria-label="Remind me later"
             title="Later"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Remark card */}
+      {(showRemark || remarkExiting) && remarkText && (
+        <div
+          className={`mascot-reminder-card mascot-remark-card ${remarkExiting ? 'sb-card-exit' : ''}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mascot-reminder-card__content">
+            <div className="mascot-reminder-card__text-wrap">
+              <div className="mascot-remark-card__text">{remarkText}</div>
+            </div>
+          </div>
+          <button
+            className="mascot-dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleRemarkDismiss()
+            }}
+            aria-label="Dismiss remark"
+            title="Dismiss"
           >
             ✕
           </button>

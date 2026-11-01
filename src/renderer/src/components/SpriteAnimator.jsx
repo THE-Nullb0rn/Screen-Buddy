@@ -55,6 +55,24 @@ const SPEED_FACTORS = {
   fast: 2,
 }
 
+export const ANIMATION_FALLBACKS = {
+  curious: 'idle',
+  purr: 'pet',
+  sad: 'loaf',
+  annoyed: 'idle',
+  toyplay: 'play',
+  drink: 'eat',
+}
+
+export function resolveAnimation(name, manifest) {
+  if (!name) return 'idle'
+  const anims = manifest?.animations || defaultManifest.animations
+  if (anims[name]) return name
+  const fallback = ANIMATION_FALLBACKS[name]
+  if (fallback && anims[fallback]) return fallback
+  return 'idle'
+}
+
 /**
  * Custom hook to drive sprite sheet frame stepping based on manifest animations
  */
@@ -66,8 +84,9 @@ export function useSpriteAnimation({
   speed = 'normal',
   fpsCap = 60,
 }) {
+  const resolvedAnim = resolveAnimation(animation, manifest)
   const baseConfig =
-    manifest.animations[animation] ||
+    manifest.animations[resolvedAnim] ||
     manifest.animations.idle || { frames: [0], fps: 1, loop: true }
 
   const animConfig = {

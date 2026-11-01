@@ -15,6 +15,7 @@ import {
   AlertCircle,
   RefreshCw,
   Zap,
+  MessageSquare,
 } from 'lucide-react'
 
 export default function BehaviorTab({ settings, saveSettingsPatch }) {
@@ -144,6 +145,18 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
             checked={Boolean(settings.mediaReaction)}
             onChange={(e) => saveSettingsPatch({ mediaReaction: e.target.checked })}
             ariaLabel="Media playback reaction"
+          />
+        </Row>
+
+        <Row
+          icon={MessageSquare}
+          label="Cat remarks"
+          hint="Show occasional speech bubble remarks from the cat"
+        >
+          <Toggle
+            checked={settings.catRemarks !== false}
+            onChange={(e) => saveSettingsPatch({ catRemarks: e.target.checked })}
+            ariaLabel="Cat remarks"
           />
         </Row>
       </Card>

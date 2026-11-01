@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld('api', {
       'bubble:action',
       'chat:focus-input',
       'mascot:cursor-offset',
+      'mascot:call',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

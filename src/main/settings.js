@@ -286,6 +286,8 @@ const DEFAULT_SETTINGS = {
   doubleClickAction: 'chat',
   rightDoubleClickAction: 'settings',
   pettingEffects: true,
+  catRemarks: true,
+  shortcutCallCat: 'Ctrl+Alt+C',
   hungerEnabled: false,
   hungerRate: 'normal',
   hungerNotify: true,
@@ -523,6 +525,7 @@ function validateSettingsUpdate(patch) {
       case 'clickToInteract':
       case 'dragBehavior':
       case 'pettingEffects':
+      case 'catRemarks':
       case 'hungerEnabled':
       case 'hungerNotify':
       case 'hungerPauseSleeping':
@@ -751,6 +754,15 @@ function validateSettingsUpdate(patch) {
           sanitized.catStyle = value
         } else {
           debugLog('catStyle', 'invalid cat style')
+        }
+        break
+      }
+
+      case 'shortcutCallCat': {
+        if (typeof value === 'string' && value.trim()) {
+          sanitized.shortcutCallCat = value.trim()
+        } else {
+          debugLog('shortcutCallCat', 'must be a non-empty string')
         }
         break
       }

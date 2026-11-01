@@ -122,6 +122,7 @@ const HOTKEY_ACCELERATOR = 'Control+Alt+P'
 const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-toggle')
 const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-chat')
 const SETTINGS_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-settings')
+const CALL_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-call')
 
 const initialDebugEnv = process.env.SCREEN_BUDDY_DEBUG === '1'
 
@@ -226,7 +227,9 @@ app.whenReady().then(async () => {
   installHyprlandHotkeyFallback()
   installChatHotkeyFallback()
   installSettingsHotkeyFallback()
+  installCallHotkeyFallback()
   registerGlobalPauseShortcut()
+  registerGlobalCallShortcut()
   startHyprlandFullscreenMonitor()
 
   // Apply saved autostart preference on launch
@@ -284,6 +287,7 @@ app.on('will-quit', () => {
   removeChatHotkeyFallback()
   stopEyeTrackingPolling?.()
   removeSettingsHotkeyFallback()
+  removeCallHotkeyFallback()
 })
 
 // ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
@@ -426,6 +430,80 @@ function removeSettingsHotkeyFallback() {
     if (fs.existsSync(SETTINGS_CONTROL_FILE)) fs.unlinkSync(SETTINGS_CONTROL_FILE)
   } catch (err) {
     console.warn('[main] Could not remove settings control file:', err.message)
+  }
+}
+
+// ─── Call cat hotkey (CTRL+ALT+C via Hyprland control file / globalShortcut) ─
+
+async function triggerCallCat() {
+  if (effectivePauseState()) {
+    console.log('[main] Call cat ignored — app is paused')
+    return
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    let cursorX = 0
+    let cursorY = 0
+    if (isHyprlandSession) {
+      try {
+        const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
+        const trimmed = (stdout || '').trim()
+        if (trimmed.startsWith('{')) {
+          const parsed = JSON.parse(trimmed)
+          cursorX = parsed.x
+          cursorY = parsed.y
+        } else {
+          const parts = trimmed.split(/[\s,]+/).map(Number)
+          cursorX = parts[0] || 0
+          cursorY = parts[1] || 0
+        }
+      } catch (_e) {
+        const pt = electronScreen.getCursorScreenPoint()
+        cursorX = pt.x
+        cursorY = pt.y
+      }
+    } else {
+      const pt = electronScreen.getCursorScreenPoint()
+      cursorX = pt.x
+      cursorY = pt.y
+    }
+    console.log(`[main] Call cat triggered at cursor (${cursorX}, ${cursorY})`)
+    mainWindow.webContents.send('mascot:call', { cursorX, cursorY })
+  } catch (err) {
+    console.warn('[main] Call cat failed:', err.message)
+  }
+}
+
+function installCallHotkeyFallback() {
+  try {
+    fs.writeFileSync(CALL_HOTKEY_CONTROL_FILE, '', { mode: 0o600 })
+    fs.watchFile(CALL_HOTKEY_CONTROL_FILE, { interval: 250 }, (current, previous) => {
+      if (current.mtimeMs === previous.mtimeMs) return
+      triggerCallCat()
+    })
+    console.log(`[main] Call cat fallback ready; control file: ${CALL_HOTKEY_CONTROL_FILE}`)
+  } catch (err) {
+    console.error('[main] Could not create call cat hotkey control file:', err)
+  }
+}
+
+function removeCallHotkeyFallback() {
+  try {
+    fs.unwatchFile(CALL_HOTKEY_CONTROL_FILE)
+    if (fs.existsSync(CALL_HOTKEY_CONTROL_FILE)) fs.unlinkSync(CALL_HOTKEY_CONTROL_FILE)
+  } catch (err) {
+    console.warn('[main] Could not remove call cat hotkey control file:', err.message)
+  }
+}
+
+function registerGlobalCallShortcut() {
+  const callShortcut = currentSettings?.shortcutCallCat || 'Control+Alt+C'
+  try {
+    globalShortcut.register(callShortcut, () => {
+      triggerCallCat()
+    })
+  } catch (_err) {
+    // Ignore globalShortcut errors on Wayland
   }
 }
 

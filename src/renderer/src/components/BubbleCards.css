@@ -278,6 +278,20 @@
   opacity: 0.9;
 }
 
+/* ── Remark Card (Cat remarks / speech bubbles) ──────────────────── */
+.mascot-remark-card {
+  max-width: 280px;
+  white-space: normal;
+}
+
+.mascot-remark-card__text {
+  font-family: var(--font-ui, "Inter Variable", system-ui, sans-serif);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--sb-bubble-text);
+}
+
 /* ── Persistent Timer Badge ───────────────────────────────────────── */
 .mascot-timer-badge {
   display: flex;

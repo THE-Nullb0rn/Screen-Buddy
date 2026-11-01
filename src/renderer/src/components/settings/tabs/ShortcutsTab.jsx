@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Card, Row, Kbd, Button } from '../ui'
-import { Keyboard, Pause, MessageSquare, Settings, Copy, Check, Terminal } from 'lucide-react'
+import { Keyboard, Pause, MessageSquare, Settings, Copy, Check, Terminal, Bell } from 'lucide-react'
 
 export default function ShortcutsTab() {
   const [copiedId, setCopiedId] = useState(null)
@@ -19,6 +19,11 @@ export default function ShortcutsTab() {
   }
 
   const hyprlandBinds = [
+    {
+      id: 'call',
+      label: 'Call cat',
+      code: 'bind = CTRL ALT, C, exec, touch "$XDG_RUNTIME_DIR/screen-buddy-call"',
+    },
     {
       id: 'settings',
       label: 'Open settings',
@@ -45,6 +50,19 @@ export default function ShortcutsTab() {
         subtitle="Main shortcuts to control Screen Buddy."
         icon={Keyboard}
       >
+        <Row
+          icon={Bell}
+          label="Call cat"
+          hint="Call the cat to walk to your cursor"
+        >
+          <div className="sb-keycap-group">
+            <Kbd>Ctrl</Kbd>
+            <span className="sb-keycap-plus">+</span>
+            <Kbd>Alt</Kbd>
+            <span className="sb-keycap-plus">+</span>
+            <Kbd>C</Kbd>
+          </div>
+        </Row>
         <Row
           icon={Pause}
           label="Toggle pause"

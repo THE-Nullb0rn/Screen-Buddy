@@ -11,7 +11,7 @@ const soundModules = import.meta.glob('./assets/sounds/*.{ogg,mp3,wav}', {
   import: 'default',
 })
 
-const CAT_VOICE_CLIPS = new Set(['meow_happy', 'meow_hungry', 'purr'])
+const CAT_VOICE_CLIPS = new Set(['meow', 'meow_happy', 'meow_hungry', 'purr'])
 
 let currentVoiceAudio = null
 let lastVoiceTime = 0
@@ -23,6 +23,17 @@ function resolveSoundUrl(clipName) {
       return url
     }
   }
+
+  // Fallback to 'meow' for all sounds except 'munch'
+  if (clipName !== 'munch') {
+    for (const [path, url] of Object.entries(soundModules)) {
+      const filename = path.split('/').pop().replace(/\.[^/.]+$/, '')
+      if (filename === 'meow') {
+        return url
+      }
+    }
+  }
+
   return null
 }
 

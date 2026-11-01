@@ -32,6 +32,13 @@ function formatTime(sec) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+const REMARKS = {
+  launch: ["Meow! I'm here."],
+  idle: ["Mrow.", "*stretches*", "Nice day for a nap.", "Keep going, you're doing great."],
+  lowBattery: ["I'm getting sleepy... plug me in?"],
+  pounce: ["Gotcha!"],
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function App() {
   // ── Settings ───────────────────────────────────────────────────────────────
@@ -205,11 +212,70 @@ export default function App() {
     })
   }, [dismissChatReply])
 
+  const [remarkText, setRemarkText] = useState('')
+  const [remarkVisible, setRemarkVisible] = useState(false)
+  const [remarkExiting, setRemarkExiting] = useState(false)
+  const remarkDismissTimerRef = useRef(null)
+  const remarkExitTimerRef = useRef(null)
+
+  const dismissRemark = useCallback(() => {
+    if (remarkDismissTimerRef.current) {
+      clearTimeout(remarkDismissTimerRef.current)
+      remarkDismissTimerRef.current = null
+    }
+    if (remarkExitTimerRef.current) {
+      clearTimeout(remarkExitTimerRef.current)
+      remarkExitTimerRef.current = null
+    }
+
+    if (settingsRef.current?.notificationAnimations === false) {
+      setRemarkVisible(false)
+      setRemarkExiting(false)
+      setRemarkText('')
+      return
+    }
+
+    setRemarkExiting(true)
+    remarkExitTimerRef.current = setTimeout(() => {
+      setRemarkVisible(false)
+      setRemarkExiting(false)
+      setRemarkText('')
+    }, 240)
+  }, [])
+
+  const triggerRemark = useCallback((typeOrText) => {
+    if (settingsRef.current?.notificationsEnabled === false) return
+    if (settingsRef.current?.catRemarks === false) return
+
+    let text = ''
+    if (REMARKS[typeOrText]) {
+      const list = REMARKS[typeOrText]
+      text = list[Math.floor(Math.random() * list.length)]
+    } else if (typeof typeOrText === 'string') {
+      text = typeOrText
+    }
+    if (!text) return
+
+    if (remarkDismissTimerRef.current) clearTimeout(remarkDismissTimerRef.current)
+    if (remarkExitTimerRef.current) clearTimeout(remarkExitTimerRef.current)
+
+    setRemarkText(text)
+    setRemarkVisible(true)
+    setRemarkExiting(false)
+
+    // Remark always auto-hides after ~4 seconds
+    remarkDismissTimerRef.current = setTimeout(() => {
+      dismissRemark()
+    }, 4000)
+  }, [dismissRemark])
+
   useEffect(() => {
     return () => {
       if (hungerExitTimerRef.current) clearTimeout(hungerExitTimerRef.current)
       if (nowPlayingExitTimerRef.current) clearTimeout(nowPlayingExitTimerRef.current)
       if (chatExitTimerRef.current) clearTimeout(chatExitTimerRef.current)
+      if (remarkDismissTimerRef.current) clearTimeout(remarkDismissTimerRef.current)
+      if (remarkExitTimerRef.current) clearTimeout(remarkExitTimerRef.current)
     }
   }, [])
 
@@ -449,12 +515,19 @@ export default function App() {
       masterCardsEnabled &&
       (showHunger || hungerExiting)
     )
+    const effectiveShowRemark = Boolean(
+      masterCardsEnabled &&
+      settings?.catRemarks !== false &&
+      (remarkVisible || remarkExiting) &&
+      remarkText
+    )
 
     const hasContent =
       (masterCardsEnabled && settings?.reminderNotifications !== false && isReminderActive) ||
       showTimer ||
       effectiveShowHunger ||
       effectiveShowNowPlaying ||
+      effectiveShowRemark ||
       chatState !== 'idle' ||
       chatExiting
 
@@ -477,6 +550,10 @@ export default function App() {
       // Hunger
       showHunger: effectiveShowHunger,
       hungerExiting,
+      // Remark
+      showRemark: effectiveShowRemark,
+      remarkExiting,
+      remarkText,
       // Timer
       showTimer,
       timerMode,
@@ -501,8 +578,12 @@ export default function App() {
     settings?.mediaReaction,
     settings?.chatWindowTransparency,
     settings?.chatBlurBackground,
+    settings?.catRemarks,
     showHunger,
     hungerExiting,
+    remarkVisible,
+    remarkExiting,
+    remarkText,
     timerMode,
     timerSeconds,
     nowPlayingVisible,
@@ -526,6 +607,8 @@ export default function App() {
         handleFeedWithAnimation()
       } else if (type === 'hunger:later') {
         handleSnoozeWithAnimation()
+      } else if (type === 'remark:dismiss') {
+        dismissRemark()
       } else if (type === 'chat:send') {
         handleChatSend(payload)
       } else if (type === 'chat:retry') {
@@ -548,7 +631,37 @@ export default function App() {
       }
     })
     return () => offAction()
-  }, [dismissReminder, snoozeReminder, dismissNowPlaying, handleFeedWithAnimation, handleSnoozeWithAnimation, handleChatDismiss])
+  }, [dismissReminder, snoozeReminder, dismissNowPlaying, handleFeedWithAnimation, handleSnoozeWithAnimation, dismissRemark, handleChatDismiss])
+
+  // ── Periodic Idle Remarks (every 8-20 minutes) ────────────────────────────
+  useEffect(() => {
+    let timeoutId = null
+    const scheduleNext = () => {
+      const delayMs = (8 + Math.random() * 12) * 60 * 1000
+      timeoutId = setTimeout(() => {
+        const canShow = (
+          settingsRef.current?.notificationsEnabled !== false &&
+          settingsRef.current?.catRemarks !== false &&
+          !pausedRef.current &&
+          !isAsleepRef.current &&
+          !isReminderActive &&
+          !showHunger &&
+          !nowPlayingVisible &&
+          chatState === 'idle' &&
+          !remarkVisible
+        )
+        if (canShow) {
+          triggerRemark('idle')
+        }
+        scheduleNext()
+      }, delayMs)
+    }
+
+    scheduleNext()
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [isReminderActive, showHunger, nowPlayingVisible, chatState, remarkVisible, triggerRemark])
 
 
   // ── IPC: media playback status ────────────────────────────────────────────
@@ -841,6 +954,9 @@ export default function App() {
         onFeedComplete={() => playSound('meow_happy', { settings, paused, isAsleep })}
         onLeftClickReact={() => playSound('meow_happy', { settings, paused, isAsleep })}
         onWakeUpClick={() => playSound('meow_happy', { settings, paused, isAsleep: false })}
+        onTriggerRemark={triggerRemark}
+        onCallMeow={() => playSound('meow_happy', { settings, paused, isAsleep: false })}
+        onLaunchMeow={() => playSound('meow_happy', { settings, paused: false, isAsleep: false })}
       />}
 
     </>
