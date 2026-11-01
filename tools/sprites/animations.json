@@ -27,7 +27,7 @@
     "ref": "idle:0"
   },
   "purr": {
-    "source": "purr.png",
+    "source": "purr_2.png",
     "grid": "4x2",
     "frames": 8,
     "fps": 4,
@@ -105,7 +105,8 @@
     "fps": 12,
     "mode": "loop",
     "anchor": "ground",
-    "ref": "old:typingfast"
+    "ref": "old:typingfast",
+    "sameScaleAs": "typing"
   },
   "crouchpounce": {
     "source": "Upgrade/crouch-pounce.png",

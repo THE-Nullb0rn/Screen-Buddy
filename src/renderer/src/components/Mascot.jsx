@@ -33,7 +33,7 @@ const PLAY_CHANCE = 0.15         // Increased to compensate for removed typing r
 
 export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff'])
 
-export function getAnimationDuration(name, speed = 'normal') {
+export function getAnimationDuration(name, speed = 'normal', holdMs = 800) {
   let animName = name
   if (animName === 'crouch' || animName === 'pounce') {
     animName = 'crouchpounce'
@@ -41,7 +41,8 @@ export function getAnimationDuration(name, speed = 'normal') {
   const anim = animsManifest?.animations?.[animName]
   const speedFactor = typeof speed === 'number' ? speed : (SPEED_FACTORS[speed] || 1)
   if (anim && anim.frames && anim.fps) {
-    return Math.round((anim.frames / (anim.fps * speedFactor)) * 1000 + 800)
+    const extraHold = animName === 'wakeup' ? 250 : holdMs
+    return Math.round((anim.frames / (anim.fps * speedFactor)) * 1000 + extraHold)
   }
   return 2000
 }
@@ -88,7 +89,7 @@ function defaultPosition() {
 }
 
 // Animations that have a listening-spritesheet equivalent
-const LISTENING_ANIMATIONS = ['idle', 'walk', 'talk', 'eat', 'pet', 'typing', 'typingfast', 'play']
+const LISTENING_ANIMATIONS = ['idle', 'idle-old', 'walk', 'talk', 'eat', 'pet', 'typing', 'typingfast', 'play']
 
 const DRAG_BUTTON_MAP = {
   left: 0,
@@ -196,6 +197,22 @@ export default function Mascot({
   const isChasingRef = useRef(false)
   const lastChaseTimeRef = useRef(0)
   const cursorHistoryRef = useRef([])
+  const chaseStartTimeoutRef = useRef(null)
+  const chaseRafRef = useRef(null)
+
+  // Wakeup from sleep transition refs
+  const wakingUpRef = useRef(false)
+  const wakeTargetPoseRef = useRef(null)
+  const wakeCallbackRef = useRef(null)
+  const lastTypingEventTimeRef = useRef(0)
+
+  // Calm window after pet & call walk timeout refs
+  const calmUntilRef = useRef(0)
+  const callWalkTimeoutRef = useRef(null)
+
+  // Idle variant alternating between 'old' (2-frame blink) and 'new' (6-frame ear twitch)
+  const [idleVariant, setIdleVariant] = useState('old')
+  const idleVariantTimerRef = useRef(null)
 
   // Battery and launch refs
   const isLowBatteryRef = useRef(false)
@@ -320,23 +337,21 @@ export default function Mascot({
     oneShotPoseRef.current = null
     setOneShotPose(null)
     oneShotCallbackRef.current = null
+    if (chaseStartTimeoutRef.current) {
+      clearTimeout(chaseStartTimeoutRef.current)
+      chaseStartTimeoutRef.current = null
+    }
+    if (chaseRafRef.current) {
+      cancelAnimationFrame(chaseRafRef.current)
+      chaseRafRef.current = null
+    }
+    if (callWalkTimeoutRef.current) {
+      clearTimeout(callWalkTimeoutRef.current)
+      callWalkTimeoutRef.current = null
+    }
     chaseFlippedRef.current = null
     isChasingRef.current = false
   }, [])
-
-  const wakeUp = useCallback(() => {
-    lastInteractRef.current = Date.now()
-    cancelIdleAndOneShot()
-    if (poseRef.current === 'sleep') {
-      poseRef.current = 'idle'
-      setPose('idle')
-    }
-  }, [cancelIdleAndOneShot])
-
-  const markInteraction = useCallback(() => {
-    cancelIdleAndOneShot()
-    wakeUp()
-  }, [wakeUp, cancelIdleAndOneShot])
 
   // ── Helper: play a one-shot animation (yawn, pounce, wakeup, crouchpounce, etc.) ──
   const playOneShot = useCallback((animName, onComplete) => {
@@ -362,6 +377,52 @@ export default function Mascot({
       }
     }, duration)
   }, [cancelIdleAndOneShot, catAnimationSpeed])
+
+  const wakeTo = useCallback((targetPose, onDone) => {
+    lastInteractRef.current = Date.now()
+    if (poseRef.current !== 'sleep' && !wakingUpRef.current) {
+      if (targetPose && poseRef.current !== targetPose) {
+        poseRef.current = targetPose
+        setPose(targetPose)
+      }
+      onDone?.()
+      return
+    }
+
+    if (wakingUpRef.current) {
+      wakeTargetPoseRef.current = targetPose
+      if (onDone) wakeCallbackRef.current = onDone
+      return
+    }
+
+    wakingUpRef.current = true
+    wakeTargetPoseRef.current = targetPose
+    wakeCallbackRef.current = onDone || null
+
+    cancelIdleAndOneShot()
+    playOneShot('wakeup', () => {
+      wakingUpRef.current = false
+      let nextPose = wakeTargetPoseRef.current || 'idle'
+      wakeTargetPoseRef.current = null
+      if ((nextPose === 'typing' || nextPose === 'typingfast') && Date.now() - lastTypingEventTimeRef.current > 800) {
+        nextPose = 'idle'
+      }
+      poseRef.current = nextPose
+      setPose(nextPose)
+      const cb = wakeCallbackRef.current
+      wakeCallbackRef.current = null
+      cb?.()
+    })
+  }, [cancelIdleAndOneShot, playOneShot])
+
+  const wakeUp = useCallback(() => {
+    wakeTo('idle')
+  }, [wakeTo])
+
+  const markInteraction = useCallback(() => {
+    cancelIdleAndOneShot()
+    wakeUp()
+  }, [wakeUp, cancelIdleAndOneShot])
 
   const handleAnimationEnd = useCallback((anim) => {
     let animName = anim
@@ -401,7 +462,6 @@ export default function Mascot({
   }, [cancelIdleAndOneShot, catAnimationSpeed])
 
   const startEating = useCallback(() => {
-    wakeUp()
     // Interrupt whatever it was doing to eat
     walkTweenRef.current = null
     setWalkMs(0)
@@ -409,19 +469,28 @@ export default function Mascot({
     clearTimeout(idleBehaviorTimeoutRef.current)
     clearTimeout(eatTimeoutRef.current)
     setIsHoveringHead(false)
-    poseRef.current = 'eat'
-    setPose('eat')
-    onEatStart?.()
-    const eatDuration = getAnimationDuration('eat', catAnimationSpeed)
-    eatTimeoutRef.current = setTimeout(() => {
-      if (poseRef.current === 'eat') {
-        poseRef.current = 'idle'
-        setPose('idle')
-        onFeedComplete?.()
-      }
-      eatTimeoutRef.current = null
-    }, eatDuration)
-  }, [wakeUp, onEatStart, onFeedComplete, catAnimationSpeed])
+
+    const doEat = () => {
+      poseRef.current = 'eat'
+      setPose('eat')
+      onEatStart?.()
+      const eatDuration = getAnimationDuration('eat', catAnimationSpeed)
+      eatTimeoutRef.current = setTimeout(() => {
+        if (poseRef.current === 'eat') {
+          poseRef.current = 'idle'
+          setPose('idle')
+          onFeedComplete?.()
+        }
+        eatTimeoutRef.current = null
+      }, eatDuration)
+    }
+
+    if (poseRef.current === 'sleep') {
+      wakeTo('eat', doEat)
+    } else {
+      doEat()
+    }
+  }, [wakeTo, onEatStart, onFeedComplete, catAnimationSpeed])
 
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
@@ -434,8 +503,9 @@ export default function Mascot({
     switch (action) {
       case 'react':
         if (poseRef.current === 'sleep') {
-          wakeUp()
-          setRoamEpoch((n) => n + 1)
+          wakeTo('idle', () => {
+            setRoamEpoch((n) => n + 1)
+          })
           onWakeUpClick?.()
         } else if (hungerState === 'ACTIVE') {
           handleFeedTrigger()
@@ -457,7 +527,7 @@ export default function Mascot({
       default:
         break
     }
-  }, [hungerState, handleFeedTrigger, onChatOpen, onTogglePause, wakeUp, onWakeUpClick, onLeftClickReact])
+  }, [hungerState, handleFeedTrigger, onChatOpen, onTogglePause, wakeTo, onWakeUpClick, onLeftClickReact])
 
   const prevFeedSignalRef = useRef(feedSignal)
   useEffect(() => {
@@ -470,9 +540,9 @@ export default function Mascot({
   // Wake cat from sleep when music starts playing
   useEffect(() => {
     if (mediaPlaying) {
-      wakeUp()
+      wakeTo('idle')
     }
-  }, [mediaPlaying, wakeUp])
+  }, [mediaPlaying, wakeTo])
 
   const isAsleep = pose === 'sleep'
   useEffect(() => {
@@ -558,7 +628,7 @@ export default function Mascot({
       }
       
       // Do not interrupt important interactive/idle behaviors
-      if (['eat', 'pet', 'purr', 'play', 'sleep', 'toyplay'].includes(poseRef.current) && poseRef.current !== 'sleep') {
+      if (['eat', 'pet', 'purr', 'play', 'toyplay'].includes(poseRef.current)) {
         return
       }
 
@@ -566,16 +636,16 @@ export default function Mascot({
       // Keep events for 1000ms for rate calculation
       typingEventsRef.current = typingEventsRef.current.filter(t => now - t < 1000)
       typingEventsRef.current.push(now)
+      lastTypingEventTimeRef.current = now
       
       lastInteractRef.current = now
 
-      // Interrupt walking or sleep
+      // Interrupt walking
       if (poseRef.current.startsWith('walk')) {
         walkTweenRef.current = null
         setWalkMs(0)
         clearTimeout(roamTimeoutRef.current)
       }
-      wakeUp()
 
       // Switch to typing or typingfast based on event frequency in the last 1000ms
       const rate = typingEventsRef.current.length
@@ -588,9 +658,13 @@ export default function Mascot({
         targetPose = rate > 12 ? 'typingfast' : 'typing'
       }
 
-      if (poseRef.current !== targetPose) {
-        poseRef.current = targetPose
-        setPose(targetPose)
+      if (poseRef.current === 'sleep' || wakingUpRef.current) {
+        wakeTo(targetPose)
+      } else if (!oneShotPoseRef.current) {
+        if (poseRef.current !== targetPose) {
+          poseRef.current = targetPose
+          setPose(targetPose)
+        }
       }
 
       // Revert to idle if no more typing events occur
@@ -604,7 +678,7 @@ export default function Mascot({
       }, 800)
     })
     return unsub
-  }, [isReminder, pomodoroCelebrating, wakeUp])
+  }, [isReminder, pomodoroCelebrating, wakeTo])
 
   // Walk tween is idle-only. Active drag writes pointer coords 1:1 in onDragMove.
 
@@ -722,6 +796,10 @@ export default function Mascot({
     const walkOnce = () => {
       if (gen !== roamGenRef.current) return
       if (roamBlockedRef.current) return
+      if (Date.now() < calmUntilRef.current) {
+        later(walkOnce, Math.max(500, calmUntilRef.current - Date.now()))
+        return
+      }
       if (draggingRef.current || dragPointerDownRef.current) {
         console.log(`[Renderer] walkOnce deferred (still dragging) gen=${gen}`)
         later(walkOnce, 400)
@@ -852,6 +930,7 @@ export default function Mascot({
     const triggerIdleLife = () => {
       // Must be awake and completely idle
       if (
+        Date.now() < calmUntilRef.current ||
         poseRef.current !== 'idle' ||
         poseRef.current === 'sleep' ||
         poseRef.current === 'typing' ||
@@ -914,52 +993,96 @@ export default function Mascot({
         hist.shift()
       }
 
-      if (hist.length < 2) return
+      // Check horizontal distance: between 100px and 300px away horizontally
+      const absX = Math.abs(offset.x)
+      if (absX < 100) return // too close, return early without starting cooldown
 
-      // Eligible: awake, idle, not dragging, not in reminder/chat/walk, not chasing, cooldown 20s
+      // Eligible: cat is idle, not dragging, not in reminder/chat/walk, not chasing, cooldown 45s, not in calm window
       if (
         poseRef.current !== 'idle' ||
         oneShotPoseRef.current ||
         walkTweenRef.current ||
+        chaseRafRef.current ||
         draggingRef.current ||
         dragPointerDownRef.current ||
         isRoamBlocked ||
         isChasingRef.current ||
-        Date.now() - lastChaseTimeRef.current < 20000
+        Date.now() < calmUntilRef.current ||
+        Date.now() - lastChaseTimeRef.current < 45000 ||
+        mediaPlayingRef.current ||
+        hungerState === 'ACTIVE' ||
+        chatState !== 'idle' ||
+        isReminder ||
+        isEating
       ) {
         return
       }
 
-      const dist = Math.hypot(offset.x, offset.y)
-      if (dist > 250) return
+      if (absX > 300 || Math.abs(offset.y) > 300) return
+      if (hist.length < 2) return
 
       const dt = (now - hist[0].time) / 1000
-      if (dt < 0.35) return // wait for at least ~0.4–0.5s of tracking history
+      if (dt < 0.25) return
 
-      const dx = offset.x - hist[0].x
-      const dy = offset.y - hist[0].y
-      const movedDist = Math.hypot(dx, dy)
-      const speed = movedDist / dt
+      // Trigger crouch -> pounce as crouchpounce
+      isChasingRef.current = true
+      lastChaseTimeRef.current = Date.now()
+      chaseFlippedRef.current = offset.x < 0
 
-      if (speed > 250) {
-        // Trigger crouch -> pounce as crouchpounce
-        isChasingRef.current = true
-        lastChaseTimeRef.current = Date.now()
-        chaseFlippedRef.current = offset.x < 0
+      // Lock target position before mouse moves
+      const { width } = measure()
+      const minX = MARGIN
+      const screenW = window.screen.availWidth || window.screen.width || 1920
+      const maxX = Math.max(minX, screenW - width - MARGIN)
+      const lockedStartX = posRef.current.x
+      const lockedTargetX = clamp(posRef.current.x + offset.x - Math.sign(offset.x) * 40, minX, maxX)
 
-        cancelIdleAndOneShot()
-        playOneShot('crouchpounce', () => {
-          isChasingRef.current = false
-          chaseFlippedRef.current = null
-        })
+      cancelIdleAndOneShot()
+      playOneShot('crouchpounce', () => {
+        isChasingRef.current = false
+        chaseFlippedRef.current = null
+        poseRef.current = 'idle'
+        setPose('idle')
         onTriggerRemark?.('pounce')
-      }
+      })
+
+      // Frame 4 is the leap (roughly 400-500ms into the animation)
+      // Smoothly move window towards cursor position using rAF tween over ~400ms with ease-out
+      chaseStartTimeoutRef.current = setTimeout(() => {
+        chaseStartTimeoutRef.current = null
+        const startTime = performance.now()
+        const duration = 400
+        const easeOut = (t) => 1 - Math.pow(1 - t, 3)
+
+        const step = (tNow) => {
+          if (draggingRef.current || dragPointerDownRef.current) {
+            chaseRafRef.current = null
+            return
+          }
+          const elapsed = tNow - startTime
+          const t = Math.min(1, elapsed / duration)
+          const eased = easeOut(t)
+          const currentX = lockedStartX + (lockedTargetX - lockedStartX) * eased
+          posRef.current = { x: currentX, y: posRef.current.y }
+          setX(currentX)
+          window.api?.moveWindow?.(Math.round(currentX), Math.round(posRef.current.y))
+
+          if (t < 1) {
+            chaseRafRef.current = requestAnimationFrame(step)
+          } else {
+            chaseRafRef.current = null
+            window.api?.persistPosition?.(Math.round(lockedTargetX), Math.round(posRef.current.y))
+          }
+        }
+
+        chaseRafRef.current = requestAnimationFrame(step)
+      }, 450)
     })
 
     return () => {
       unsub?.()
     }
-  }, [mouseReaction, reduceResourceUsage, paused, isRoamBlocked, cancelIdleAndOneShot, playOneShot, onTriggerRemark])
+  }, [mouseReaction, reduceResourceUsage, paused, isRoamBlocked, cancelIdleAndOneShot, playOneShot, onTriggerRemark, measure, hungerState, chatState, isReminder, isEating])
 
   // ── Part 4: Call Cat Listener ─────────────────────────────────────────────
   useEffect(() => {
@@ -1020,7 +1143,9 @@ export default function Mascot({
       }
       dragTargetRef.current = { x: targetX, y: posRef.current.y }
 
-      setTimeout(() => {
+      if (callWalkTimeoutRef.current) clearTimeout(callWalkTimeoutRef.current)
+      callWalkTimeoutRef.current = setTimeout(() => {
+        callWalkTimeoutRef.current = null
         walkTweenRef.current = null
         setWalkMs(0)
         if (poseRef.current.startsWith('walk')) {
@@ -1034,6 +1159,10 @@ export default function Mascot({
 
     return () => {
       unsub?.()
+      if (callWalkTimeoutRef.current) {
+        clearTimeout(callWalkTimeoutRef.current)
+        callWalkTimeoutRef.current = null
+      }
     }
   }, [isReminder, chatState, cancelIdleAndOneShot, playOneShot, onCallMeow])
 
@@ -1175,6 +1304,10 @@ export default function Mascot({
     try { containerRef.current?.setPointerCapture(event.pointerId) } catch (_) {}
 
     walkTweenRef.current = null
+    wakingUpRef.current = false
+    wakeTargetPoseRef.current = null
+    wakeCallbackRef.current = null
+    cancelIdleAndOneShot()
     dragEndingRef.current = false
     dragPointerDownRef.current = true
     draggingRef.current = true
@@ -1187,8 +1320,8 @@ export default function Mascot({
 
     roamGenRef.current += 1
     setWalkMs(0)
-    poseRef.current = 'idle'
-    setPose('idle')
+    poseRef.current = 'drag'
+    setPose('drag')
     snapVisualPosition()
     markInteraction()
 
@@ -1620,6 +1753,9 @@ export default function Mascot({
       clearTimeout(roamTimeoutRef.current)
       clearTimeout(idleBehaviorTimeoutRef.current)
       clearTimeout(eatTimeoutRef.current)
+      cancelIdleAndOneShot()
+      poseRef.current = 'idle'
+      setPose('idle')
       setIsHoveringHead(true)
       onPetStart?.()
     }
@@ -1631,7 +1767,10 @@ export default function Mascot({
     if (isHoveringHead) {
       petLeaveTimeoutRef.current = setTimeout(() => {
         setIsHoveringHead(false)
-        setRoamEpoch((n) => n + 1)
+        calmUntilRef.current = Date.now() + 2000
+        setTimeout(() => {
+          setRoamEpoch((n) => n + 1)
+        }, 2000)
       }, 400)
     }
     strokeTrackingRef.current = { currentDir: 0, apexX: 0, reversals: [] }
@@ -1658,6 +1797,47 @@ export default function Mascot({
 
   const displayPose = (isReminder && reminderCatAnimation !== false) ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
   const moving = walkMs > 0 && !dragging && displayPose.startsWith('walk')
+
+  // ── Idle Variant Alternating (old 2-frame vs new 6-frame) ──────────────────
+  useEffect(() => {
+    const isActuallyIdle =
+      pose === 'idle' &&
+      !oneShotPose &&
+      !moving &&
+      !dragging &&
+      !falling &&
+      !isHoveringHead &&
+      !isReminder &&
+      chatState === 'idle'
+
+    if (!isActuallyIdle) {
+      if (idleVariant !== 'old') setIdleVariant('old')
+      if (idleVariantTimerRef.current) {
+        clearTimeout(idleVariantTimerRef.current)
+        idleVariantTimerRef.current = null
+      }
+      return
+    }
+
+    if (idleVariant === 'old') {
+      const oldDuration = 15000 + Math.random() * 15000
+      idleVariantTimerRef.current = setTimeout(() => {
+        setIdleVariant('new')
+      }, oldDuration)
+    } else {
+      const newDuration = Math.random() < 0.5 ? 2400 : 4800
+      idleVariantTimerRef.current = setTimeout(() => {
+        setIdleVariant('old')
+      }, newDuration)
+    }
+
+    return () => {
+      if (idleVariantTimerRef.current) {
+        clearTimeout(idleVariantTimerRef.current)
+        idleVariantTimerRef.current = null
+      }
+    }
+  }, [pose, oneShotPose, moving, dragging, falling, isHoveringHead, isReminder, chatState, idleVariant])
 
   let stateClass = 'is-idle'
   if (moving) stateClass = 'is-walking'
@@ -1717,7 +1897,7 @@ export default function Mascot({
     animationName = displayPose
     flipped = false
   } else {
-    animationName = 'idle'
+    animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
     flipped = false
   }
 
@@ -1725,7 +1905,7 @@ export default function Mascot({
     !reduceResourceUsage &&
     mouseReaction &&
     !paused &&
-    animationName === 'idle' &&
+    (animationName === 'idle' || animationName === 'idle-old') &&
     !dragging &&
     !falling &&
     !pomodoroCelebrating &&

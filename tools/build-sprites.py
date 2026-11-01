@@ -11,7 +11,7 @@ import json
 from collections import Counter
 from PIL import Image
 import numpy as np
-from scipy.ndimage import label, binary_dilation
+from scipy.ndimage import label, binary_dilation, distance_transform_edt
 
 AUTO_SRC_CANDIDATES = [
     '/home/itachi_06/Pictures/Cats-IL/Cat',
@@ -145,6 +145,17 @@ def remove_background(img_arr):
     fringe = (~bg_mask) & dilated_bg & (r > 175) & (b > 175) & (g < 125)
     bg_mask |= fringe
 
+    # Additional passes of halo removal directly on raw input
+    struct4 = np.array([[0, 1, 0],
+                        [1, 1, 1],
+                        [0, 1, 0]], dtype=bool)
+    for _ in range(3):
+        dilated_bg = binary_dilation(bg_mask, structure=struct4)
+        halo = (~bg_mask) & dilated_bg & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+        if not np.any(halo):
+            break
+        bg_mask |= halo
+
     non_bg_mask = ~bg_mask
     return non_bg_mask
 
@@ -276,12 +287,26 @@ def compute_scale(raw_frames, ref_str, old_metrics):
 def check_and_apply_shrink(raw_frames, scale):
     """
     Ensure every frame fits in 210x300 with 4px margin (202x292)
+    Only considers the cat body (the largest connected component per frame);
+    small detached parts (sparks, motion lines, floating bits, area < 15% of the body)
+    must never cause shrinking, they are simply clipped at the canvas edge.
     """
     max_w = 0
     max_h = 0
     for f in raw_frames:
         rgba = f['rgba']
-        ys, xs = np.where(rgba[:, :, 3] > 0)
+        opaque = rgba[:, :, 3] > 0
+        lbl, num = label(opaque)
+        if num == 0:
+            continue
+        sizes = [np.sum(lbl == i) for i in range(1, num + 1)]
+        max_size = max(sizes)
+        keep_mask = np.zeros_like(opaque)
+        for i in range(1, num + 1):
+            if sizes[i - 1] >= 0.15 * max_size:
+                keep_mask |= (lbl == i)
+
+        ys, xs = np.where(keep_mask)
         if len(xs) > 0:
             fw = int(np.ceil((xs.max() - xs.min() + 1) * scale))
             fh = int(np.ceil((ys.max() - ys.min() + 1) * scale))
@@ -300,7 +325,7 @@ def check_and_apply_shrink(raw_frames, scale):
     return final_scale, shrink_factor
 
 
-def process_animation(anim_name, entry, src_dir, old_metrics):
+def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=None):
     """
     Processes one animation and returns strip image and metrics.
     """
@@ -330,8 +355,16 @@ def process_animation(anim_name, entry, src_dir, old_metrics):
     raw_frames = slice_into_frames(arr, non_bg_mask, cols, rows, total_frames)
 
     # 3. Scale calculation & shrink factor
-    base_scale = compute_scale(raw_frames, ref, old_metrics)
-    final_scale, shrink_factor = check_and_apply_shrink(raw_frames, base_scale)
+    same_scale_name = entry.get('sameScaleAs')
+    if same_scale_name and computed_scales and same_scale_name in computed_scales:
+        final_scale = computed_scales[same_scale_name]
+        shrink_factor = 1.0
+    else:
+        base_scale = compute_scale(raw_frames, ref, old_metrics)
+        final_scale, shrink_factor = check_and_apply_shrink(raw_frames, base_scale)
+
+    if computed_scales is not None:
+        computed_scales[anim_name] = final_scale
 
     # 4. Scale each frame with NEAREST
     scaled_frames = []
@@ -448,14 +481,22 @@ def process_animation(anim_name, entry, src_dir, old_metrics):
         if min_py <= max_py:
             py = int(round(np.clip(py, min_py, max_py)))
 
-        # Ensure inside canvas bounds
-        src_x0 = max(0, -px)
-        src_y0 = max(0, -py)
-        dst_x0 = max(0, px)
-        dst_y0 = max(0, py)
+        # Ensure inside canvas bounds and strictly clipped 1px inside border
+        # so Edge (touching edge 0 or CELL-1) is 0
+        min_canvas_x = 1
+        max_canvas_x = CELL_WIDTH - 2
+        min_canvas_y = 1
+        max_canvas_y = CELL_HEIGHT - 2
 
-        copy_w = min(sw - src_x0, CELL_WIDTH - dst_x0)
-        copy_h = min(sh - src_y0, CELL_HEIGHT - dst_y0)
+        dst_x0 = max(min_canvas_x, px)
+        dst_y0 = max(min_canvas_y, py)
+        src_x0 = dst_x0 - px
+        src_y0 = dst_y0 - py
+
+        dst_x1 = min(max_canvas_x + 1, px + sw)
+        dst_y1 = min(max_canvas_y + 1, py + sh)
+        copy_w = dst_x1 - dst_x0
+        copy_h = dst_y1 - dst_y0
 
         if copy_w > 0 and copy_h > 0:
             canvas[dst_y0:dst_y0 + copy_h, dst_x0:dst_x0 + copy_w] = s_arr[src_y0:src_y0 + copy_h, src_x0:src_x0 + copy_w]
@@ -469,6 +510,27 @@ def process_animation(anim_name, entry, src_dir, old_metrics):
     for i, c in enumerate(placed_cells):
         strip_arr[:, i * CELL_WIDTH:(i + 1) * CELL_WIDTH] = c
 
+    # Purple halo pixels: after background removal and BEFORE quantization, run up to 3 passes:
+    # for every opaque pixel that touches (4-neighbour) a transparent pixel,
+    # delete it (alpha 0) if R > G+25 and B > G+25 and |R-B| < 70
+    struct4 = np.array([[0, 1, 0],
+                        [1, 1, 1],
+                        [0, 1, 0]], dtype=bool)
+
+    for _ in range(3):
+        r = strip_arr[:, :, 0].astype(int)
+        g = strip_arr[:, :, 1].astype(int)
+        b = strip_arr[:, :, 2].astype(int)
+        a = strip_arr[:, :, 3]
+        is_opaque = a > 0
+        is_trans = a == 0
+        touches_trans = binary_dilation(is_trans, structure=struct4) & is_opaque
+        halo = touches_trans & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+        if not np.any(halo):
+            break
+        strip_arr[halo, 3] = 0
+        strip_arr[halo, :3] = 0
+
     strip_pil = Image.fromarray(strip_arr, 'RGBA')
     # Quantize to <= 48 colors with NO dithering
     quantized = strip_pil.quantize(colors=48, dither=Image.Dither.NONE).convert('RGBA')
@@ -481,7 +543,39 @@ def process_animation(anim_name, entry, src_dir, old_metrics):
 
     final_arr[final_arr[:, :, 3] < 128, 3] = 0
     final_arr[final_arr[:, :, 3] >= 128, 3] = 255
-    final_arr[final_arr[:, :, 3] == 0] = [0, 0, 0, 0]
+
+    # Ensure post-quantization edges also have halo removed
+    while True:
+        r = final_arr[:, :, 0].astype(int)
+        g = final_arr[:, :, 1].astype(int)
+        b = final_arr[:, :, 2].astype(int)
+        a = final_arr[:, :, 3]
+        is_opaque = a > 0
+        is_trans = a == 0
+        touches_trans = binary_dilation(is_trans, structure=struct4) & is_opaque
+        halo = touches_trans & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+        if not np.any(halo):
+            break
+        final_arr[halo, 3] = 0
+
+    # Validation check: Fringe count (must be 0)
+    r = final_arr[:, :, 0].astype(int)
+    g = final_arr[:, :, 1].astype(int)
+    b = final_arr[:, :, 2].astype(int)
+    a = final_arr[:, :, 3]
+    is_opaque = a > 0
+    is_trans = a == 0
+    touches_trans = binary_dilation(is_trans, structure=struct4) & is_opaque
+    fringe_mask = touches_trans & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+    fringe_count = int(np.sum(fringe_mask))
+
+    # Hidden magenta under transparent pixels:
+    # set the RGB of EVERY fully transparent pixel to the RGB of the nearest opaque pixel
+    opaque_mask = final_arr[:, :, 3] > 0
+    if np.any(opaque_mask):
+        _, indices = distance_transform_edt(~opaque_mask, return_indices=True)
+        trans_mask = final_arr[:, :, 3] == 0
+        final_arr[trans_mask, :3] = final_arr[indices[0][trans_mask], indices[1][trans_mask], :3]
 
     final_strip = Image.fromarray(final_arr, 'RGBA')
 
@@ -491,9 +585,13 @@ def process_animation(anim_name, entry, src_dir, old_metrics):
     g = final_arr[:, :, 1].astype(int)
     b = final_arr[:, :, 2].astype(int)
     a = final_arr[:, :, 3]
-    still_mag = np.sum((a > 0) & (r > 190) & (b > 190) & (g < 110))
+    still_mag = int(np.sum((a > 0) & (r > 190) & (b > 190) & (g < 110)))
 
-    # 2. Empty frames
+    # 2. TrMag: count of fully transparent pixels whose RGB is magenta-ish R>190,B>190,G<110, must be 0
+    trmag_mask = (a == 0) & (r > 190) & (b > 190) & (g < 110)
+    trmag_count = int(np.sum(trmag_mask))
+
+    # 3. Empty frames & edge touching
     empty_frames = 0
     edge_touching = 0
     body_cxs = []
@@ -521,7 +619,9 @@ def process_animation(anim_name, entry, src_dir, old_metrics):
         'shrink_factor': shrink_factor,
         'max_jitter': max_jitter,
         'edge_touching': edge_touching,
-        'still_magenta': int(still_mag),
+        'still_magenta': still_mag,
+        'fringe': fringe_count,
+        'tr_mag': trmag_count,
         'empty_frames': empty_frames
     }
 
@@ -593,20 +693,37 @@ def main():
 
     reports = []
     skipped = []
+    computed_scales = {}
 
-    for name in selected_names:
+    # Order selected_names so sameScaleAs dependencies are computed first
+    ordered_names = []
+    visited = set()
+
+    def add_anim(aname):
+        if aname in visited or aname not in config:
+            return
+        dep = config[aname].get('sameScaleAs')
+        if dep and dep in config:
+            add_anim(dep)
+        visited.add(aname)
+        ordered_names.append(aname)
+
+    for n in selected_names:
+        add_anim(n)
+
+    for name in ordered_names:
         if name not in config:
             print(f"Warning: Unknown animation '{name}', skipping.", file=sys.stderr)
             continue
         entry = config[name]
-        strip, res = process_animation(name, entry, src_dir, old_metrics)
+        strip, res = process_animation(name, entry, src_dir, old_metrics, computed_scales)
         if strip is None:
             skipped.append((name, res))
             print(f"Skipping {name}: {res}")
             continue
 
         out_png = os.path.join(OUTPUT_DIR, f"{name}.png")
-        strip.save(out_png, format='PNG', optimize=True)
+        strip.save(out_png, format='PNG')
 
         runtime_manifest['animations'][name] = {
             'name': name,
@@ -624,13 +741,13 @@ def main():
         json.dump(runtime_manifest, f, indent=2)
 
     # Print validation table
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 89)
     print("ANIMATION VALIDATION REPORT")
-    print("=" * 80)
-    print(f"{'Animation':14} | {'Frames':6} | {'Scale':7} | {'Shrink':6} | {'Jitter':6} | {'Edge':4} | {'MagPx':5} | {'Empty':5}")
-    print("-" * 80)
+    print("=" * 89)
+    print(f"{'Animation':14} | {'Frames':6} | {'Scale':7} | {'Shrink':6} | {'Jitter':6} | {'Edge':4} | {'MagPx':5} | {'Fringe':6} | {'TrMag':5} | {'Empty':5}")
+    print("-" * 89)
     for name, r in reports:
-        print(f"{name:14} | {r['frames']:6} | {r['scale']:7.4f} | {r['shrink_factor']:6.4f} | {r['max_jitter']:5.1f}p | {r['edge_touching']:4} | {r['still_magenta']:5} | {r['empty_frames']:5}")
+        print(f"{name:14} | {r['frames']:6} | {r['scale']:7.4f} | {r['shrink_factor']:6.4f} | {r['max_jitter']:5.1f}p | {r['edge_touching']:4} | {r['still_magenta']:5} | {r['fringe']:6} | {r['tr_mag']:5} | {r['empty_frames']:5}")
 
     if skipped:
         print("\nSKIPPED / MISSING FILES:")
@@ -638,7 +755,7 @@ def main():
             print(f"  - {name}: {reason}")
     else:
         print("\nSkipped/missing files: None")
-    print("=" * 80)
+    print("=" * 89)
 
 
 if __name__ == '__main__':

@@ -109,6 +109,10 @@ export function resolveAnimation(name, isListening = false) {
     animName = 'crouchpounce'
   }
 
+  if (animName === 'idle-old' && !isListening) {
+    return { type: 'sheet', name: 'idle' }
+  }
+
   if (isListening) {
     if (listeningManifest.animations[animName]) {
       return { type: 'sheet', name: animName }
@@ -193,7 +197,7 @@ export function useSpriteAnimation({
       currentAnimationRef.current = animation
       frameIndexRef.current = 0
       setFrameIndex(0)
-      if (animation === 'idle') {
+      if (animation === 'idle' || animation === 'idle-old') {
         idleBlinkStateRef.current = {
           openDuration: 3000 + Math.random() * 3000,
           blinkDuration: 120 + Math.random() * 60,
@@ -228,7 +232,7 @@ export function useSpriteAnimation({
       let safety = 0
       while (safety++ < tf + 1) {
         let rawDuration
-        const isTwoFrameIdle = !sMode && currentAnimationRef.current === 'idle' && tf === 2
+        const isTwoFrameIdle = !sMode && (currentAnimationRef.current === 'idle' || currentAnimationRef.current === 'idle-old') && tf === 2
         if (isTwoFrameIdle) {
           if (idx === 0) {
             rawDuration = idleBlinkStateRef.current.isSecondBlinkOpen
@@ -575,7 +579,7 @@ export default function SpriteAnimator({
       sy = row * cellHeight
     }
 
-    const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && activeAnimKey === 'idle')
+    const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && (activeAnimKey === 'idle' || activeAnimKey === 'idle-old'))
       ? getEyeShiftedCanvas(
           isStrip ? activeAnimKey : (spritesheet || defaultSheetSrc),
           img,

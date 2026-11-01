@@ -2041,6 +2041,8 @@ function registerIpcHandlers() {
   }
 
   ipcMain.on('window:move', (event, x, y) => {
+    lastCatBoundsRefreshTime = 0
+
     // Ignore all renderer move requests during drag. The renderer positions the cat
     // visually within the fullscreen window, and we reposition the window natively
     // only when 'window:mode -> mascot' is emitted on release.
