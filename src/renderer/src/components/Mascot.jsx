@@ -19,18 +19,24 @@ export const NORMAL_CAT_CX = 80
 export const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - SPRITE_HEIGHT / 2 // 128 - 8 - 90 = 30
 export const TREATMENT_CAT_CX = 175
 export const TREATMENT_CAT_CY = 192
+// ── Activity & Roam Timing Constants ────────────────────────────────────────
+export const ROAM_INTERVAL_MIN_MS = 25000
+export const ROAM_INTERVAL_MAX_MS = 70000
+export const ROAM_CHANCE = 0.5
+export const ROAM_DISTANCE_MIN_PX = 60
+export const ROAM_DISTANCE_MAX_PX = 260
+export const ACTIVITY_GAP_MIN_MS = 6000
+export const IDLE_LIFE_INTERVAL_MIN_MS = 10000
+export const IDLE_LIFE_INTERVAL_MAX_MS = 25000
+export const IDLE_LIFE_SIT_CHANCE = 0.35
+
 const FALLBACK_WIDTH = SPRITE_WIDTH
 const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
 const SLEEP_CHANCE = 0.4
-const IDLE_PAUSE_MIN_MS = 5000
-const IDLE_PAUSE_MAX_MS = 15000
 const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
 export const WALK_PX_PER_CYCLE = 70
-
-// Idle behavior chances (checked each idle pause between walks)
-const PLAY_CHANCE = 0.15         // Increased to compensate for removed typing roll
 
 export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff'])
 
@@ -62,10 +68,6 @@ export function getIdleWeights() {
     { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 14 },
   ]
 }
-
-// Duration ranges for idle behaviors (ms)
-const PLAY_MIN_MS = 3000
-const PLAY_MAX_MS = 6000
 
 // Click vs drag distinction
 const CLICK_MAX_DISTANCE = 5     // pixels
@@ -186,6 +188,7 @@ export default function Mascot({
   const spriteWrapRef = useRef(null)
   const accentTimerRef = useRef(null)
   const roamTimeoutRef = useRef(null)
+  const lastActivityEndRef = useRef(Date.now())
   const justDroppedRef = useRef(false)
 
   // Idle behavior timeout ref
@@ -378,6 +381,7 @@ export default function Mascot({
       if (oneShotPoseRef.current === targetAnim) {
         oneShotPoseRef.current = null
         setOneShotPose(null)
+        lastActivityEndRef.current = Date.now()
         const cb = oneShotCallbackRef.current
         oneShotCallbackRef.current = null
         cb?.()
@@ -443,6 +447,7 @@ export default function Mascot({
         if (oneShotPoseRef.current === animName) {
           oneShotPoseRef.current = null
           setOneShotPose(null)
+          lastActivityEndRef.current = Date.now()
           const cb = oneShotCallbackRef.current
           oneShotCallbackRef.current = null
           cb?.()
@@ -465,6 +470,7 @@ export default function Mascot({
         setPose('idle')
       }
       idleBehaviorTimeoutRef.current = null
+      lastActivityEndRef.current = Date.now()
     }, duration)
   }, [cancelIdleAndOneShot, catAnimationSpeed])
 
@@ -729,6 +735,7 @@ export default function Mascot({
             setPose('idle')
           }
           triggerAccentRef.current('is-squash')
+          lastActivityEndRef.current = Date.now()
         }
       }
       rafId = requestAnimationFrame(step)
@@ -819,22 +826,44 @@ export default function Mascot({
 
     const walkOnce = () => {
       if (gen !== roamGenRef.current) return
-      if (roamBlockedRef.current) return
+      if (roamBlockedRef.current) {
+        if (isDebugRef.current) {
+          console.log('[Mascot] Roam outcome: blocked by guard (roam blocked), next attempt in 2000ms')
+        }
+        later(walkOnce, 2000)
+        return
+      }
       if (Date.now() < calmUntilRef.current) {
-        later(walkOnce, Math.max(500, calmUntilRef.current - Date.now()))
+        const retryDelay = Math.max(500, calmUntilRef.current - Date.now())
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Roam outcome: blocked by guard (calm window), next attempt in ${Math.round(retryDelay)}ms`)
+        }
+        later(walkOnce, retryDelay)
         return
       }
       if (draggingRef.current || dragPointerDownRef.current) {
+        if (isDebugRef.current) {
+          console.log('[Mascot] Roam outcome: blocked by guard (dragging), next attempt in 400ms')
+        }
         console.log(`[Renderer] walkOnce deferred (still dragging) gen=${gen}`)
         later(walkOnce, 400)
         return
       }
-      if (poseRef.current === 'sleep') return
+      if (poseRef.current === 'sleep') {
+        if (isDebugRef.current) {
+          console.log('[Mascot] Roam outcome: blocked by guard (sleep)')
+        }
+        return
+      }
       // Don't interrupt active idle behaviors or one-shots
       if (
         oneShotPoseRef.current ||
         (poseRef.current !== 'idle' && !poseRef.current.startsWith('walk'))
       ) {
+        const reason = oneShotPoseRef.current ? `oneShot ${oneShotPoseRef.current}` : `pose ${poseRef.current}`
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Roam outcome: blocked by guard (${reason}), next attempt in 1000ms`)
+        }
         later(walkOnce, 1000)
         return
       }
@@ -845,24 +874,30 @@ export default function Mascot({
         setWalkMs(0)
         poseRef.current = 'sleep'
         setPose('sleep')
+        if (isDebugRef.current) {
+          console.log('[Mascot] Roam outcome: started sleep')
+        }
         return
       }
 
-      // ── Random idle behaviors before walking ──
-      // Roll for a random behavior instead of walking sometimes
-      const roll = Math.random()
-      let triggeredBehavior = 'walk'
-      if (roll < PLAY_CHANCE) triggeredBehavior = 'play'
-
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[Mascot] Idle roll: ${roll.toFixed(3)} -> Action: ${triggeredBehavior} (Thresholds: Play <${PLAY_CHANCE})`)
+      // Check activity gap: do not start anything if inside ACTIVITY_GAP_MIN_MS of last activity
+      const timeSinceActivity = Date.now() - lastActivityEndRef.current
+      if (timeSinceActivity < ACTIVITY_GAP_MIN_MS) {
+        const retryDelay = randBetween(3000, 5000)
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Roam outcome: blocked by activity gap (${Math.round(timeSinceActivity)}ms < ${ACTIVITY_GAP_MIN_MS}ms), next attempt in ${Math.round(retryDelay)}ms`)
+        }
+        later(walkOnce, retryDelay)
+        return
       }
 
-      if (triggeredBehavior === 'play') {
-        // Play: cat bats its paws for a few seconds
-        const playDuration = randBetween(PLAY_MIN_MS, PLAY_MAX_MS)
-        startIdleBehavior('play', playDuration)
-        later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
+      // Roll roam chance (50% chance to walk, otherwise sit still)
+      if (Math.random() >= ROAM_CHANCE) {
+        const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Roam outcome: skipped by chance (${Math.round(ROAM_CHANCE * 100)}%), next attempt in ${Math.round(nextDelay)}ms`)
+        }
+        later(walkOnce, nextDelay)
         return
       }
 
@@ -876,8 +911,7 @@ export default function Mascot({
       if (currentX <= minX + 24) dir = 'right'
       if (currentX >= maxX - 24) dir = 'left'
 
-      const span = Math.max(80, (maxX - minX) * 0.4)
-      const distance = randBetween(span * 0.45, span)
+      const distance = randBetween(ROAM_DISTANCE_MIN_PX, ROAM_DISTANCE_MAX_PX)
 
       // Compute clamped destination BEFORE starting the walk
       let targetX = clamp(
@@ -902,7 +936,11 @@ export default function Mascot({
           realDist = oppDist
         } else {
           // Neither direction has room: skip this roam and stay idle
-          later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
+          const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+          if (isDebugRef.current) {
+            console.log(`[Mascot] Roam outcome: skipped by guard (no room >= 40px), next attempt in ${Math.round(nextDelay)}ms`)
+          }
+          later(walkOnce, nextDelay)
           return
         }
       }
@@ -919,6 +957,9 @@ export default function Mascot({
       poseRef.current = dir === 'left' ? 'walk-left' : 'walk-right'
       setPose(poseRef.current)
       setWalkMs(duration)
+      if (isDebugRef.current) {
+        console.log(`[Mascot] Roam outcome: started walk-${dir} (dist=${realDist.toFixed(1)}px, duration=${Math.round(duration)}ms)`)
+      }
       console.log(`[Renderer] walkOnce START gen=${gen} dir=${dir} currentX=${currentX.toFixed(1)} targetX=${targetX.toFixed(1)} realDist=${realDist.toFixed(1)} speed=${speedPxPerSec.toFixed(1)}px/s walkRate=${walkRate.toFixed(2)} duration=${Math.round(duration)}ms`)
 
       // Stretch: body-gather moment as the walk leg launches
@@ -954,11 +995,19 @@ export default function Mascot({
         }
         // Squash: landing accent when arriving at destination
         triggerAccentRef.current('is-squash')
-        later(walkOnce, randBetween(IDLE_PAUSE_MIN_MS, IDLE_PAUSE_MAX_MS))
+        lastActivityEndRef.current = Date.now()
+        const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Roam walk ended, next attempt in ${Math.round(nextDelay)}ms`)
+        }
+        later(walkOnce, nextDelay)
       }, duration + 40)
     }
 
-    const initialDelay = justDroppedRef.current ? randBetween(5000, 6000) : randBetween(2500, 6000)
+    const initialDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+    if (isDebugRef.current) {
+      console.log(`[Mascot] Roam scheduler started, next attempt in ${Math.round(initialDelay)}ms`)
+    }
     console.log(`[Renderer] roam loop start gen=${gen} justDropped=${justDroppedRef.current} initialDelay=${Math.round(initialDelay)}ms draggingRef=${draggingRef.current}`)
     justDroppedRef.current = false
     later(walkOnce, initialDelay)
@@ -970,7 +1019,7 @@ export default function Mascot({
         clearTimeout(idleBehaviorTimeoutRef.current)
       }
     }
-  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, startIdleBehavior, chatState, notificationVisible, wakeUp, isRoamBlocked, isEating])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, chatState, notificationVisible, wakeUp, isRoamBlocked, isEating])
 
   // ── Part 2: Idle Life Scheduler (every 10–25s) ────────────────────────────
   useEffect(() => {
@@ -994,10 +1043,30 @@ export default function Mascot({
       else if (roamBlockedRef.current) blockReason = 'roam blocked'
 
       if (blockReason) {
+        const retryDelay = randBetween(3000, 5000)
         if (isDebugRef.current) {
-          console.log(`[Mascot] idleLife skipped: ${blockReason}, retrying in ~5s`)
+          console.log(`[Mascot] Idle-life outcome: blocked by guard (${blockReason}), next attempt in ${Math.round(retryDelay)}ms`)
         }
-        return randBetween(4000, 6000)
+        return retryDelay
+      }
+
+      const timeSinceActivity = Date.now() - lastActivityEndRef.current
+      if (timeSinceActivity < ACTIVITY_GAP_MIN_MS) {
+        const retryDelay = randBetween(3000, 5000)
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Idle-life outcome: blocked by activity gap (${Math.round(timeSinceActivity)}ms < ${ACTIVITY_GAP_MIN_MS}ms), next attempt in ${Math.round(retryDelay)}ms`)
+        }
+        return retryDelay
+      }
+
+      const nextDelay = randBetween(IDLE_LIFE_INTERVAL_MIN_MS, IDLE_LIFE_INTERVAL_MAX_MS)
+
+      // 35% chance that it does nothing at all (she just keeps sitting)
+      if (Math.random() < IDLE_LIFE_SIT_CHANCE) {
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Idle-life outcome: skipped by chance (35% sit), next attempt in ${Math.round(nextDelay)}ms`)
+        }
+        return nextDelay
       }
 
       const allWeights = getIdleWeights()
@@ -1017,7 +1086,7 @@ export default function Mascot({
 
       lastIdleBehaviorRef.current = selected.pose
       if (isDebugRef.current) {
-        console.log(`[Mascot] idleLife picked: ${selected.pose} (type=${selected.type})`)
+        console.log(`[Mascot] Idle-life outcome: started ${selected.pose} (${selected.type}), next attempt in ${Math.round(nextDelay)}ms`)
       }
 
       if (selected.type === 'oneshot') {
@@ -1026,10 +1095,14 @@ export default function Mascot({
         startIdleBehaviorRef.current?.(selected.pose, selected.duration)
       }
 
-      return randBetween(10000, 25000)
+      return nextDelay
     }
 
-    scheduleNextIdle(randBetween(10000, 25000))
+    const initialDelay = randBetween(IDLE_LIFE_INTERVAL_MIN_MS, IDLE_LIFE_INTERVAL_MAX_MS)
+    if (isDebugRef.current) {
+      console.log(`[Mascot] Idle-life scheduler started, next attempt in ${Math.round(initialDelay)}ms`)
+    }
+    scheduleNextIdle(initialDelay)
     return () => {
       if (timerId) clearTimeout(timerId)
     }
