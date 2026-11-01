@@ -4,6 +4,7 @@ import SpriteAnimator, { SPEED_FACTORS } from './SpriteAnimator'
 import listeningManifest from '../assets/cat-sprite/listening-manifest.json'
 import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
 import animsManifest from '../assets/cat-sprite/anims/anims.json'
+import { useMood, moodModifiers, MOOD_EMOJIS } from '../hooks/useMood'
 
 const MARGIN = 16
 const SPRITE_WIDTH = 126
@@ -38,7 +39,7 @@ const WALK_MIN_MS = 3500
 const WALK_MAX_MS = 6500
 export const WALK_PX_PER_CYCLE = 70
 
-export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff'])
+export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff', 'annoyed', 'sad'])
 
 export function getAnimationDuration(name, speed = 'normal', holdMs = 800) {
   let animName = name
@@ -54,19 +55,24 @@ export function getAnimationDuration(name, speed = 'normal', holdMs = 800) {
   return 2000
 }
 
-export function getIdleWeights() {
-  return [
-    { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 15 },
-    { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 15 },
+export function getIdleWeights(mood = null) {
+  const mods = moodModifiers(mood)
+  const base = [
+    { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 15 * mods.groom },
+    { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 15 * mods.yawn },
     { pose: 'loaf', type: 'hold', duration: getAnimationDuration('loaf'), weight: 12 },
     { pose: 'siderest', type: 'hold', duration: getAnimationDuration('siderest'), weight: 12 },
-    { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 12 },
-    { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 12 },
-    { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: 14 },
-    { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: 14 },
-    { pose: 'gift', type: 'oneshot', duration: getAnimationDuration('gift'), weight: 14 },
-    { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 14 },
+    { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 12 * mods.proud },
+    { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 12 * mods.play },
+    { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: 14 * mods.toyplay },
+    { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: 14 * mods.curious },
+    { pose: 'gift', type: 'oneshot', duration: getAnimationDuration('gift'), weight: 14 * mods.gift },
+    { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 14 * mods.knockoff },
   ]
+  if (mods.sadWeight > 0) {
+    base.push({ pose: 'sad', type: 'oneshot', duration: getAnimationDuration('sad'), weight: mods.sadWeight })
+  }
+  return base.filter((item) => item.weight > 0)
 }
 
 // Click vs drag distinction
@@ -150,6 +156,9 @@ export default function Mascot({
   onCallMeow,
   onLaunchMeow,
   developerMode = false,
+  moodEnabled = true,
+  moodIndicator = 'hover',
+  catRemarks = true,
 }) {
   const containerRef = useRef(null)
   
@@ -478,6 +487,45 @@ export default function Mascot({
   playOneShotRef.current = playOneShot
   const startIdleBehaviorRef = useRef(startIdleBehavior)
   startIdleBehaviorRef.current = startIdleBehavior
+
+  const isIdleForRemarks = Boolean(
+    pose === 'idle' &&
+    !oneShotPose &&
+    !dragging &&
+    !isReminder &&
+    chatState === 'idle' &&
+    !paused
+  )
+
+  const {
+    mood,
+    recentMoodChange,
+    handlePetStart: moodHandlePetStart,
+    handlePetStateChange: moodHandlePetStateChange,
+    handleBodyClick: moodHandleBodyClick,
+    handleShortcutCall: moodHandleShortcutCall,
+    handleChatReply: moodHandleChatReply,
+  } = useMood({
+    moodEnabled,
+    hungerState,
+    isSleeping: pose === 'sleep',
+    catRemarks,
+    onTriggerRemark,
+    playOneShot,
+    developerMode,
+    isIdleForRemarks,
+  })
+
+  const moodRef = useRef(mood)
+  moodRef.current = mood
+
+  const prevChatStateRef = useRef(chatState)
+  useEffect(() => {
+    if (prevChatStateRef.current !== 'reply' && chatState === 'reply') {
+      moodHandleChatReply()
+    }
+    prevChatStateRef.current = chatState
+  }, [chatState, moodHandleChatReply])
 
   const startEating = useCallback(() => {
     // Interrupt whatever it was doing to eat
@@ -868,9 +916,11 @@ export default function Mascot({
         return
       }
 
+      const mods = moodModifiers(moodRef.current)
       const idleFor = Date.now() - lastInteractRef.current
       const sleepChance = isLowBatteryRef.current ? Math.min(1, SLEEP_CHANCE * 2) : SLEEP_CHANCE
-      if (!mediaPlayingRef.current && idleFor >= SLEEP_AFTER_MS && Math.random() < sleepChance) {
+      const effectiveSleepAfterMs = SLEEP_AFTER_MS * mods.sleepDelay
+      if (!mediaPlayingRef.current && idleFor >= effectiveSleepAfterMs && Math.random() < sleepChance) {
         setWalkMs(0)
         poseRef.current = 'sleep'
         setPose('sleep')
@@ -891,11 +941,15 @@ export default function Mascot({
         return
       }
 
-      // Roll roam chance (50% chance to walk, otherwise sit still)
-      if (Math.random() >= ROAM_CHANCE) {
-        const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+      // Roll roam chance (50% base chance to walk, otherwise sit still)
+      let effectiveRoamChance = ROAM_CHANCE * mods.roamChance
+      if (mods.roamChanceCap !== null) {
+        effectiveRoamChance = Math.min(mods.roamChanceCap, effectiveRoamChance)
+      }
+      if (Math.random() >= effectiveRoamChance) {
+        const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
         if (isDebugRef.current) {
-          console.log(`[Mascot] Roam outcome: skipped by chance (${Math.round(ROAM_CHANCE * 100)}%), next attempt in ${Math.round(nextDelay)}ms`)
+          console.log(`[Mascot] Roam outcome: skipped by chance (${Math.round(effectiveRoamChance * 100)}%), next attempt in ${Math.round(nextDelay)}ms`)
         }
         later(walkOnce, nextDelay)
         return
@@ -936,7 +990,7 @@ export default function Mascot({
           realDist = oppDist
         } else {
           // Neither direction has room: skip this roam and stay idle
-          const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+          const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
           if (isDebugRef.current) {
             console.log(`[Mascot] Roam outcome: skipped by guard (no room >= 40px), next attempt in ${Math.round(nextDelay)}ms`)
           }
@@ -996,7 +1050,7 @@ export default function Mascot({
         // Squash: landing accent when arriving at destination
         triggerAccentRef.current('is-squash')
         lastActivityEndRef.current = Date.now()
-        const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+        const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
         if (isDebugRef.current) {
           console.log(`[Mascot] Roam walk ended, next attempt in ${Math.round(nextDelay)}ms`)
         }
@@ -1004,7 +1058,8 @@ export default function Mascot({
       }, duration + 40)
     }
 
-    const initialDelay = randBetween(ROAM_INTERVAL_MIN_MS, ROAM_INTERVAL_MAX_MS)
+    const initialMods = moodModifiers(moodRef.current)
+    const initialDelay = randBetween(ROAM_INTERVAL_MIN_MS * initialMods.roamInterval, ROAM_INTERVAL_MAX_MS * initialMods.roamInterval)
     if (isDebugRef.current) {
       console.log(`[Mascot] Roam scheduler started, next attempt in ${Math.round(initialDelay)}ms`)
     }
@@ -1069,7 +1124,7 @@ export default function Mascot({
         return nextDelay
       }
 
-      const allWeights = getIdleWeights()
+      const allWeights = getIdleWeights(moodRef.current)
       let availableWeights = allWeights.filter((item) => item.pose !== lastIdleBehaviorRef.current)
       if (availableWeights.length === 0) availableWeights = allWeights
 
@@ -1242,6 +1297,7 @@ export default function Mascot({
   // ── Part 4: Call Cat Listener ─────────────────────────────────────────────
   useEffect(() => {
     const unsub = window.api?.on?.('mascot:call', (payload) => {
+      moodHandleShortcutCall()
       // Ignore if dragging, eating, or in reminder / chat
       if (
         draggingRef.current ||
@@ -1327,7 +1383,7 @@ export default function Mascot({
         callWalkTimeoutRef.current = null
       }
     }
-  }, [isReminder, chatState, cancelIdleAndOneShot, playOneShot, onCallMeow])
+  }, [isReminder, chatState, cancelIdleAndOneShot, playOneShot, onCallMeow, moodHandleShortcutCall])
 
   // ── Part 5: Launch Greeting ───────────────────────────────────────────────
   useEffect(() => {
@@ -1728,6 +1784,8 @@ export default function Mascot({
     if (Math.hypot(dx, dy) >= CLICK_MAX_DISTANCE) return
     if (Date.now() - downInfo.time > 800) return
 
+    moodHandleBodyClick()
+
     if (b === 0) {
       const now = Date.now()
       const prev = lastLeftClickRef.current
@@ -1925,6 +1983,8 @@ export default function Mascot({
       setPose('idle')
       setIsHoveringHead(true)
       onPetStart?.()
+      moodHandlePetStart()
+      moodHandlePetStateChange(true)
     }
   }
 
@@ -1934,6 +1994,7 @@ export default function Mascot({
     if (isHoveringHead) {
       petLeaveTimeoutRef.current = setTimeout(() => {
         setIsHoveringHead(false)
+        moodHandlePetStateChange(false)
         calmUntilRef.current = Date.now() + 2000
         setTimeout(() => {
           setRoamEpoch((n) => n + 1)
@@ -2154,6 +2215,27 @@ export default function Mascot({
     }
   }, [targetX, targetY])
 
+  const isOverlayShowing = Boolean(
+    chatState !== 'idle' ||
+    notificationVisible ||
+    (isReminder && reminderCatAnimation !== false) ||
+    hungerState === 'ACTIVE' ||
+    displayPose === 'typing' ||
+    displayPose === 'typingfast'
+  )
+
+  const isCursorNear = Boolean(
+    (cursorOffset && Math.hypot(cursorOffset.x, cursorOffset.y) <= 120) ||
+    isHoveringHead
+  )
+
+  const isIndicatorVisible = Boolean(
+    moodEnabled &&
+    mood &&
+    !isOverlayShowing &&
+    (moodIndicator === 'always' || (moodIndicator === 'hover' && (isCursorNear || recentMoodChange)))
+  )
+
   return (
     <div
       ref={containerRef}
@@ -2211,6 +2293,29 @@ export default function Mascot({
           onPointerLeave={handleHeadPointerLeave}
           title="Pet me!"
         />
+        {/* Mood indicator emoji */}
+        {moodEnabled && mood && MOOD_EMOJIS[mood] && (
+          <div
+            className="mascot-mood-indicator"
+            style={{
+              position: 'absolute',
+              top: '25%',
+              left: flipped ? '28%' : '72%',
+              transform: 'translate(-50%, -50%)',
+              fontSize: '18px',
+              lineHeight: 1,
+              pointerEvents: 'none',
+              userSelect: 'none',
+              zIndex: 12,
+              transition: 'opacity 0.25s ease-in-out',
+              opacity: isIndicatorVisible ? 1 : 0,
+              filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4))',
+            }}
+            aria-hidden="true"
+          >
+            {MOOD_EMOJIS[mood]}
+          </div>
+        )}
         <div
           className="mascot-opacity-wrap"
           style={{ opacity: effectiveOpacity }}

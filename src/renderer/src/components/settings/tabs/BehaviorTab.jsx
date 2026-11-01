@@ -67,6 +67,12 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
     { value: 'sit', label: 'Sit and wait' },
   ]
 
+  const moodIndicatorOptions = [
+    { value: 'always', label: 'Always' },
+    { value: 'hover', label: 'On hover' },
+    { value: 'off', label: 'Off' },
+  ]
+
   return (
     <>
       <Card
@@ -170,10 +176,9 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Smile}
           label="Enable mood system"
           hint="Let your buddy have dynamic moods based on activity"
-          soon={true}
         >
           <Toggle
-            checked={Boolean(settings.moodEnabled)}
+            checked={settings.moodEnabled !== false}
             onChange={(e) => saveSettingsPatch({ moodEnabled: e.target.checked })}
             ariaLabel="Enable mood system"
           />
@@ -181,14 +186,15 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
 
         <Row
           icon={Smile}
-          label="Show mood indicator"
+          label="Mood indicator"
           hint="Display mood icon near the cat"
-          soon={true}
         >
-          <Toggle
-            checked={Boolean(settings.moodIndicator)}
-            onChange={(e) => saveSettingsPatch({ moodIndicator: e.target.checked })}
-            ariaLabel="Show mood indicator"
+          <Select
+            value={settings.moodIndicator || 'hover'}
+            onChange={(e) => saveSettingsPatch({ moodIndicator: e.target.value })}
+            options={moodIndicatorOptions}
+            disabled={settings.moodEnabled === false}
+            ariaLabel="Mood indicator"
           />
         </Row>
       </Card>

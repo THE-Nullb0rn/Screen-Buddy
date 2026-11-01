@@ -107,6 +107,84 @@ let lastTrayTooltipUpdateAt = 0
 let lastTrayTooltipMode = null
 let typingDetector = null
 
+// ─── Mood State Persistence ────────────────────────────────────────────────
+let latestMoodState = null
+
+function getMoodStateFilePath() {
+  return path.join(app.getPath('userData'), 'mood-state.json')
+}
+
+function getMoodStateTmpPath() {
+  return path.join(app.getPath('userData'), 'mood-state.json.tmp')
+}
+
+function loadAndCatchUpMoodState() {
+  const defaultState = {
+    affection: 60,
+    energy: 80,
+    savedAt: Date.now(),
+  }
+
+  try {
+    const filePath = getMoodStateFilePath()
+    if (!fs.existsSync(filePath)) {
+      return defaultState
+    }
+
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') {
+      return defaultState
+    }
+
+    let affection = Number(parsed.affection)
+    let energy = Number(parsed.energy)
+    const savedAt = Number(parsed.savedAt)
+
+    if (!Number.isFinite(affection) || !Number.isFinite(energy) || !Number.isFinite(savedAt)) {
+      return defaultState
+    }
+
+    affection = Math.min(100, Math.max(0, affection))
+    energy = Math.min(100, Math.max(0, energy))
+
+    const now = Date.now()
+    const maxElapsedMs = 4 * 60 * 60 * 1000 // 4 hours
+    const elapsed = Math.min(Math.max(0, now - savedAt), maxElapsedMs)
+
+    // Affection decay for elapsed time (1 per 3 min)
+    const affectionDecay = elapsed / (3 * 60 * 1000)
+    affection = Math.min(100, Math.max(0, affection - affectionDecay))
+
+    // Energy moves toward 70 by at most the same elapsed ratio (simple linear, clamped)
+    const elapsedRatio = elapsed / maxElapsedMs
+    energy = Math.min(100, Math.max(0, energy + (70 - energy) * elapsedRatio))
+
+    return {
+      affection,
+      energy,
+      savedAt: now,
+    }
+  } catch (err) {
+    console.error('[main] Failed to load mood state, using defaults:', err)
+    return defaultState
+  }
+}
+
+function saveMoodStateToDisk(state) {
+  if (!state || typeof state !== 'object') return
+  try {
+    const userDataDir = app.getPath('userData')
+    fs.mkdirSync(userDataDir, { recursive: true })
+    const filePath = getMoodStateFilePath()
+    const tmpPath = getMoodStateTmpPath()
+    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8')
+    fs.renameSync(tmpPath, filePath)
+  } catch (err) {
+    console.error('[main] Failed to save mood state to disk:', err)
+  }
+}
+
 // ─── Chat state (session-only, never persisted) ───────────────────────────────
 // Tracks the current chat UI state so the hotkey watcher can guard correctly.
 // Values mirror the renderer chatState: 'idle' | 'input' | 'waiting' | 'reply'
@@ -288,6 +366,15 @@ app.on('will-quit', () => {
   stopEyeTrackingPolling?.()
   removeSettingsHotkeyFallback()
   removeCallHotkeyFallback()
+  if (latestMoodState) {
+    saveMoodStateToDisk(latestMoodState)
+  }
+})
+
+app.on('before-quit', () => {
+  if (latestMoodState) {
+    saveMoodStateToDisk(latestMoodState)
+  }
 })
 
 // ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
@@ -2771,6 +2858,31 @@ function registerIpcHandlers() {
 
   ipcMain.on('settings:open', () => {
     openSettingsWindow()
+  })
+
+  // ── Mood state persistence ────────────────────────────────────────────────
+  ipcMain.handle('get-mood-state', () => {
+    if (!latestMoodState) {
+      latestMoodState = loadAndCatchUpMoodState()
+    }
+    return latestMoodState
+  })
+
+  ipcMain.handle('save-mood-state', (_event, state) => {
+    if (state && typeof state === 'object') {
+      const affection = Number(state.affection)
+      const energy = Number(state.energy)
+      const savedAt = Number(state.savedAt) || Date.now()
+      if (Number.isFinite(affection) && Number.isFinite(energy)) {
+        latestMoodState = {
+          affection: Math.min(100, Math.max(0, affection)),
+          energy: Math.min(100, Math.max(0, energy)),
+          savedAt,
+        }
+        saveMoodStateToDisk(latestMoodState)
+      }
+    }
+    return { ok: true }
   })
 }
 

@@ -293,8 +293,8 @@ const DEFAULT_SETTINGS = {
   hungerNotify: true,
   hungerBehavior: 'search-food',
   hungerPauseSleeping: true,
-  moodEnabled: false,
-  moodIndicator: false,
+  moodEnabled: true,
+  moodIndicator: 'hover',
 
   // ── Notifications ──
   notificationAnimations: true,
@@ -406,6 +406,14 @@ function loadSettings() {
         } else {
           delete saved.hungerBehavior
         }
+        needsSave = true
+      }
+      if (saved.moodIndicator !== undefined && !['always', 'hover', 'off'].includes(saved.moodIndicator)) {
+        delete saved.moodIndicator
+        needsSave = true
+      }
+      if (saved.moodEnabled !== undefined && typeof saved.moodEnabled !== 'boolean') {
+        delete saved.moodEnabled
         needsSave = true
       }
       if (saved.startMinimized !== undefined) {
@@ -530,7 +538,6 @@ function validateSettingsUpdate(patch) {
       case 'hungerNotify':
       case 'hungerPauseSleeping':
       case 'moodEnabled':
-      case 'moodIndicator':
       case 'notificationAnimations':
       case 'notificationSounds':
       case 'notificationAutoHide':
@@ -831,6 +838,15 @@ function validateSettingsUpdate(patch) {
           sanitized.hungerBehavior = 'search-food'
         } else {
           debugLog('hungerBehavior', 'invalid hunger behavior')
+        }
+        break
+      }
+
+      case 'moodIndicator': {
+        if (typeof value === 'string' && ['always', 'hover', 'off'].includes(value)) {
+          sanitized.moodIndicator = value
+        } else {
+          debugLog('moodIndicator', 'must be always, hover, or off')
         }
         break
       }

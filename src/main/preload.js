@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('api', {
   openSettingsFolder: () => ipcRenderer.invoke('app:open-settings-folder'),
   resetSettings: () => ipcRenderer.invoke('settings:reset'),
   testChatConnection: () => ipcRenderer.invoke('chat:test-connection'),
+  getMoodState: () => ipcRenderer.invoke('get-mood-state'),
+  saveMoodState: (state) => ipcRenderer.invoke('save-mood-state', state),
   platform: process.platform,
   updates: { check: () => ipcRenderer.invoke('updates:check') },
 

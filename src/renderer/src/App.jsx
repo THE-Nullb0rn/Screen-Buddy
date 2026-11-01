@@ -958,6 +958,9 @@ export default function App() {
         onCallMeow={() => playSound('meow_happy', { settings, paused, isAsleep: false })}
         onLaunchMeow={() => playSound('meow_happy', { settings, paused: false, isAsleep: false })}
         developerMode={Boolean(settings.developerMode)}
+        moodEnabled={settings.moodEnabled !== false}
+        moodIndicator={settings.moodIndicator || 'hover'}
+        catRemarks={settings.catRemarks !== false}
       />}
 
     </>
