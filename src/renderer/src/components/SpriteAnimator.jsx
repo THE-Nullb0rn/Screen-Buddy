@@ -14,9 +14,38 @@ for (const [path, loader] of Object.entries(stripModules)) {
   stripLoaders[name] = loader
 }
 
-// ── LRU strip image cache (at most 3 strips decoded) ──────────────────────────
+// ── LRU strip image cache (pinned core anims never evicted, inactive unpinned evicted) ──
 const stripCache = new Map() // url -> Image
 const stripUrlCache = new Map() // animName -> Promise<string>
+const pinnedUrls = new Set()
+const activeUrls = new Set()
+
+export const CORE_ANIMATIONS = ['idle', 'walk', 'purr', 'drag', 'fall', 'sleep', 'wakeup']
+
+let preloadedOnce = false
+export function preloadCommonAnimations() {
+  if (preloadedOnce) return
+  preloadedOnce = true
+  CORE_ANIMATIONS.forEach((name) => {
+    try {
+      loadStripUrl(name)
+        .then((url) => {
+          if (url) {
+            pinnedUrls.add(url)
+            loadStripImage(url).catch(() => {})
+          }
+        })
+        .catch(() => {})
+    } catch (_) {
+      // ignore
+    }
+  })
+  try {
+    getOldSheetImage(defaultSheetSrc, () => {})
+  } catch (_) {
+    // ignore
+  }
+}
 
 export function loadStripUrl(animName) {
   if (stripUrlCache.has(animName)) return stripUrlCache.get(animName)
@@ -40,21 +69,34 @@ export function loadStripImage(url) {
     if (!img) {
       img = new Image()
       stripCache.set(url, img)
-      // Evict oldest if cache size exceeds 3
-      while (stripCache.size > 3) {
-        const oldestKey = stripCache.keys().next().value
-        const oldestImg = stripCache.get(oldestKey)
-        if (oldestImg && oldestImg !== img) {
-          oldestImg.src = ''
+      // Evict oldest unpinned, inactive if cache exceeds limit
+      const MAX_CACHE_SIZE = 16
+      if (stripCache.size > MAX_CACHE_SIZE) {
+        for (const [key, cachedImg] of stripCache.entries()) {
+          if (stripCache.size <= MAX_CACHE_SIZE) break
+          if (key === url || pinnedUrls.has(key) || activeUrls.has(key)) continue
+          if (cachedImg && cachedImg !== img) {
+            cachedImg.src = ''
+          }
+          stripCache.delete(key)
         }
-        stripCache.delete(oldestKey)
       }
       img.src = url
     }
     if (img.complete && img.naturalWidth > 0) {
-      resolve(img)
+      if (img.decode) {
+        img.decode().then(() => resolve(img)).catch(() => resolve(img))
+      } else {
+        resolve(img)
+      }
     } else {
-      img.onload = () => resolve(img)
+      img.onload = () => {
+        if (img.decode) {
+          img.decode().then(() => resolve(img)).catch(() => resolve(img))
+        } else {
+          resolve(img)
+        }
+      }
       img.onerror = () => resolve(null)
     }
   })
@@ -150,11 +192,21 @@ export function resolveAnimation(name, isListening = false) {
   return { type: 'strip', name: 'idle', config: animsManifest.animations?.idle }
 }
 
+export function getAssetKey(resolved, isListening = false, customSheet = null) {
+  if (!resolved) return 'strip:idle'
+  if (resolved.type === 'strip') {
+    return `strip:${resolved.name}`
+  }
+  const sheetName = isListening ? 'listening' : (customSheet ? 'custom' : (resolved.name || 'default'))
+  return `sheet:${sheetName}`
+}
+
 /**
  * Custom hook to drive frame stepping based on manifest or strip config
  */
 export function useSpriteAnimation({
   animation = 'idle',
+  assetKey,
   manifest = defaultManifest,
   stripConfig = null,
   loop: propLoop,
@@ -186,8 +238,11 @@ export function useSpriteAnimation({
   const animRef = useRef({ totalFrames, fps, loop, frameDurations, isStrip })
   animRef.current = { totalFrames, fps, loop, frameDurations, isStrip }
 
+  const switchKey = assetKey || animation
+  const currentKeyRef = useRef(switchKey)
   const currentAnimationRef = useRef(animation)
-  const isAnimSwitch = currentAnimationRef.current !== animation
+  currentAnimationRef.current = animation
+  const isAnimSwitch = currentKeyRef.current !== switchKey
   const activeFrameIndex = isAnimSwitch ? 0 : frameIndex
   const onEndRef = useRef(onAnimationEnd)
   const frameIndexRef = useRef(0)
@@ -205,8 +260,8 @@ export function useSpriteAnimation({
   fpsCapRef.current = fpsCap
 
   useEffect(() => {
-    if (currentAnimationRef.current !== animation) {
-      currentAnimationRef.current = animation
+    if (currentKeyRef.current !== switchKey) {
+      currentKeyRef.current = switchKey
       frameIndexRef.current = 0
       setFrameIndex(0)
       if (animation === 'idle' || animation === 'idle-old') {
@@ -218,7 +273,7 @@ export function useSpriteAnimation({
         }
       }
     }
-  }, [animation])
+  }, [switchKey, animation])
 
   useEffect(() => {
     let animFrameId
@@ -305,7 +360,7 @@ export function useSpriteAnimation({
 
     animFrameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(animFrameId)
-  }, [animation])
+  }, [switchKey])
 
   let currentFrame = activeFrameIndex
   if (!isStrip) {
@@ -555,31 +610,40 @@ export default function SpriteAnimator({
     (typeof spritesheet === 'string' && spritesheet.includes('listening'))
   )
 
+  const targetResolved = resolveAnimation(animation, isListeningMode)
+  const targetAssetKey = getAssetKey(targetResolved, isListeningMode, spritesheet)
+
   // Image references for seamless switching (no blank flash)
   const currentImgRef = useRef(null)
   const [activeAsset, setActiveAsset] = useState(() => {
     const initialResolved = resolveAnimation(animation, isListeningMode)
     const initialIsStrip = initialResolved.type === 'strip'
+    const initialKey = getAssetKey(initialResolved, isListeningMode, spritesheet)
     return {
       animName: initialResolved.name,
       isStrip: initialIsStrip,
       stripConfig: initialIsStrip ? initialResolved.config : null,
       image: null,
       imageKey: initialResolved.name,
+      assetKey: initialKey,
     }
   })
 
   // Load strip or old sheet
   useEffect(() => {
     let cancelled = false
-    const targetResolved = resolveAnimation(animation, isListeningMode)
-    const targetIsStrip = targetResolved.type === 'strip'
-    const targetName = targetResolved.name
-    const targetConfig = targetIsStrip ? targetResolved.config : null
+    const targetResolvedAnim = resolveAnimation(animation, isListeningMode)
+    const targetIsStrip = targetResolvedAnim.type === 'strip'
+    const targetName = targetResolvedAnim.name
+    const targetConfig = targetIsStrip ? targetResolvedAnim.config : null
+    const targetKey = getAssetKey(targetResolvedAnim, isListeningMode, spritesheet)
+    let registeredUrl = null
 
     if (targetIsStrip) {
       loadStripUrl(targetName).then((url) => {
         if (cancelled || !url) return
+        registeredUrl = url
+        activeUrls.add(url)
         loadStripImage(url).then((img) => {
           if (cancelled || !img) return
           currentImgRef.current = img
@@ -589,6 +653,7 @@ export default function SpriteAnimator({
             stripConfig: targetConfig,
             image: img,
             imageKey: targetName,
+            assetKey: targetKey,
           })
         })
       })
@@ -603,16 +668,19 @@ export default function SpriteAnimator({
           stripConfig: null,
           image: img,
           imageKey: sheetSrc,
+          assetKey: targetKey,
         })
       })
       return () => {
         cancelled = true
         unsub()
+        if (registeredUrl) activeUrls.delete(registeredUrl)
       }
     }
 
     return () => {
       cancelled = true
+      if (registeredUrl) activeUrls.delete(registeredUrl)
     }
   }, [animation, isListeningMode, spritesheet])
 
@@ -641,6 +709,7 @@ export default function SpriteAnimator({
 
   const { currentFrame, cellWidth, cellHeight, columns } = useSpriteAnimation({
     animation: activeAsset.animName,
+    assetKey: activeAsset.assetKey,
     manifest: isListeningMode ? listeningManifest : manifest,
     stripConfig: activeAsset.isStrip ? activeAsset.stripConfig : null,
     loop,
@@ -660,6 +729,11 @@ export default function SpriteAnimator({
     const canvas = canvasRef.current
     const img = currentImgRef.current || activeAsset.image
     if (!canvas || !img) return
+
+    // Atomicity guard: do not clear or draw if activeAsset does not match the requested animation
+    if (activeAsset.assetKey !== targetAssetKey) {
+      return
+    }
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -703,19 +777,16 @@ export default function SpriteAnimator({
       drawTracer.shift()
     }
 
-    const isSpuriousAnim = resolvedAnim !== requestedAnim && requestedAnim !== 'idle-old'
     const isSpuriousDrag = String(imageKey).includes('drag') && requestedAnim !== 'drag' && requestedAnim !== 'fall'
 
-    if (isSpuriousAnim || isSpuriousDrag) {
+    // Only log if an unexpected mismatch slips through our guard
+    if (isSpuriousDrag) {
       console.warn('[sprite-flash] Spurious draw detected!', {
         requestedAnim,
         resolvedAnim,
         imageKey,
         recentDraws: drawTracer.slice(-5),
       })
-    }
-
-    if (isSpuriousDrag) {
       return
     }
 
@@ -760,6 +831,7 @@ export default function SpriteAnimator({
     }
   }, [
     animation,
+    targetAssetKey,
     currentFrame,
     activeAsset,
     cellWidth,
@@ -791,3 +863,11 @@ export default function SpriteAnimator({
     />
   )
 }
+
+// Preload core animations safely at the end of the module
+try {
+  preloadCommonAnimations()
+} catch (_) {
+  // ignore
+}
+

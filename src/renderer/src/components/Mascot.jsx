@@ -21,9 +21,9 @@ export const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - SPRITE_HEIG
 export const TREATMENT_CAT_CX = 175
 export const TREATMENT_CAT_CY = 192
 // ── Activity & Roam Timing Constants ────────────────────────────────────────
-export const ROAM_INTERVAL_MIN_MS = 25000
-export const ROAM_INTERVAL_MAX_MS = 70000
-export const ROAM_CHANCE = 0.5
+export const ROAM_INTERVAL_MIN_MS = 12000
+export const ROAM_INTERVAL_MAX_MS = 35000
+export const ROAM_CHANCE = 0.7
 export const ROAM_DISTANCE_MIN_PX = 60
 export const ROAM_DISTANCE_MAX_PX = 260
 export const ACTIVITY_GAP_MIN_MS = 6000
@@ -31,13 +31,26 @@ export const IDLE_LIFE_INTERVAL_MIN_MS = 10000
 export const IDLE_LIFE_INTERVAL_MAX_MS = 25000
 export const IDLE_LIFE_SIT_CHANCE = 0.35
 
+export const WALK_SPEED_MIN_PX_S = 80
+export const WALK_SPEED_MAX_PX_S = 120
+export const WALK_PX_PER_CYCLE = 70
+
+// Knockoff constants
+export const KNOCKOFF_ARRIVE_CHANCE = 0.40
+export const KNOCKOFF_IDLE_CHANCE = 0.35
+export const KNOCKOFF_COOLDOWN_MS = 180000 // 3 minutes
+export const KNOCKOFF_EDGE_WALK_CHANCE = 0.15
+export const KNOCKOFF_EDGE_DIST_PX = 70
+
+// Gift constants
+export const GIFT_CHANCE = 0.10
+export const GIFT_COOLDOWN_MS = 600000 // 10 minutes
+export const GIFT_MIN_AFFECTION = 95
+
 const FALLBACK_WIDTH = SPRITE_WIDTH
 const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
 const SLEEP_CHANCE = 0.4
-const WALK_MIN_MS = 3500
-const WALK_MAX_MS = 6500
-export const WALK_PX_PER_CYCLE = 70
 
 export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff', 'annoyed', 'sad'])
 
@@ -60,13 +73,10 @@ export function getIdleWeights(mood = null) {
   const base = [
     { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: 15 * mods.groom },
     { pose: 'yawn', type: 'oneshot', duration: getAnimationDuration('yawn'), weight: 15 * mods.yawn },
-    { pose: 'siderest', type: 'hold', duration: getAnimationDuration('siderest'), weight: 12 },
     { pose: 'proud', type: 'loop', duration: getAnimationDuration('proud'), weight: 12 * mods.proud },
     { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: 12 * mods.play },
     { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: 14 * mods.toyplay },
     { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: 14 * mods.curious },
-    { pose: 'gift', type: 'oneshot', duration: getAnimationDuration('gift'), weight: 14 * mods.gift },
-    { pose: 'knockoff', type: 'oneshot', duration: getAnimationDuration('knockoff'), weight: 14 * mods.knockoff },
   ]
   if (mods.sadWeight > 0) {
     base.push({ pose: 'sad', type: 'oneshot', duration: getAnimationDuration('sad'), weight: mods.sadWeight })
@@ -77,6 +87,7 @@ export function getIdleWeights(mood = null) {
 // Click vs drag distinction
 const CLICK_MAX_DISTANCE = 5     // pixels
 const CLICK_MAX_DURATION = 300   // ms
+export const DRAG_START_THRESHOLD_PX = 5
 
 const DEBUG_MOVE_WINDOW = false
 
@@ -526,6 +537,12 @@ export default function Mascot({
 
   const moodRef = useRef(mood)
   moodRef.current = mood
+  const statsRef = useRef(stats)
+  statsRef.current = stats
+  const moodEnabledRef = useRef(moodEnabled)
+  moodEnabledRef.current = moodEnabled
+  const lastKnockoffRef = useRef(0)
+  const lastGiftRef = useRef(0)
 
   const prevChatStateRef = useRef(chatState)
   useEffect(() => {
@@ -969,49 +986,61 @@ export default function Mascot({
       const screenW = window.screen.availWidth || window.screen.width || 1920
       const maxX = Math.max(minX, screenW - width - MARGIN)
       const currentX = posRef.current.x
-      let dir = Math.random() < 0.5 ? 'left' : 'right'
-      if (currentX <= minX + 24) dir = 'right'
-      if (currentX >= maxX - 24) dir = 'left'
+      let dir
+      let targetX
+      let realDist
 
-      const distance = randBetween(ROAM_DISTANCE_MIN_PX, ROAM_DISTANCE_MAX_PX)
+      // Edge walk roll: 15% chance to intentionally pick an edge-zone destination
+      if (Math.random() < KNOCKOFF_EDGE_WALK_CHANCE && currentX < maxX - 50) {
+        targetX = Math.round(maxX - randBetween(0, 50))
+        dir = 'right'
+        realDist = Math.abs(targetX - currentX)
+      } else {
+        dir = Math.random() < 0.5 ? 'left' : 'right'
+        if (currentX <= minX + 24) dir = 'right'
+        if (currentX >= maxX - 24) dir = 'left'
 
-      // Compute clamped destination BEFORE starting the walk
-      let targetX = clamp(
-        dir === 'left' ? currentX - distance : currentX + distance,
-        minX,
-        maxX
-      )
-      let realDist = Math.abs(targetX - currentX)
+        const distance = randBetween(ROAM_DISTANCE_MIN_PX, ROAM_DISTANCE_MAX_PX)
 
-      // If the real distance in chosen direction is < 40 px, pick opposite direction if room, else skip
-      if (realDist < 40) {
-        const oppDir = dir === 'left' ? 'right' : 'left'
-        const oppTargetX = clamp(
-          oppDir === 'left' ? currentX - distance : currentX + distance,
+        // Compute clamped destination BEFORE starting the walk
+        targetX = clamp(
+          dir === 'left' ? currentX - distance : currentX + distance,
           minX,
           maxX
         )
-        const oppDist = Math.abs(oppTargetX - currentX)
-        if (oppDist >= 40) {
-          dir = oppDir
-          targetX = oppTargetX
-          realDist = oppDist
-        } else {
-          // Neither direction has room: skip this roam and stay idle
-          const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
-          if (isDebugRef.current) {
-            console.log(`[Mascot] Roam outcome: skipped by guard (no room >= 40px), next attempt in ${Math.round(nextDelay)}ms`)
+        realDist = Math.abs(targetX - currentX)
+
+        // If the real distance in chosen direction is < 40 px, pick opposite direction if room, else skip
+        if (realDist < 40) {
+          const oppDir = dir === 'left' ? 'right' : 'left'
+          const oppTargetX = clamp(
+            oppDir === 'left' ? currentX - distance : currentX + distance,
+            minX,
+            maxX
+          )
+          const oppDist = Math.abs(oppTargetX - currentX)
+          if (oppDist >= 40) {
+            dir = oppDir
+            targetX = oppTargetX
+            realDist = oppDist
+          } else {
+            // Neither direction has room: skip this roam and stay idle
+            const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
+            if (isDebugRef.current) {
+              console.log(`[Mascot] Roam outcome: skipped by guard (no room >= 40px), next attempt in ${Math.round(nextDelay)}ms`)
+            }
+            later(walkOnce, nextDelay)
+            return
           }
-          later(walkOnce, nextDelay)
-          return
         }
       }
 
       facingRef.current = dir
-      const duration = randBetween(WALK_MIN_MS, WALK_MAX_MS)
+      const chosenSpeed = randBetween(WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S)
+      const duration = (realDist / chosenSpeed) * 1000
 
       // Compute playback rate proportional to real speed so one full leg cycle (8 frames) covers WALK_PX_PER_CYCLE (70px)
-      const speedPxPerSec = realDist / (duration / 1000)
+      const speedPxPerSec = chosenSpeed
       const targetFps = (speedPxPerSec / WALK_PX_PER_CYCLE) * 8
       const walkRate = clamp(targetFps / 12, 0.4, 1.5)
       setWalkSpeedRate(walkRate)
@@ -1020,7 +1049,7 @@ export default function Mascot({
       setPose(poseRef.current)
       setWalkMs(duration)
       if (isDebugRef.current) {
-        console.log(`[Mascot] Roam outcome: started walk-${dir} (dist=${realDist.toFixed(1)}px, duration=${Math.round(duration)}ms)`)
+        console.log(`[Mascot] Roam outcome: started walk-${dir} (dist=${realDist.toFixed(1)}px, speed=${chosenSpeed.toFixed(1)}px/s, duration=${Math.round(duration)}ms)`)
       }
       console.log(`[Renderer] walkOnce START gen=${gen} dir=${dir} currentX=${currentX.toFixed(1)} targetX=${targetX.toFixed(1)} realDist=${realDist.toFixed(1)} speed=${speedPxPerSec.toFixed(1)}px/s walkRate=${walkRate.toFixed(2)} duration=${Math.round(duration)}ms`)
 
@@ -1058,6 +1087,20 @@ export default function Mascot({
         // Squash: landing accent when arriving at destination
         triggerAccentRef.current('is-squash')
         lastActivityEndRef.current = Date.now()
+
+        // Knockoff trigger (a): roam walk ends in edge zone
+        const inEdgeZone = posRef.current.x >= maxX - KNOCKOFF_EDGE_DIST_PX
+        const now = Date.now()
+        if (
+          inEdgeZone &&
+          now - lastKnockoffRef.current >= KNOCKOFF_COOLDOWN_MS &&
+          Math.random() < KNOCKOFF_ARRIVE_CHANCE
+        ) {
+          lastKnockoffRef.current = now
+          facingRef.current = 'right'
+          playOneShotRef.current?.('knockoff')
+        }
+
         const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
         if (isDebugRef.current) {
           console.log(`[Mascot] Roam walk ended, next attempt in ${Math.round(nextDelay)}ms`)
@@ -1129,6 +1172,38 @@ export default function Mascot({
         if (isDebugRef.current) {
           console.log(`[Mascot] Idle-life outcome: skipped by chance (35% sit), next attempt in ${Math.round(nextDelay)}ms`)
         }
+        return nextDelay
+      }
+
+      // Gift trigger: peak mood (or mood disabled)
+      const now = Date.now()
+      const moodActive = moodEnabledRef.current
+      const isPeakMood = !moodActive || (moodRef.current === 'Happy' && (statsRef.current?.affection ?? 0) >= GIFT_MIN_AFFECTION)
+      const canGift = now - lastGiftRef.current >= GIFT_COOLDOWN_MS
+      if (isPeakMood && canGift && Math.random() < GIFT_CHANCE) {
+        lastGiftRef.current = now
+        lastIdleBehaviorRef.current = 'gift'
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Idle-life outcome: started gift, next attempt in ${Math.round(nextDelay)}ms`)
+        }
+        playOneShotRef.current?.('gift')
+        return nextDelay
+      }
+
+      // Knockoff trigger (b): idle-life roll while already in edge zone
+      const currentW = SPRITE_WIDTH
+      const currentScreenW = window.screen.availWidth || window.screen.width || 1920
+      const currentMaxX = Math.max(MARGIN, currentScreenW - currentW - MARGIN)
+      const inEdgeZone = posRef.current.x >= currentMaxX - KNOCKOFF_EDGE_DIST_PX
+      const canKnockoff = now - lastKnockoffRef.current >= KNOCKOFF_COOLDOWN_MS
+      if (inEdgeZone && canKnockoff && Math.random() < KNOCKOFF_IDLE_CHANCE) {
+        lastKnockoffRef.current = now
+        lastIdleBehaviorRef.current = 'knockoff'
+        facingRef.current = 'right'
+        if (isDebugRef.current) {
+          console.log(`[Mascot] Idle-life outcome: started knockoff at edge zone, next attempt in ${Math.round(nextDelay)}ms`)
+        }
+        playOneShotRef.current?.('knockoff')
         return nextDelay
       }
 
@@ -1602,7 +1677,12 @@ export default function Mascot({
   }
 
   const onLostPointerCapture = (event) => {
-    if (!dragPointerDownRef.current && !draggingRef.current) return
+    if (!dragPointerDownRef.current && !draggingRef.current) {
+      if (dragPointerIdRef.current != null && event.pointerId === dragPointerIdRef.current) {
+        dragPointerIdRef.current = null
+      }
+      return
+    }
     if (dragEndingRef.current) return
     if (dragPointerIdRef.current != null && event.pointerId !== dragPointerIdRef.current) return
     console.log('[Renderer] lostpointercapture during drag; recapturing')
@@ -1615,6 +1695,14 @@ export default function Mascot({
       console.log(`[Renderer] pointercancel ignored (resize/capture loss); expanding=${dragExpandingRef.current} buttons=${event.buttons}`)
       recaptureDragPointer()
     } else {
+      if (dragPointerIdRef.current != null) {
+        try {
+          containerRef.current?.releasePointerCapture(dragPointerIdRef.current)
+        } catch (_) {
+          // ignore
+        }
+        dragPointerIdRef.current = null
+      }
       buttonPointersRef.current = { 0: null, 1: null, 2: null }
       clearTimeout(leftClickTimerRef.current)
       clearTimeout(rightClickTimerRef.current)
@@ -1758,16 +1846,6 @@ export default function Mascot({
     const downInfo = buttonPointersRef.current[b]
     buttonPointersRef.current[b] = null
 
-    if (
-      !buttonPointersRef.current[0] &&
-      !buttonPointersRef.current[1] &&
-      !buttonPointersRef.current[2] &&
-      !draggingRef.current &&
-      !dragExpandingRef.current
-    ) {
-      unbindDragPointerListeners()
-    }
-
     if (b === targetDragButton) {
       if (dragStartedRef.current || draggingRef.current) {
         onDragEnd(event)
@@ -1779,6 +1857,28 @@ export default function Mascot({
         dragEndingRef.current = true
         return
       }
+      if (isDebugRef.current) {
+        console.log('[drag] released before threshold (click)')
+      }
+      if (dragPointerIdRef.current != null) {
+        try {
+          containerRef.current?.releasePointerCapture(dragPointerIdRef.current)
+        } catch (_) {
+          // ignore
+        }
+        dragPointerIdRef.current = null
+      }
+    }
+
+    if (
+      !buttonPointersRef.current[0] &&
+      !buttonPointersRef.current[1] &&
+      !buttonPointersRef.current[2] &&
+      !draggingRef.current &&
+      !dragExpandingRef.current &&
+      !isStartingDragRef.current
+    ) {
+      unbindDragPointerListeners()
     }
 
     if (draggingRef.current || dragStartedRef.current || justDroppedRef.current) {
@@ -1874,12 +1974,19 @@ export default function Mascot({
       const dx = event.screenX - dragDown.screenX
       const dy = event.screenY - dragDown.screenY
       const dist = Math.hypot(dx, dy)
-      if (dist >= CLICK_MAX_DISTANCE) {
+      if (dist > DRAG_START_THRESHOLD_PX) {
+        if (isDebugRef.current) {
+          console.log('[drag] threshold crossed -> start')
+        }
         clearTimeout(leftClickTimerRef.current)
         clearTimeout(rightClickTimerRef.current)
         leftClickTimerRef.current = null
         rightClickTimerRef.current = null
-        console.log(`[Renderer] drag started (button=${dragButton})`)
+        dragOffsetRef.current = {
+          x: event.clientX - (window.innerWidth / 2),
+          y: event.clientY - NORMAL_CAT_CY,
+        }
+        lastDragPointerRef.current = { clientX: event.clientX, clientY: event.clientY }
         startDrag(event)
       }
     }
@@ -1893,6 +2000,14 @@ export default function Mascot({
     if (dragStartedRef.current || draggingRef.current) {
       onDragEnd(null)
       dragStartedRef.current = false
+    }
+    if (dragPointerIdRef.current != null) {
+      try {
+        containerRef.current?.releasePointerCapture(dragPointerIdRef.current)
+      } catch (_) {
+        // ignore
+      }
+      dragPointerIdRef.current = null
     }
     buttonPointersRef.current = { 0: null, 1: null, 2: null }
     clearTimeout(leftClickTimerRef.current)
@@ -1925,8 +2040,17 @@ export default function Mascot({
     }
 
     if (event.button === targetDragButton) {
+      if (isDebugRef.current) {
+        console.log('[drag] press')
+      }
       isStartingDragRef.current = false
       dragStartedRef.current = false
+      dragPointerIdRef.current = event.pointerId
+      try {
+        containerRef.current?.setPointerCapture(event.pointerId)
+      } catch (_) {
+        // ignore
+      }
       dragOffsetRef.current = {
         x: event.clientX - (window.innerWidth / 2),
         y: event.clientY - NORMAL_CAT_CY,
@@ -2128,13 +2252,16 @@ export default function Mascot({
   } else if (displayPose === 'crouch' || displayPose === 'pounce' || displayPose === 'crouchpounce') {
     animationName = 'crouchpounce'
     flipped = chaseFlippedRef.current ?? (facingRef.current === 'left')
+  } else if (displayPose === 'knockoff') {
+    animationName = 'knockoff'
+    flipped = false
   } else if (displayPose === 'idle') {
     animationName = idleVariant === 'new' ? 'idle' : 'idle-old'
     flipped = facingRef.current === 'left'
   } else if (animsManifest?.animations && displayPose in animsManifest.animations) {
     animationName = displayPose
     flipped = facingRef.current === 'left'
-  } else if (['groom', 'yawn', 'siderest', 'proud', 'wakeup'].includes(displayPose)) {
+  } else if (['groom', 'yawn', 'proud', 'wakeup'].includes(displayPose)) {
     animationName = displayPose
     flipped = facingRef.current === 'left'
   } else {

@@ -42,7 +42,10 @@
     "fps": 5,
     "mode": "once",
     "anchor": "ground",
-    "ref": "idle:0"
+    "ref": "idle:0",
+    "eraseRects": [
+      { "frame": 7, "rect": [0, 250, 20, 300] }
+    ]
   },
   "drink": {
     "source": "drink.png",

@@ -503,6 +503,16 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
 
         placed_cells.append(canvas)
 
+    # Optional erase step for stray pixels (e.g. artifacts bleeding from adjacent frames in source grid)
+    erase_rules = entry.get('eraseRects', []) + entry.get('erase', [])
+    for rule in erase_rules:
+        f_num = rule.get('frame', 0)
+        f_idx = f_num - 1 if f_num > 0 else f_num
+        if 0 <= f_idx < len(placed_cells):
+            if 'rect' in rule:
+                rx0, ry0, rx1, ry1 = rule['rect']
+                placed_cells[f_idx][ry0:ry1, rx0:rx1] = 0
+
     # 6. Quantize each frame/strip to <= 48 colours, NO dithering, binary alpha
     strip_w = total_frames * CELL_WIDTH
     strip_h = CELL_HEIGHT
