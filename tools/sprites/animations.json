@@ -209,5 +209,84 @@
     "mode": "once",
     "anchor": "ground",
     "ref": "idle:0"
+  },
+  "standidle": {
+    "source": "standidle.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 3,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "walk:0",
+    "scale": 0.2455
+  },
+  "standup": {
+    "source": "standup.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 6,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0",
+    "sameScaleAs": "standidle"
+  },
+  "sitdown": {
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 6,
+    "mode": "once",
+    "anchor": "ground",
+    "reverseOf": "standup"
+  },
+  "stretch": {
+    "source": "strech.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "walk:0",
+    "scale": 0.2798
+  },
+  "run": {
+    "source": "run.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 14,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "walk:0",
+    "scale": 0.2898
+  },
+  "stalk": {
+    "source": "stalk.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 8,
+    "mode": "loop",
+    "anchor": "ground",
+    "ref": "walk:0",
+    "scale": 0.3055
+  },
+  "lookaround": {
+    "source": "lookaround.png",
+    "grid": "4x2",
+    "frames": 8,
+    "fps": 5,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0",
+    "scale": 0.2778
+  },
+  "tailflick": {
+    "source": "tail-flick.png",
+    "grid": "3x2",
+    "frames": 6,
+    "fps": 6,
+    "mode": "once",
+    "anchor": "ground",
+    "ref": "idle:0",
+    "scale": 0.2373
   }
 }
+

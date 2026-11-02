@@ -208,6 +208,78 @@
       "anchor": "ground",
       "cellWidth": 210,
       "cellHeight": 300
+    },
+    "standidle": {
+      "name": "standidle",
+      "frames": 6,
+      "fps": 3,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "standup": {
+      "name": "standup",
+      "frames": 6,
+      "fps": 6,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "sitdown": {
+      "name": "sitdown",
+      "frames": 6,
+      "fps": 6,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "stretch": {
+      "name": "stretch",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "run": {
+      "name": "run",
+      "frames": 8,
+      "fps": 14,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "stalk": {
+      "name": "stalk",
+      "frames": 8,
+      "fps": 8,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "lookaround": {
+      "name": "lookaround",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "tailflick": {
+      "name": "tailflick",
+      "frames": 6,
+      "fps": 6,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
     }
   }
 }

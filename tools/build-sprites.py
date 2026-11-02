@@ -89,12 +89,53 @@ def measure_old_reference():
     return metrics
 
 
+def detect_and_repair_sparkle(img_arr, anim_name=None, save_debug=True, debug_dir=None):
+    """
+    Detects the Gemini sparkle watermark in the bottom-right corner and
+    repairs it using distance-transform nearest-neighbour sampling on the full RGB image.
+    """
+    h, w, _ = img_arr.shape
+    y0 = max(0, h - 170)
+    y1 = min(h, h - 55)
+    x0 = max(0, w - 170)
+    x1 = min(w, w - 55)
+
+    crop = img_arr[y0:y1, x0:x1].astype(int)
+    br = crop[:, :, 0]
+    bg = crop[:, :, 1]
+    bb = crop[:, :, 2]
+
+    # Robust detection thresholds for Gemini sparkle star
+    is_pink = (br > 180) & (bb > 180) & (bg >= 10)
+    is_white = (br > 180) & (bg > 180) & (bb > 180)
+    is_grey = (np.abs(br - bg) < 25) & (np.abs(bg - bb) < 25) & (br >= 110)
+    is_blend = (bg >= 80) & (br >= 110) & (bb >= 110)
+
+    box_mask = is_pink | is_white | is_grey | is_blend
+    sparkle_mask = np.zeros((h, w), dtype=bool)
+    sparkle_mask[y0:y1, x0:x1] = box_mask
+    sparkle_px = int(np.sum(sparkle_mask))
+
+    if save_debug and anim_name:
+        debug_dir = debug_dir or os.path.join(REPO_ROOT, 'tools', 'debug')
+        os.makedirs(debug_dir, exist_ok=True)
+        overlay = img_arr.copy()
+        overlay[sparkle_mask] = [255, 0, 0]
+        Image.fromarray(overlay).save(os.path.join(debug_dir, f"sparkle_{anim_name}.png"))
+
+    repaired = img_arr.copy()
+    if sparkle_px > 0:
+        _, indices = distance_transform_edt(sparkle_mask, return_indices=True)
+        repaired[sparkle_mask] = img_arr[indices[0][sparkle_mask], indices[1][sparkle_mask]]
+
+    return repaired, sparkle_mask, sparkle_px
+
+
 def remove_background(img_arr):
     """
     Step 2:
     - Flood-fill from borders for pixels close to magenta (tolerance ~70 per channel)
     - Delete remaining magenta-ish (R>190, B>190, G<110) including pink fringes
-    - Remove Gemini sparkle watermark in bottom-right corner
     """
     h, w, _ = img_arr.shape
     r = img_arr[:, :, 0].astype(int)
@@ -122,23 +163,6 @@ def remove_background(img_arr):
     # Delete remaining magenta-ish
     is_mag = (r > 190) & (b > 190) & (g < 110)
     bg_mask |= is_mag
-
-    # Watermark removal: Gemini sparkle in bottom-right 180x180 px
-    # Color: light pink / white / light grey
-    corner_y0 = max(0, h - 180)
-    corner_x0 = max(0, w - 180)
-    cr = r[corner_y0:h, corner_x0:w]
-    cg = g[corner_y0:h, corner_x0:w]
-    cb = b[corner_y0:h, corner_x0:w]
-
-    is_pink_wm = (cr > 190) & (cb > 190) & (cg >= 100)
-    is_white_wm = (cr > 200) & (cg > 200) & (cb > 200)
-    is_grey_wm = (np.abs(cr - cg) < 25) & (np.abs(cg - cb) < 25) & (cr >= 115)
-    wm_mask = is_pink_wm | is_white_wm | is_grey_wm
-
-    # Only remove components in this corner that are detached from large objects or isolated
-    # To be safe, any wm_mask pixel in the bottom-right corner is cleared:
-    bg_mask[corner_y0:h, corner_x0:w][wm_mask] = True
 
     # Pink fringes next to outlines: boundary pixels bordering bg that are pinkish
     dilated_bg = binary_dilation(bg_mask)
@@ -262,6 +286,9 @@ def compute_scale(raw_frames, ref_str, old_metrics):
     if ref_str.startswith('idle:'):
         target_h = old_metrics['idle_h']
         canon_idx = int(ref_str.split(':')[1])
+    elif ref_str.startswith('walk:'):
+        target_h = old_metrics['anims'].get('walk', {}).get('h', 105)
+        canon_idx = int(ref_str.split(':')[1])
     elif ref_str.startswith('old:'):
         old_name = ref_str.split(':')[1]
         target_h = old_metrics['anims'].get(old_name, {}).get('h', old_metrics['idle_h'])
@@ -325,11 +352,23 @@ def check_and_apply_shrink(raw_frames, scale):
     return final_scale, shrink_factor
 
 
-def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=None):
+def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=None, config=None):
     """
     Processes one animation and returns strip image and metrics.
     """
-    source_rel = entry['source']
+    source_rel = entry.get('source')
+    if not source_rel and entry.get('reverseOf') and config and entry['reverseOf'] in config:
+        ref_entry = config[entry['reverseOf']]
+        source_rel = ref_entry.get('source')
+        cols, rows = map(int, ref_entry['grid'].split('x'))
+        total_frames = ref_entry['frames']
+    else:
+        cols, rows = map(int, entry['grid'].split('x'))
+        total_frames = entry['frames']
+
+    if not source_rel:
+        return None, "No source file specified"
+
     source_path = os.path.join(src_dir, source_rel)
     if not os.path.isfile(source_path):
         # Fallback to top level of SRC_DIR if under Upgrade/
@@ -338,26 +377,60 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
         if os.path.isfile(alt_path):
             source_path = alt_path
         else:
-            return None, f"File missing: {source_rel}"
+            # Try naming variants
+            variant = None
+            if base_name == 'strech.png': variant = 'stretch.png'
+            elif base_name == 'stretch.png': variant = 'strech.png'
+            elif base_name == 'tail-flick.png': variant = 'tailflick.png'
+            elif base_name == 'tailflick.png': variant = 'tail-flick.png'
+            elif base_name == 'crouch-pounce.png': variant = 'crouchpounce.png'
+            elif base_name == 'crouchpounce.png': variant = 'crouch-pounce.png'
+            if variant and os.path.isfile(os.path.join(src_dir, variant)):
+                source_path = os.path.join(src_dir, variant)
+            elif variant and os.path.isfile(os.path.join(src_dir, 'Upgrade', variant)):
+                source_path = os.path.join(src_dir, 'Upgrade', variant)
+            else:
+                return None, f"File missing: {source_rel}"
 
-    cols, rows = map(int, entry['grid'].split('x'))
-    total_frames = entry['frames']
     anchor = entry.get('anchor', 'ground')
     ref = entry.get('ref', 'idle:0')
 
     img = Image.open(source_path).convert('RGB')
     arr = np.array(img)
 
-    # 1. Background removal
-    non_bg_mask = remove_background(arr)
+    # 1. Detect and repair Gemini sparkle watermark BEFORE background removal
+    repaired_arr, sparkle_mask, sparkle_px = detect_and_repair_sparkle(arr, anim_name=anim_name, save_debug=True)
 
-    # 2. Slice into frames
-    raw_frames = slice_into_frames(arr, non_bg_mask, cols, rows, total_frames)
+    # 2. Background removal
+    non_bg_mask = remove_background(repaired_arr)
+    cat_overlap = int(np.sum(sparkle_mask & non_bg_mask))
 
-    # 3. Scale calculation & shrink factor
-    same_scale_name = entry.get('sameScaleAs')
-    if same_scale_name and computed_scales and same_scale_name in computed_scales:
+    # Save 4x debug crop of repaired bottom-right area for inspection
+    debug_dir = os.path.join(REPO_ROOT, 'tools', 'debug')
+    os.makedirs(debug_dir, exist_ok=True)
+    h, w, _ = repaired_arr.shape
+    y0 = max(0, h - 200)
+    x0 = max(0, w - 200)
+    crop_4x = Image.fromarray(repaired_arr[y0:h, x0:w]).resize(((w - x0) * 4, (h - y0) * 4), resample=Image.Resampling.NEAREST)
+    crop_4x.save(os.path.join(debug_dir, f"crop_{anim_name}.png"))
+
+    # 3. Slice into frames
+    raw_frames = slice_into_frames(repaired_arr, non_bg_mask, cols, rows, total_frames)
+
+    # If reverseOf or reverse: reverse frame order
+    if entry.get('reverseOf') or entry.get('reverse'):
+        raw_frames = raw_frames[::-1]
+
+    # 4. Scale calculation & shrink factor
+    same_scale_name = entry.get('sameScaleAs') or (entry.get('reverseOf') if 'scale' not in entry and 'sameScaleAs' not in entry else None)
+    if 'scale' in entry:
+        base_scale = float(entry['scale'])
+        final_scale, shrink_factor = check_and_apply_shrink(raw_frames, base_scale)
+    elif same_scale_name and computed_scales and same_scale_name in computed_scales:
         final_scale = computed_scales[same_scale_name]
+        shrink_factor = 1.0
+    elif same_scale_name and config and same_scale_name in config and 'scale' in config[same_scale_name]:
+        final_scale = float(config[same_scale_name]['scale'])
         shrink_factor = 1.0
     else:
         base_scale = compute_scale(raw_frames, ref, old_metrics)
@@ -366,7 +439,7 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     if computed_scales is not None:
         computed_scales[anim_name] = final_scale
 
-    # 4. Scale each frame with NEAREST
+    # 5. Scale each frame with NEAREST
     scaled_frames = []
     for f in raw_frames:
         rgba = f['rgba']
@@ -417,7 +490,7 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
             'full_bbox': full_bbox
         })
 
-    # 5. Positioning in 210x300
+    # 6. Positioning in 210x300
     target_ground_y = old_metrics['idle_bottom']  # 291
     target_ground_cx = old_metrics['idle_cx']      # 105
 
@@ -425,7 +498,6 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     median_bottom = float(np.median(body_bottoms)) if len(body_bottoms) > 0 else 0.0
 
     # Determine grounded vs airborne
-    # Only jump and crouchpounce have airborne frames where the cat leaps
     is_grounded = []
     if anim_name in ['jump', 'crouchpounce']:
         max_bottom = float(np.max(body_bottoms)) if len(body_bottoms) > 0 else 0.0
@@ -460,7 +532,11 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
             px = int(round(CELL_WIDTH / 2.0 - center_x))
             py = int(round(CELL_HEIGHT / 2.0 - center_y))
         else:  # 'ground'
-            if is_grounded[idx]:
+            if anim_name == 'run' or anchor == 'ground_whole':
+                anim_ground_bottom = float(np.max(body_bottoms)) if len(body_bottoms) > 0 else f['body_bottom']
+                py = int(round(target_ground_y - anim_ground_bottom))
+                px = int(round(target_ground_cx - f['body_cx']))
+            elif is_grounded[idx]:
                 py = int(round(target_ground_y - f['body_bottom']))
                 # Horizontal alignment: use body position so cat never jitters sideways
                 px = int(round(target_ground_cx - f['body_cx']))
@@ -632,7 +708,9 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
         'still_magenta': still_mag,
         'fringe': fringe_count,
         'tr_mag': trmag_count,
-        'empty_frames': empty_frames
+        'empty_frames': empty_frames,
+        'sparkle_px': sparkle_px,
+        'cat_overlap': cat_overlap
     }
 
     # Generate preview contact sheet
@@ -668,6 +746,7 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
 def main():
     parser = argparse.ArgumentParser(description="Build sprite strips for Screen Buddy")
     parser.add_argument('--src', type=str, default=None, help="Path to source art directory")
+    parser.add_argument('--report-sparkle-only', action='store_true', help="Run sparkle detector on existing sheets in report-only mode")
     parser.add_argument('names', nargs='*', help="Names of animations to build (default: all)")
     args = parser.parse_args()
 
@@ -676,6 +755,36 @@ def main():
 
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
         config = json.load(f)
+
+    if args.report_sparkle_only:
+        existing_sheets = [
+            'idle', 'walk', 'sleep', 'eat', 'typing', 'typingfast', 'crouch-pounce',
+            'drag', 'fall', 'gift', 'groom', 'jump', 'knockoff', 'proud', 'talk',
+            'wakeup', 'yawn', 'curious', 'sad', 'annoyed', 'purr_2', 'toyplay', 'drink'
+        ]
+        print("\n" + "=" * 50)
+        print("EXISTING SHEETS SPARKLE REPORT (REPORT-ONLY)")
+        print("=" * 50)
+        print(f"{'Sheet':16} | {'Sparkle Px':10} | {'Cat Overlap Px':14}")
+        print("-" * 50)
+        for s in existing_sheets:
+            fname = s + '.png'
+            path = os.path.join(src_dir, fname)
+            if not os.path.exists(path):
+                path = os.path.join(src_dir, 'Upgrade', fname)
+            if not os.path.exists(path) and s == 'purr_2':
+                path = os.path.join(src_dir, 'purr_2.png')
+            if not os.path.exists(path):
+                print(f"{s:16} | {'NOT FOUND':10} | {'-':14}")
+                continue
+            im = Image.open(path).convert('RGB')
+            arr = np.array(im)
+            repaired, sp_mask, sp_px = detect_and_repair_sparkle(arr, anim_name=s, save_debug=True)
+            non_bg = remove_background(repaired)
+            cat_overlap = int(np.sum(sp_mask & non_bg))
+            print(f"{s:16} | {sp_px:10} | {cat_overlap:14}")
+        print("=" * 50)
+        return
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -705,7 +814,7 @@ def main():
     skipped = []
     computed_scales = {}
 
-    # Order selected_names so sameScaleAs dependencies are computed first
+    # Order selected_names so sameScaleAs and reverseOf dependencies are computed first
     ordered_names = []
     visited = set()
 
@@ -715,6 +824,9 @@ def main():
         dep = config[aname].get('sameScaleAs')
         if dep and dep in config:
             add_anim(dep)
+        rev = config[aname].get('reverseOf')
+        if rev and rev in config:
+            add_anim(rev)
         visited.add(aname)
         ordered_names.append(aname)
 
@@ -726,7 +838,7 @@ def main():
             print(f"Warning: Unknown animation '{name}', skipping.", file=sys.stderr)
             continue
         entry = config[name]
-        strip, res = process_animation(name, entry, src_dir, old_metrics, computed_scales)
+        strip, res = process_animation(name, entry, src_dir, old_metrics, computed_scales, config=config)
         if strip is None:
             skipped.append((name, res))
             print(f"Skipping {name}: {res}")
@@ -758,6 +870,15 @@ def main():
     print("-" * 89)
     for name, r in reports:
         print(f"{name:14} | {r['frames']:6} | {r['scale']:7.4f} | {r['shrink_factor']:6.4f} | {r['max_jitter']:5.1f}p | {r['edge_touching']:4} | {r['still_magenta']:5} | {r['fringe']:6} | {r['tr_mag']:5} | {r['empty_frames']:5}")
+
+    print("\n" + "=" * 50)
+    print("SPARKLE WATERMARK REPAIR REPORT")
+    print("=" * 50)
+    print(f"{'Animation':16} | {'Sparkle Px':10} | {'Cat Overlap Px':14}")
+    print("-" * 50)
+    for name, r in reports:
+        print(f"{name:16} | {r.get('sparkle_px', 0):10} | {r.get('cat_overlap', 0):14}")
+    print("=" * 50)
 
     if skipped:
         print("\nSKIPPED / MISSING FILES:")

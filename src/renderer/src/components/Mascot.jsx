@@ -991,8 +991,9 @@ export default function Mascot({
       let realDist
 
       // Edge walk roll: 15% chance to intentionally pick an edge-zone destination
-      if (Math.random() < KNOCKOFF_EDGE_WALK_CHANCE && currentX < maxX - 50) {
-        targetX = Math.round(maxX - randBetween(0, 50))
+      const trueRightEdge = Math.max(NORMAL_CAT_CX, screenW - 160 + NORMAL_CAT_CX)
+      if (Math.random() < KNOCKOFF_EDGE_WALK_CHANCE && currentX < trueRightEdge - 50) {
+        targetX = trueRightEdge
         dir = 'right'
         realDist = Math.abs(targetX - currentX)
       } else {
@@ -1089,7 +1090,7 @@ export default function Mascot({
         lastActivityEndRef.current = Date.now()
 
         // Knockoff trigger (a): roam walk ends in edge zone
-        const inEdgeZone = posRef.current.x >= maxX - KNOCKOFF_EDGE_DIST_PX
+        const inEdgeZone = posRef.current.x >= trueRightEdge - KNOCKOFF_EDGE_DIST_PX
         const now = Date.now()
         if (
           inEdgeZone &&
@@ -1097,8 +1098,52 @@ export default function Mascot({
           Math.random() < KNOCKOFF_ARRIVE_CHANCE
         ) {
           lastKnockoffRef.current = now
-          facingRef.current = 'right'
-          playOneShotRef.current?.('knockoff')
+          const remainingDist = trueRightEdge - posRef.current.x
+          if (remainingDist <= 3) {
+            facingRef.current = 'right'
+            playOneShotRef.current?.('knockoff')
+          } else if (!roamBlockedRef.current) {
+            const chosenSpeed = randBetween(WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S)
+            const walkDuration = (remainingDist / chosenSpeed) * 1000
+            const targetFps = (chosenSpeed / WALK_PX_PER_CYCLE) * 8
+            const walkRate = clamp(targetFps / 12, 0.4, 1.5)
+
+            facingRef.current = 'right'
+            setWalkSpeedRate(walkRate)
+            poseRef.current = 'walk-right'
+            setPose('walk-right')
+            setWalkMs(walkDuration)
+            triggerAccentRef.current('is-stretch')
+
+            walkTweenRef.current = {
+              startX: posRef.current.x,
+              targetX: trueRightEdge,
+              startTime: performance.now(),
+              duration: walkDuration,
+            }
+            dragTargetRef.current = { x: trueRightEdge, y: posRef.current.y }
+
+            later(() => {
+              if (gen !== roamGenRef.current || roamBlockedRef.current || draggingRef.current || dragPointerDownRef.current) {
+                walkTweenRef.current = null
+                setWalkMs(0)
+                setWalkSpeedRate(1)
+                if (poseRef.current.startsWith('walk')) {
+                  poseRef.current = 'idle'
+                  setPose('idle')
+                }
+                return
+              }
+              walkTweenRef.current = null
+              setWalkMs(0)
+              setWalkSpeedRate(1)
+              triggerAccentRef.current('is-squash')
+              facingRef.current = 'right'
+              poseRef.current = 'idle'
+              setPose('idle')
+              playOneShotRef.current?.('knockoff')
+            }, walkDuration + 40)
+          }
         }
 
         const nextDelay = randBetween(ROAM_INTERVAL_MIN_MS * mods.roamInterval, ROAM_INTERVAL_MAX_MS * mods.roamInterval)
@@ -1191,20 +1236,64 @@ export default function Mascot({
       }
 
       // Knockoff trigger (b): idle-life roll while already in edge zone
-      const currentW = SPRITE_WIDTH
       const currentScreenW = window.screen.availWidth || window.screen.width || 1920
-      const currentMaxX = Math.max(MARGIN, currentScreenW - currentW - MARGIN)
-      const inEdgeZone = posRef.current.x >= currentMaxX - KNOCKOFF_EDGE_DIST_PX
+      const trueRightEdge = Math.max(NORMAL_CAT_CX, currentScreenW - 160 + NORMAL_CAT_CX)
+      const inEdgeZone = posRef.current.x >= trueRightEdge - KNOCKOFF_EDGE_DIST_PX
       const canKnockoff = now - lastKnockoffRef.current >= KNOCKOFF_COOLDOWN_MS
       if (inEdgeZone && canKnockoff && Math.random() < KNOCKOFF_IDLE_CHANCE) {
         lastKnockoffRef.current = now
         lastIdleBehaviorRef.current = 'knockoff'
-        facingRef.current = 'right'
-        if (isDebugRef.current) {
-          console.log(`[Mascot] Idle-life outcome: started knockoff at edge zone, next attempt in ${Math.round(nextDelay)}ms`)
+        const remainingDist = trueRightEdge - posRef.current.x
+        if (remainingDist <= 3) {
+          facingRef.current = 'right'
+          if (isDebugRef.current) {
+            console.log(`[Mascot] Idle-life outcome: started knockoff at edge zone, next attempt in ${Math.round(nextDelay)}ms`)
+          }
+          playOneShotRef.current?.('knockoff')
+          return nextDelay
+        } else if (!roamBlockedRef.current) {
+          const chosenSpeed = randBetween(WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S)
+          const walkDuration = (remainingDist / chosenSpeed) * 1000
+          const targetFps = (chosenSpeed / WALK_PX_PER_CYCLE) * 8
+          const walkRate = clamp(targetFps / 12, 0.4, 1.5)
+
+          facingRef.current = 'right'
+          setWalkSpeedRate(walkRate)
+          poseRef.current = 'walk-right'
+          setPose('walk-right')
+          setWalkMs(walkDuration)
+          triggerAccentRef.current('is-stretch')
+
+          walkTweenRef.current = {
+            startX: posRef.current.x,
+            targetX: trueRightEdge,
+            startTime: performance.now(),
+            duration: walkDuration,
+          }
+          dragTargetRef.current = { x: trueRightEdge, y: posRef.current.y }
+
+          setTimeout(() => {
+            walkTweenRef.current = null
+            setWalkMs(0)
+            setWalkSpeedRate(1)
+            if (roamBlockedRef.current || draggingRef.current || dragPointerDownRef.current) {
+              if (poseRef.current.startsWith('walk')) {
+                poseRef.current = 'idle'
+                setPose('idle')
+              }
+              return
+            }
+            triggerAccentRef.current('is-squash')
+            facingRef.current = 'right'
+            poseRef.current = 'idle'
+            setPose('idle')
+            if (isDebugRef.current) {
+              console.log(`[Mascot] Idle-life outcome: completed edge walk and started knockoff, next attempt in ${Math.round(nextDelay)}ms`)
+            }
+            playOneShotRef.current?.('knockoff')
+          }, walkDuration + 40)
+          return nextDelay + walkDuration
         }
-        playOneShotRef.current?.('knockoff')
-        return nextDelay
       }
 
       const allWeights = getIdleWeights(moodRef.current)

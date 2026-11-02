@@ -148,6 +148,11 @@ export const DISPLAY_OFFSET_Y = {
   fall: 34,
 }
 
+// Draw-time / display horizontal offsets for animations that need edge alignment (px at cell scale)
+export const DISPLAY_OFFSET_X = {
+  knockoff: 42,
+}
+
 // 40-entry ring buffer tracer for sprite draw calls
 export const drawTracer = []
 const MAX_TRACER_SIZE = 40
@@ -722,6 +727,8 @@ export default function SpriteAnimator({
   const displayWidth = Math.round(cellWidth * scale)
   const displayHeight = Math.round(cellHeight * scale)
 
+  const rawOffsetX = DISPLAY_OFFSET_X[activeAsset.animName] || 0
+  const offsetX = Math.round(rawOffsetX * scale)
   const offsetY = DISPLAY_OFFSET_Y[activeAsset.animName] || 0
 
   // Draw current frame to canvas
@@ -756,6 +763,7 @@ export default function SpriteAnimator({
     const requestedAnim = animation
     const resolvedAnim = activeAsset.animName
     const imageKey = activeAsset.imageKey
+    const currentOffsetX = DISPLAY_OFFSET_X[resolvedAnim] || 0
     const currentOffsetY = DISPLAY_OFFSET_Y[resolvedAnim] || 0
 
     drawTracer.push({
@@ -768,7 +776,7 @@ export default function SpriteAnimator({
       sy,
       sWidth: cellWidth,
       sHeight: cellHeight,
-      dx: 0,
+      dx: currentOffsetX,
       dy: currentOffsetY,
       dWidth: displayWidth,
       dHeight: displayHeight,
@@ -854,7 +862,7 @@ export default function SpriteAnimator({
       style={{
         width: `${displayWidth}px`,
         height: `${displayHeight}px`,
-        transform: `${flipped ? 'scaleX(-1)' : ''} ${offsetY ? `translateY(${offsetY}px)` : ''}`.trim() || 'none',
+        transform: `${flipped ? 'scaleX(-1)' : ''} ${offsetX ? `translateX(${offsetX}px)` : ''} ${offsetY ? `translateY(${offsetY}px)` : ''}`.trim() || 'none',
         transformOrigin: 'center center',
         ...style,
       }}
