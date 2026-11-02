@@ -89,31 +89,64 @@ def measure_old_reference():
     return metrics
 
 
-def detect_and_repair_sparkle(img_arr, anim_name=None, save_debug=True, debug_dir=None):
+_SPARKLE_TEMPLATE = None
+
+
+def get_sparkle_template(src_dir=None):
     """
-    Detects the Gemini sparkle watermark in the bottom-right corner and
-    repairs it using distance-transform nearest-neighbour sampling on the full RGB image.
+    Extracts canonical 3384 px star template from a clean sheet (standidle, drag, fall, proud),
+    dilates it by 2 px, and caches the resulting boolean mask.
+    Also saves tools/debug/sparkle_template.png.
+    """
+    global _SPARKLE_TEMPLATE
+    if _SPARKLE_TEMPLATE is not None:
+        return _SPARKLE_TEMPLATE
+
+    if not src_dir:
+        src_dir = detect_src_dir()
+
+    clean_sheet_path = os.path.join(src_dir, 'standidle.png')
+    if not os.path.isfile(clean_sheet_path):
+        for candidate in ['drag.png', 'fall.png', 'proud.png']:
+            p = os.path.join(src_dir, candidate)
+            if os.path.isfile(p):
+                clean_sheet_path = p
+                break
+
+    ref_arr = np.array(Image.open(clean_sheet_path).convert('RGB'))
+    ref_h, ref_w, _ = ref_arr.shape
+
+    # Star is 96x96 located at [ref_h-160:ref_h-64, ref_w-160:ref_w-64]
+    # Crop 104x104 with 4px margin so 2px dilation doesn't touch borders: [ref_h-164:ref_h-60, ref_w-164:ref_w-60]
+    ref_crop = ref_arr[ref_h-164:ref_h-60, ref_w-164:ref_w-60]
+    ref_dist = np.sqrt(np.sum((ref_crop.astype(float) - np.array([255, 0, 255]))**2, axis=-1))
+    raw_template = ref_dist > 15  # Exactly 3384 px on standidle, drag, fall, proud
+
+    debug_dir = os.path.join(REPO_ROOT, 'tools', 'debug')
+    os.makedirs(debug_dir, exist_ok=True)
+    Image.fromarray((raw_template * 255).astype(np.uint8)).save(os.path.join(debug_dir, 'sparkle_template.png'))
+
+    dilated_template = binary_dilation(raw_template, iterations=2)
+    _SPARKLE_TEMPLATE = dilated_template
+    return _SPARKLE_TEMPLATE
+
+
+def detect_and_repair_sparkle(img_arr, anim_name=None, save_debug=True, debug_dir=None, src_dir=None):
+    """
+    Detects the Gemini sparkle watermark using aligned template mask (dilated by 2px)
+    and repairs it using distance-transform nearest-neighbour sampling on the full RGB image.
     """
     h, w, _ = img_arr.shape
-    y0 = max(0, h - 170)
-    y1 = min(h, h - 55)
-    x0 = max(0, w - 170)
-    x1 = min(w, w - 55)
+    template_mask = get_sparkle_template(src_dir)
 
-    crop = img_arr[y0:y1, x0:x1].astype(int)
-    br = crop[:, :, 0]
-    bg = crop[:, :, 1]
-    bb = crop[:, :, 2]
+    # The 104x104 box positioned at (-164, -164) from bottom-right (w, h)
+    y0 = h - 164
+    y1 = h - 60
+    x0 = w - 164
+    x1 = w - 60
 
-    # Robust detection thresholds for Gemini sparkle star
-    is_pink = (br > 180) & (bb > 180) & (bg >= 10)
-    is_white = (br > 180) & (bg > 180) & (bb > 180)
-    is_grey = (np.abs(br - bg) < 25) & (np.abs(bg - bb) < 25) & (br >= 110)
-    is_blend = (bg >= 80) & (br >= 110) & (bb >= 110)
-
-    box_mask = is_pink | is_white | is_grey | is_blend
     sparkle_mask = np.zeros((h, w), dtype=bool)
-    sparkle_mask[y0:y1, x0:x1] = box_mask
+    sparkle_mask[y0:y1, x0:x1] = template_mask
     sparkle_px = int(np.sum(sparkle_mask))
 
     if save_debug and anim_name:
@@ -399,7 +432,7 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     arr = np.array(img)
 
     # 1. Detect and repair Gemini sparkle watermark BEFORE background removal
-    repaired_arr, sparkle_mask, sparkle_px = detect_and_repair_sparkle(arr, anim_name=anim_name, save_debug=True)
+    repaired_arr, sparkle_mask, sparkle_px = detect_and_repair_sparkle(arr, anim_name=anim_name, save_debug=True, src_dir=src_dir)
 
     # 2. Background removal
     non_bg_mask = remove_background(repaired_arr)
@@ -532,7 +565,11 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
             px = int(round(CELL_WIDTH / 2.0 - center_x))
             py = int(round(CELL_HEIGHT / 2.0 - center_y))
         else:  # 'ground'
-            if anim_name == 'run' or anchor == 'ground_whole':
+            if anim_name == 'run':
+                anim_ground_bottom = 190.0
+                py = int(round(target_ground_y - anim_ground_bottom))
+                px = int(round(target_ground_cx - f['body_cx']))
+            elif anchor == 'ground_whole':
                 anim_ground_bottom = float(np.max(body_bottoms)) if len(body_bottoms) > 0 else f['body_bottom']
                 py = int(round(target_ground_y - anim_ground_bottom))
                 px = int(round(target_ground_cx - f['body_cx']))
@@ -779,7 +816,7 @@ def main():
                 continue
             im = Image.open(path).convert('RGB')
             arr = np.array(im)
-            repaired, sp_mask, sp_px = detect_and_repair_sparkle(arr, anim_name=s, save_debug=True)
+            repaired, sp_mask, sp_px = detect_and_repair_sparkle(arr, anim_name=s, save_debug=True, src_dir=src_dir)
             non_bg = remove_background(repaired)
             cat_overlap = int(np.sum(sp_mask & non_bg))
             print(f"{s:16} | {sp_px:10} | {cat_overlap:14}")
@@ -844,18 +881,19 @@ def main():
             print(f"Skipping {name}: {res}")
             continue
 
-        out_png = os.path.join(OUTPUT_DIR, f"{name}.png")
-        strip.save(out_png, format='PNG')
+        if name in selected_names:
+            out_png = os.path.join(OUTPUT_DIR, f"{name}.png")
+            strip.save(out_png, format='PNG')
 
-        runtime_manifest['animations'][name] = {
-            'name': name,
-            'frames': entry['frames'],
-            'fps': entry['fps'],
-            'mode': entry['mode'],
-            'anchor': entry['anchor'],
-            'cellWidth': CELL_WIDTH,
-            'cellHeight': CELL_HEIGHT
-        }
+            runtime_manifest['animations'][name] = {
+                'name': name,
+                'frames': entry['frames'],
+                'fps': entry['fps'],
+                'mode': entry['mode'],
+                'anchor': entry['anchor'],
+                'cellWidth': CELL_WIDTH,
+                'cellHeight': CELL_HEIGHT
+            }
 
         reports.append((name, res))
 
