@@ -131,10 +131,98 @@ def get_sparkle_template(src_dir=None):
     return _SPARKLE_TEMPLATE
 
 
+DONOR_CONFIG = {
+    'gift': {
+        'rect': [2220, 1520, 2515, 1690],
+        'grid': (3, 2),
+    },
+    'drink': {
+        'rect': [2630, 1220, 2910, 1420],
+        'grid': (4, 2),
+    },
+    'typing': {
+        'rect': [2550, 1220, 2910, 1420],
+        'grid': (3, 2),
+    }
+}
+
+
+def find_best_donor(arr, anim_name, grid, rect, sparkle_mask, max_shift=24):
+    H, W, _ = arr.shape
+    cols, rows = grid
+    cw = W // cols
+    ch = H // rows
+    last_idx = cols * rows - 1
+    lx0 = (last_idx % cols) * cw
+    ly0 = (last_idx // cols) * ch
+
+    dilated_mask = binary_dilation(sparkle_mask, iterations=2)
+    rx0, ry0, rx1, ry1 = rect
+    comp_mask = np.zeros((H, W), dtype=bool)
+    comp_mask[ry0:ry1, rx0:rx1] = True
+    comp_mask = comp_mask & (~dilated_mask)
+
+    y_coords, x_coords = np.where(comp_mask)
+    if len(y_coords) > 3000:
+        sub = np.linspace(0, len(y_coords) - 1, 3000, dtype=int)
+        y_coords = y_coords[sub]
+        x_coords = x_coords[sub]
+
+    best_score = float('inf')
+    best_donor = None
+    best_shift = (0, 0)
+
+    for k in range(last_idx):
+        kx0 = (k % cols) * cw
+        ky0 = (k // cols) * ch
+        dx_base = kx0 - lx0
+        dy_base = ky0 - ly0
+
+        for dy in range(-max_shift, max_shift + 1, 2):
+            for dx in range(-max_shift, max_shift + 1, 2):
+                yd = y_coords + dy_base + dy
+                xd = x_coords + dx_base + dx
+                valid = (yd >= 0) & (yd < H) & (xd >= 0) & (xd < W)
+                if np.sum(valid) < 300:
+                    continue
+                diff = np.abs(arr[y_coords[valid], x_coords[valid]].astype(float) - arr[yd[valid], xd[valid]].astype(float))
+                diff_norm = np.linalg.norm(diff, axis=-1)
+                p70 = np.percentile(diff_norm, 70)
+                score = np.mean(diff_norm[diff_norm <= p70])
+                if score < best_score:
+                    best_score = score
+                    best_donor = k
+                    best_shift = (dx, dy)
+
+    # Fine-tune with stride 1 around best_shift
+    bdx, bdy = best_shift
+    kx0 = (best_donor % cols) * cw
+    ky0 = (best_donor // cols) * ch
+    dx_base = kx0 - lx0
+    dy_base = ky0 - ly0
+    for dy in range(bdy - 2, bdy + 3):
+        for dx in range(bdx - 2, bdx + 3):
+            yd = y_coords + dy_base + dy
+            xd = x_coords + dx_base + dx
+            valid = (yd >= 0) & (yd < H) & (xd >= 0) & (xd < W)
+            if np.sum(valid) < 300:
+                continue
+            diff = np.abs(arr[y_coords[valid], x_coords[valid]].astype(float) - arr[yd[valid], xd[valid]].astype(float))
+            diff_norm = np.linalg.norm(diff, axis=-1)
+            p70 = np.percentile(diff_norm, 70)
+            score = np.mean(diff_norm[diff_norm <= p70])
+            if score < best_score:
+                best_score = score
+                best_shift = (dx, dy)
+
+    return best_donor, best_shift, best_score
+
+
 def detect_and_repair_sparkle(img_arr, anim_name=None, save_debug=True, debug_dir=None, src_dir=None):
     """
     Detects the Gemini sparkle watermark using aligned template mask (dilated by 2px)
-    and repairs it using distance-transform nearest-neighbour sampling on the full RGB image.
+    and repairs it using distance-transform nearest-neighbour sampling on the full RGB image,
+    donor-frame copying for small objects (gift, drink, typing), or mirroring (eat).
     """
     h, w, _ = img_arr.shape
     template_mask = get_sparkle_template(src_dir)
@@ -161,19 +249,89 @@ def detect_and_repair_sparkle(img_arr, anim_name=None, save_debug=True, debug_di
         _, indices = distance_transform_edt(sparkle_mask, return_indices=True)
         repaired[sparkle_mask] = img_arr[indices[0][sparkle_mask], indices[1][sparkle_mask]]
 
-    return repaired, sparkle_mask, sparkle_px
+    donor_info = None
+    if anim_name in DONOR_CONFIG:
+        donor_cfg = DONOR_CONFIG[anim_name]
+        grid = donor_cfg['grid']
+        rect = donor_cfg['rect']
+        best_donor, best_shift, best_score = find_best_donor(img_arr, anim_name, grid, rect, sparkle_mask)
+        donor_info = {
+            'donor': best_donor,
+            'shift': best_shift,
+            'score': best_score
+        }
+
+        rx0, ry0, rx1, ry1 = rect
+        obj_mask = np.zeros((h, w), dtype=bool)
+        obj_mask[ry0:ry1, rx0:rx1] = True
+        donor_mask = sparkle_mask & obj_mask
+
+        cols, rows = grid
+        cw = w // cols
+        ch = h // rows
+        last_idx = cols * rows - 1
+        lx0 = (last_idx % cols) * cw
+        ly0 = (last_idx // cols) * ch
+        kx0 = (best_donor % cols) * cw
+        ky0 = (best_donor // cols) * ch
+        dx_total = (kx0 - lx0) + best_shift[0]
+        dy_total = (ky0 - ly0) + best_shift[1]
+
+        ys, xs = np.where(donor_mask)
+        yd = ys + dy_total
+        xd = xs + dx_total
+        valid = (yd >= 0) & (yd < h) & (xd >= 0) & (xd < w)
+        repaired[ys[valid], xs[valid]] = img_arr[yd[valid], xd[valid]]
+
+    if anim_name == 'eat':
+        cols, rows = 4, 2
+        cw = w // cols
+        ch = h // rows
+        cx = 552.0
+        bx0, bx1, by0, by1 = 424, 680, 566, 694
+        x0_c7 = 3 * cw
+        y0_c7 = 1 * ch
+        mask_c7 = sparkle_mask[y0_c7:h, x0_c7:w]
+        c7 = repaired[y0_c7:h, x0_c7:w]
+        for y in range(ch):
+            for x in range(cw):
+                if not mask_c7[y, x]:
+                    continue
+                if bx0 <= x <= bx1 and by0 <= y <= by1:
+                    mx = int(round(2 * cx - x))
+                    mp = c7[y, mx]
+                    if mp[0] > mp[2] + 30 and mp[0] > 120 and mp[1] > 60:
+                        c7[y, x] = [56, 104, 150]
+                    else:
+                        c7[y, x] = mp
+                else:
+                    c7[y, x] = [255, 0, 255]
+        repaired[y0_c7:h, x0_c7:w] = c7
+
+    return repaired, sparkle_mask, sparkle_px, donor_info
 
 
-def remove_background(img_arr):
+def remove_background(img_arr, anim_name=None):
     """
     Step 2:
     - Flood-fill from borders for pixels close to magenta (tolerance ~70 per channel)
     - Delete remaining magenta-ish (R>190, B>190, G<110) including pink fringes
+    - Protect pink gem in 'eat' bowl
     """
     h, w, _ = img_arr.shape
     r = img_arr[:, :, 0].astype(int)
     g = img_arr[:, :, 1].astype(int)
     b = img_arr[:, :, 2].astype(int)
+
+    gem_mask = np.zeros((h, w), dtype=bool)
+    if anim_name == 'eat':
+        cols, rows = 4, 2
+        cw = w // cols
+        ch = h // rows
+        for k in range(8):
+            cx0 = (k % cols) * cw
+            cy0 = (k // cols) * ch
+            gem_mask[cy0 + 550 : cy0 + 650, cx0 + 530 : cx0 + 610] = True
 
     # Magenta distance <= 70
     dist_r = np.abs(r - 255)
@@ -194,12 +352,12 @@ def remove_background(img_arr):
     bg_mask = np.isin(lbl, border_labels)
 
     # Delete remaining magenta-ish
-    is_mag = (r > 190) & (b > 190) & (g < 110)
+    is_mag = (r > 190) & (b > 190) & (g < 110) & (~gem_mask)
     bg_mask |= is_mag
 
     # Pink fringes next to outlines: boundary pixels bordering bg that are pinkish
     dilated_bg = binary_dilation(bg_mask)
-    fringe = (~bg_mask) & dilated_bg & (r > 175) & (b > 175) & (g < 125)
+    fringe = (~bg_mask) & dilated_bg & (r > 175) & (b > 175) & (g < 125) & (~gem_mask)
     bg_mask |= fringe
 
     # Additional passes of halo removal directly on raw input
@@ -208,7 +366,7 @@ def remove_background(img_arr):
                         [0, 1, 0]], dtype=bool)
     for _ in range(3):
         dilated_bg = binary_dilation(bg_mask, structure=struct4)
-        halo = (~bg_mask) & dilated_bg & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+        halo = (~bg_mask) & dilated_bg & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70) & (~gem_mask)
         if not np.any(halo):
             break
         bg_mask |= halo
@@ -432,10 +590,10 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     arr = np.array(img)
 
     # 1. Detect and repair Gemini sparkle watermark BEFORE background removal
-    repaired_arr, sparkle_mask, sparkle_px = detect_and_repair_sparkle(arr, anim_name=anim_name, save_debug=True, src_dir=src_dir)
+    repaired_arr, sparkle_mask, sparkle_px, donor_info = detect_and_repair_sparkle(arr, anim_name=anim_name, save_debug=True, src_dir=src_dir)
 
     # 2. Background removal
-    non_bg_mask = remove_background(repaired_arr)
+    non_bg_mask = remove_background(repaired_arr, anim_name=anim_name)
     cat_overlap = int(np.sum(sparkle_mask & non_bg_mask))
 
     # Save 4x debug crop of repaired bottom-right area for inspection
@@ -662,6 +820,9 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     # Enforce binary alpha & purge any residual magenta-ish pixel
     # Residual magenta: R>190, B>190, G<110
     residual_mag = (final_arr[:, :, 0] > 190) & (final_arr[:, :, 2] > 190) & (final_arr[:, :, 1] < 110)
+    if anim_name == 'eat':
+        for i in range(total_frames):
+            residual_mag[265:295, i * CELL_WIDTH + 135 : i * CELL_WIDTH + 170] = False
     final_arr[residual_mag, 3] = 0
 
     final_arr[final_arr[:, :, 3] < 128, 3] = 0
@@ -677,6 +838,9 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
         is_trans = a == 0
         touches_trans = binary_dilation(is_trans, structure=struct4) & is_opaque
         halo = touches_trans & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+        if anim_name == 'eat':
+            for i in range(total_frames):
+                halo[265:295, i * CELL_WIDTH + 135 : i * CELL_WIDTH + 170] = False
         if not np.any(halo):
             break
         final_arr[halo, 3] = 0
@@ -690,6 +854,9 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     is_trans = a == 0
     touches_trans = binary_dilation(is_trans, structure=struct4) & is_opaque
     fringe_mask = touches_trans & (r > g + 25) & (b > g + 25) & (np.abs(r - b) < 70)
+    if anim_name == 'eat':
+        for i in range(total_frames):
+            fringe_mask[265:295, i * CELL_WIDTH + 135 : i * CELL_WIDTH + 170] = False
     fringe_count = int(np.sum(fringe_mask))
 
     # Hidden magenta under transparent pixels:
@@ -708,7 +875,13 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
     g = final_arr[:, :, 1].astype(int)
     b = final_arr[:, :, 2].astype(int)
     a = final_arr[:, :, 3]
-    still_mag = int(np.sum((a > 0) & (r > 190) & (b > 190) & (g < 110)))
+    if anim_name == 'eat':
+        gem_final_mask = np.zeros_like(a, dtype=bool)
+        for i in range(total_frames):
+            gem_final_mask[265:295, i * CELL_WIDTH + 135 : i * CELL_WIDTH + 170] = True
+        still_mag = int(np.sum((a > 0) & (r > 190) & (b > 190) & (g < 110) & (~gem_final_mask)))
+    else:
+        still_mag = int(np.sum((a > 0) & (r > 190) & (b > 190) & (g < 110)))
 
     # 2. TrMag: count of fully transparent pixels whose RGB is magenta-ish R>190,B>190,G<110, must be 0
     trmag_mask = (a == 0) & (r > 190) & (b > 190) & (g < 110)
@@ -747,7 +920,8 @@ def process_animation(anim_name, entry, src_dir, old_metrics, computed_scales=No
         'tr_mag': trmag_count,
         'empty_frames': empty_frames,
         'sparkle_px': sparkle_px,
-        'cat_overlap': cat_overlap
+        'cat_overlap': cat_overlap,
+        'donor_info': donor_info
     }
 
     # Generate preview contact sheet
@@ -816,8 +990,8 @@ def main():
                 continue
             im = Image.open(path).convert('RGB')
             arr = np.array(im)
-            repaired, sp_mask, sp_px = detect_and_repair_sparkle(arr, anim_name=s, save_debug=True, src_dir=src_dir)
-            non_bg = remove_background(repaired)
+            repaired, sp_mask, sp_px, _ = detect_and_repair_sparkle(arr, anim_name=s, save_debug=True, src_dir=src_dir)
+            non_bg = remove_background(repaired, anim_name=s)
             cat_overlap = int(np.sum(sp_mask & non_bg))
             print(f"{s:16} | {sp_px:10} | {cat_overlap:14}")
         print("=" * 50)
@@ -917,6 +1091,17 @@ def main():
     for name, r in reports:
         print(f"{name:16} | {r.get('sparkle_px', 0):10} | {r.get('cat_overlap', 0):14}")
     print("=" * 50)
+
+    donor_reports = [(name, r['donor_info']) for name, r in reports if r.get('donor_info')]
+    if donor_reports:
+        print("\n" + "=" * 55)
+        print("DONOR FILL REPORT")
+        print("=" * 55)
+        print(f"{'Animation':14} | {'Donor Frame':12} | {'Shift':10} | {'Score':8}")
+        print("-" * 55)
+        for name, d in donor_reports:
+            print(f"{name:14} | {d['donor']:12} | {str(d['shift']):10} | {d['score']:8.3f}")
+        print("=" * 55)
 
     if skipped:
         print("\nSKIPPED / MISSING FILES:")
