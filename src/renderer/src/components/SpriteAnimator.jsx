@@ -20,7 +20,7 @@ const stripUrlCache = new Map() // animName -> Promise<string>
 const pinnedUrls = new Set()
 const activeUrls = new Set()
 
-export const CORE_ANIMATIONS = ['idle', 'walk', 'purr', 'drag', 'fall', 'sleep', 'wakeup']
+export const CORE_ANIMATIONS = ['idle', 'walk', 'purr', 'drag', 'fall', 'sleep', 'wakeup', 'standidle', 'standup', 'sitdown']
 
 let preloadedOnce = false
 export function preloadCommonAnimations() {
@@ -599,6 +599,7 @@ export default function SpriteAnimator({
   className = '',
   style = {},
   onAnimationEnd,
+  onShown,
   speed,
   animationSpeed,
   catAnimationSpeed,
@@ -608,6 +609,9 @@ export default function SpriteAnimator({
   ...rest
 }) {
   const canvasRef = useRef(null)
+  const onShownRef = useRef(onShown)
+  onShownRef.current = onShown
+  const lastShownAssetKeyRef = useRef(null)
 
   const isListeningMode = Boolean(
     spritesheet === listeningSheetSrc ||
@@ -836,6 +840,11 @@ export default function SpriteAnimator({
         displayWidth,
         displayHeight
       )
+    }
+
+    if (lastShownAssetKeyRef.current !== targetAssetKey) {
+      lastShownAssetKeyRef.current = targetAssetKey
+      onShownRef.current?.(activeAsset.animName, targetAssetKey)
     }
   }, [
     animation,

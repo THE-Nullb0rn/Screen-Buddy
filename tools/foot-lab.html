@@ -1,0 +1,1145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cat Foot-Lock Lab — Stride & Ground Speed Calibration</title>
+<style>
+  :root {
+    --bg: #14141a;
+    --card: #1d1d26;
+    --card-hover: #242432;
+    --line: #2c2c3a;
+    --line-light: #3e3e52;
+    --txt: #e8e8f0;
+    --dim: #8c8ca0;
+    --acc: #f6b93b;
+    --acc-hover: #e5a72a;
+    --danger: #ff5252;
+    --success: #2ed573;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--txt);
+    font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: #101016;
+    border-bottom: 1px solid var(--line);
+    padding: 12px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--acc);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tag {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #2b2b3a;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .header-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  #status {
+    color: var(--dim);
+    font-size: 12px;
+  }
+  button, select, input[type=range], input[type=number] {
+    background: #23232f;
+    color: var(--txt);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font: inherit;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  button {
+    cursor: pointer;
+    font-weight: 500;
+  }
+  button:hover {
+    border-color: var(--acc);
+    background: #2b2b3b;
+  }
+  button:active {
+    transform: translateY(1px);
+  }
+  button.primary {
+    background: #2e2617;
+    border-color: var(--acc);
+    color: var(--acc);
+  }
+  button.primary:hover {
+    background: var(--acc);
+    color: #101014;
+  }
+  button.mini {
+    padding: 2px 7px;
+    font-size: 11px;
+    border-radius: 4px;
+  }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .stage-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .stage-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  .radio-group {
+    display: inline-flex;
+    background: #14141c;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .radio-group label {
+    padding: 4px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+    user-select: none;
+  }
+  .radio-group input { display: none; }
+  .radio-group label.active {
+    background: var(--acc);
+    color: #101014;
+    font-weight: 600;
+  }
+  .viewport-wrapper {
+    position: relative;
+    background: #121217;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+  }
+  canvas {
+    display: block;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: -webkit-crisp-edges;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  .stage-overlay {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    pointer-events: none;
+    font-size: 11px;
+    color: var(--dim);
+    display: flex;
+    gap: 16px;
+    background: rgba(16,16,22,0.85);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+  }
+  .grid-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    gap: 16px;
+  }
+  .panel-title {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--acc);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .control-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .control-row:last-child {
+    margin-bottom: 0;
+  }
+  .control-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+  }
+  .control-header span.val {
+    font-weight: 600;
+    font-family: monospace;
+    color: var(--txt);
+  }
+  .control-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .control-slider-wrap input[type=range] {
+    flex: 1;
+    height: 6px;
+    accent-color: var(--acc);
+    cursor: pointer;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat-box {
+    background: #171720;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+  .stat-val {
+    font-size: 15px;
+    font-weight: 600;
+    font-family: monospace;
+    color: var(--txt);
+  }
+  .clamp-active {
+    color: var(--danger);
+    font-weight: bold;
+    animation: pulse 1s infinite alternate;
+  }
+  @keyframes pulse {
+    0% { opacity: 0.7; }
+    100% { opacity: 1; }
+  }
+  .suggest-box {
+    background: #171720;
+    border: 1px dashed var(--line-light);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .suggest-result {
+    font-size: 12px;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .suggest-result strong {
+    color: var(--acc);
+    font-size: 14px;
+  }
+  .copy-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--success);
+    color: #101014;
+    font-weight: 600;
+    padding: 10px 18px;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .copy-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .saved-summary {
+    font-size: 12px;
+    color: var(--dim);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .saved-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: #14141c;
+    font-family: monospace;
+  }
+  .saved-row.active {
+    border-left: 2px solid var(--acc);
+    color: var(--txt);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>
+    <span>🐱</span> Cat Foot-Lock Lab
+    <span class="tag">Calibration</span>
+  </h1>
+  <div class="header-actions">
+    <span id="status">Loading...</span>
+    <button id="copyBtn" class="primary" title="Copy WALK_PX_PER_CYCLE, STALK_PX_PER_CYCLE, RUN_PX_PER_CYCLE and speed ranges">📋 Copy values</button>
+  </div>
+</header>
+
+<main>
+  <!-- Main Stage Card -->
+  <section class="card stage-card">
+    <div class="stage-toolbar">
+      <label>
+        Animation:
+        <select id="animSelect">
+          <option value="walk" selected>walk (8 frames)</option>
+          <option value="stalk">stalk (8 frames)</option>
+          <option value="run">run (8 frames)</option>
+        </select>
+      </label>
+
+      <div class="radio-group">
+        <label id="modeALabel" class="active">
+          <input type="radio" name="mode" value="A" checked> Mode A: Foot-lock
+        </label>
+        <label id="modeBLabel">
+          <input type="radio" name="mode" value="B"> Mode B: App walk
+        </label>
+      </div>
+
+      <button id="playPauseBtn">⏸ Pause</button>
+      <button id="stepPrevBtn" title="Previous frame">&lt;</button>
+      <button id="stepNextBtn" title="Next frame">&gt;</button>
+      <button id="resetPosBtn" title="Reset ground / position">↺ Reset</button>
+
+      <label style="margin-left: auto; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
+        <input type="checkbox" id="mirrorCheckbox"> Mirror (face left)
+      </label>
+    </div>
+
+    <div class="viewport-wrapper">
+      <canvas id="viewportCanvas" width="960" height="260"></canvas>
+      <div class="stage-overlay">
+        <span id="overlayMode">Mode A (Foot-lock)</span>
+        <span id="overlayFrame">Frame: 1/8</span>
+        <span id="overlayScroll">Scroll: 0 px</span>
+        <span id="overlayFps">12.0 fps</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Calibration Controls -->
+  <div class="grid-cols">
+    <!-- Motion Controls -->
+    <section class="card">
+      <div class="panel-title">
+        <span>Motion Parameters</span>
+        <span style="font-size: 11px; color: var(--dim); font-weight: normal;">Live adjustment</span>
+      </div>
+
+      <!-- Ground Speed -->
+      <div class="control-row">
+        <div class="control-header">
+          <span>Ground Speed</span>
+          <span>
+            <span id="speedVal" class="val">100</span> px/s
+            <span style="color: var(--dim); font-size: 11px; margin-left: 6px;">[<span id="speedMinDisplay">80</span> – <span id="speedMaxDisplay">120</span>]</span>
+          </span>
+        </div>
+        <div class="control-slider-wrap">
+          <input type="range" id="speedSlider" min="40" max="200" step="1" value="100">
+          <button id="setMinBtn" class="mini" title="Set current speed as lower bound for this animation">Set min</button>
+          <button id="setMaxBtn" class="mini" title="Set current speed as upper bound for this animation">Set max</button>
+        </div>
+      </div>
+
+      <!-- Stride -->
+      <div class="control-row">
+        <div class="control-header">
+          <span>Stride per Cycle (Ground covered in 8 frames)</span>
+          <span class="val"><span id="strideVal">72</span> screen px</span>
+        </div>
+        <div class="control-slider-wrap">
+          <input type="range" id="strideSlider" min="20" max="300" step="1" value="72">
+        </div>
+        <div style="font-size: 11px; color: var(--dim); margin-top: 2px;">
+          Adjust stride until feet do NOT slide forward or backward against the ground ticks.
+        </div>
+      </div>
+
+      <!-- Cat Size -->
+      <div class="control-row">
+        <div class="control-header">
+          <span>Cat Size Scale</span>
+          <span class="val"><span id="sizeVal">100</span>%</span>
+        </div>
+        <div class="control-slider-wrap">
+          <input type="range" id="sizeSlider" min="50" max="200" step="5" value="100">
+        </div>
+      </div>
+    </section>
+
+    <!-- Playback Diagnostics -->
+    <section class="card">
+      <div class="panel-title">
+        <span>Playback Diagnostics</span>
+        <span id="clampTag" class="tag" style="display: none; background: #471818; color: var(--danger);">Clamped</span>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="stat-label">Base FPS</div>
+          <div id="diagBaseFps" class="stat-val">12 fps</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Playback Rate</div>
+          <div id="diagRate" class="stat-val">1.00x</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Effective FPS</div>
+          <div id="diagEffectiveFps" class="stat-val">12.0 fps</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Cycle Frequency</div>
+          <div id="diagCyclesSec" class="stat-val">1.50 c/s</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 12px; font-size: 11px; color: var(--dim); line-height: 1.5; background: #171720; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line);">
+        <div><strong>Formula:</strong> <code>rate = groundSpeed / (stride * baseFps / 8)</code></div>
+        <div style="margin-top: 2px;">Clamp range: <code>0.25x – 2.0x</code>. Ground speed is absolute; stride changes leg cycle rate.</div>
+      </div>
+    </section>
+
+    <!-- Stride Suggestion & Saved Values -->
+    <section class="card">
+      <div class="panel-title">
+        <span>Stride Estimation &amp; Saved Data</span>
+      </div>
+
+      <button id="suggestBtn" style="width: 100%;">🔍 Suggest starting stride (cluster shift)</button>
+
+      <div id="suggestBox" class="suggest-box" style="display: none;">
+        <div class="suggest-result">
+          <span>Estimated Stride: <strong id="suggestPx">--</strong></span>
+          <button id="applySuggestBtn" class="mini primary">Apply to slider</button>
+        </div>
+        <div style="font-size: 11px; color: var(--dim); line-height: 1.3;">
+          * Rough estimate, trust your eyes. Match planted paw shifts across frames.
+        </div>
+      </div>
+
+      <div style="margin-top: 14px;">
+        <div style="font-size: 12px; font-weight: 600; color: var(--dim); margin-bottom: 4px;">CALIBRATION RECORD (PERSISTED):</div>
+        <div class="saved-summary">
+          <div id="savedWalk" class="saved-row active">
+            <span>walk:</span>
+            <span id="savedWalkTxt">stride: 72px | 80–120 px/s</span>
+          </div>
+          <div id="savedStalk" class="saved-row">
+            <span>stalk:</span>
+            <span id="savedStalkTxt">stride: 68px | 35–60 px/s</span>
+          </div>
+          <div id="savedRun" class="saved-row">
+            <span>run:</span>
+            <span id="savedRunTxt">stride: 170px | 240–320 px/s</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div id="copyToast" class="copy-toast">Copied calibration values to clipboard!</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Constants
+  const BASE_URL = '../src/renderer/src/assets/cat-sprite/anims/';
+  const CELL_W = 210;
+  const CELL_H = 300;
+  const GROUND_CELL_Y = 291;
+  const CANVAS_GROUND_Y = 195;
+  const STORAGE_KEY = 'sb_foot_lab_settings';
+
+  // Animation metadata defaults
+  const ANIM_CONFIGS = {
+    walk: {
+      defaultSpeed: 100,
+      minSliderSpeed: 40,
+      maxSliderSpeed: 200,
+      defaultStride: 72,
+      defaultMinSpeed: 80,
+      defaultMaxSpeed: 120
+    },
+    stalk: {
+      defaultSpeed: 50,
+      minSliderSpeed: 20,
+      maxSliderSpeed: 120,
+      defaultStride: 68,
+      defaultMinSpeed: 35,
+      defaultMaxSpeed: 60
+    },
+    run: {
+      defaultSpeed: 280,
+      minSliderSpeed: 120,
+      maxSliderSpeed: 450,
+      defaultStride: 170,
+      defaultMinSpeed: 240,
+      defaultMaxSpeed: 320
+    }
+  };
+
+  // State
+  const state = {
+    animName: 'walk',
+    mode: 'A', // 'A' = Foot-lock (scrolling ground), 'B' = like app (walking cat)
+    playing: true,
+    mirror: false, // false = faces right (flipped in sprite), true = faces left
+    catSize: 100, // percentage
+
+    // Per-animation saved settings
+    calibrations: {
+      walk: { stride: 72, speed: 100, minSpeed: 80, maxSpeed: 120 },
+      stalk: { stride: 68, speed: 50, minSpeed: 35, maxSpeed: 60 },
+      run: { stride: 170, speed: 280, minSpeed: 240, maxSpeed: 320 }
+    },
+
+    // Runtime tracking
+    animsManifest: null,
+    images: {},
+    baseFps: { walk: 12, stalk: 8, run: 14 },
+    currentFrame: 0,
+    frameAccumulator: 0,
+    groundOffset: 0,
+    catX: 0,
+    lastTime: performance.now(),
+    elapsedTotalTime: 0
+  };
+
+  // DOM Elements
+  const $ = id => document.getElementById(id);
+  const canvas = $('viewportCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Load state from localStorage
+  function loadPersistedState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.calibrations) {
+          for (const k of ['walk', 'stalk', 'run']) {
+            if (parsed.calibrations[k]) {
+              state.calibrations[k] = Object.assign({}, state.calibrations[k], parsed.calibrations[k]);
+            }
+          }
+        }
+        if (parsed.catSize) state.catSize = parsed.catSize;
+        if (parsed.mode) state.mode = parsed.mode;
+        if (typeof parsed.mirror === 'boolean') state.mirror = parsed.mirror;
+      }
+    } catch (e) {
+      console.warn('Could not read localStorage:', e);
+    }
+  }
+
+  function savePersistedState() {
+    try {
+      const toSave = {
+        calibrations: state.calibrations,
+        catSize: state.catSize,
+        mode: state.mode,
+        mirror: state.mirror
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    } catch (e) {
+      console.warn('Could not write to localStorage:', e);
+    }
+    updateSavedSummaryUI();
+  }
+
+  // Load image helper
+  function loadImage(name) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to load image: ' + name));
+      img.src = BASE_URL + name + '.png';
+    });
+  }
+
+  // Initialize
+  async function init() {
+    loadPersistedState();
+
+    try {
+      $('status').textContent = 'Loading anims.json...';
+      const manifestRes = await fetch(BASE_URL + 'anims.json');
+      if (!manifestRes.ok) throw new Error('HTTP ' + manifestRes.status);
+      state.animsManifest = await manifestRes.json();
+      
+      const anims = state.animsManifest.animations || state.animsManifest;
+      if (anims.walk && anims.walk.fps) state.baseFps.walk = anims.walk.fps;
+      if (anims.stalk && anims.stalk.fps) state.baseFps.stalk = anims.stalk.fps;
+      if (anims.run && anims.run.fps) state.baseFps.run = anims.run.fps;
+
+      $('status').textContent = 'Loading sprite strips...';
+      const [imgWalk, imgStalk, imgRun] = await Promise.all([
+        loadImage('walk'),
+        loadImage('stalk'),
+        loadImage('run')
+      ]);
+      state.images.walk = imgWalk;
+      state.images.stalk = imgStalk;
+      state.images.run = imgRun;
+
+      $('status').textContent = 'Ready';
+      bindEvents();
+      applyAnimationChange(state.animName);
+      updateSavedSummaryUI();
+
+      // Reset cat starting position for Mode B
+      state.catX = 40;
+      state.lastTime = performance.now();
+      requestAnimationFrame(loop);
+    } catch (err) {
+      $('status').textContent = 'Error: ' + err.message;
+      console.error(err);
+    }
+  }
+
+  // Apply Animation Selection
+  function applyAnimationChange(name) {
+    state.animName = name;
+    const cfg = ANIM_CONFIGS[name];
+    const cal = state.calibrations[name];
+
+    // Configure sliders
+    const speedSlider = $('speedSlider');
+    speedSlider.min = cfg.minSliderSpeed;
+    speedSlider.max = cfg.maxSliderSpeed;
+    speedSlider.value = cal.speed;
+    $('speedVal').textContent = cal.speed;
+    $('speedMinDisplay').textContent = cal.minSpeed;
+    $('speedMaxDisplay').textContent = cal.maxSpeed;
+
+    const strideSlider = $('strideSlider');
+    strideSlider.value = cal.stride;
+    $('strideVal').textContent = cal.stride;
+
+    // Reset suggestion box
+    $('suggestBox').style.display = 'none';
+
+    updateSavedSummaryUI();
+  }
+
+  // Bind UI Events
+  function bindEvents() {
+    $('animSelect').value = state.animName;
+    $('animSelect').onchange = e => {
+      applyAnimationChange(e.target.value);
+    };
+
+    // Mode Radios
+    const setMode = m => {
+      state.mode = m;
+      $('modeALabel').className = m === 'A' ? 'active' : '';
+      $('modeBLabel').className = m === 'B' ? 'active' : '';
+      $('overlayMode').textContent = m === 'A' ? 'Mode A (Foot-lock)' : 'Mode B (App walk)';
+      if (m === 'B') state.catX = 40;
+      savePersistedState();
+    };
+    $('modeALabel').onclick = () => setMode('A');
+    $('modeBLabel').onclick = () => setMode('B');
+    if (state.mode === 'B') setMode('B');
+
+    // Speed Slider
+    $('speedSlider').oninput = e => {
+      const val = parseInt(e.target.value, 10);
+      $('speedVal').textContent = val;
+      state.calibrations[state.animName].speed = val;
+      savePersistedState();
+    };
+
+    $('setMinBtn').onclick = () => {
+      const val = state.calibrations[state.animName].speed;
+      state.calibrations[state.animName].minSpeed = val;
+      $('speedMinDisplay').textContent = val;
+      savePersistedState();
+    };
+
+    $('setMaxBtn').onclick = () => {
+      const val = state.calibrations[state.animName].speed;
+      state.calibrations[state.animName].maxSpeed = val;
+      $('speedMaxDisplay').textContent = val;
+      savePersistedState();
+    };
+
+    // Stride Slider (Notice: changing stride changes ONLY leg rate, not ground speed!)
+    $('strideSlider').oninput = e => {
+      const val = parseInt(e.target.value, 10);
+      $('strideVal').textContent = val;
+      state.calibrations[state.animName].stride = val;
+      savePersistedState();
+    };
+
+    // Cat Size Slider
+    $('sizeSlider').value = state.catSize;
+    $('sizeVal').textContent = state.catSize;
+    $('sizeSlider').oninput = e => {
+      const val = parseInt(e.target.value, 10);
+      state.catSize = val;
+      $('sizeVal').textContent = val;
+      savePersistedState();
+    };
+
+    // Mirror Checkbox
+    $('mirrorCheckbox').checked = state.mirror;
+    $('mirrorCheckbox').onchange = e => {
+      state.mirror = e.target.checked;
+      savePersistedState();
+    };
+
+    // Play/Pause
+    $('playPauseBtn').onclick = () => {
+      state.playing = !state.playing;
+      $('playPauseBtn').textContent = state.playing ? '⏸ Pause' : '▶ Play';
+    };
+
+    // Step buttons
+    $('stepPrevBtn').onclick = () => {
+      state.playing = false;
+      $('playPauseBtn').textContent = '▶ Play';
+      state.currentFrame = (state.currentFrame - 1 + 8) % 8;
+    };
+    $('stepNextBtn').onclick = () => {
+      state.playing = false;
+      $('playPauseBtn').textContent = '▶ Play';
+      state.currentFrame = (state.currentFrame + 1) % 8;
+    };
+
+    // Reset button
+    $('resetPosBtn').onclick = () => {
+      state.groundOffset = 0;
+      state.catX = 40;
+      state.currentFrame = 0;
+      state.frameAccumulator = 0;
+      state.elapsedTotalTime = 0;
+    };
+
+    // Suggest Button
+    $('suggestBtn').onclick = () => {
+      calculateSuggestedStride(state.animName);
+    };
+
+    // Apply Suggestion Button
+    $('applySuggestBtn').onclick = () => {
+      const val = parseInt($('suggestPx').dataset.val, 10);
+      if (val && !isNaN(val)) {
+        $('strideSlider').value = val;
+        $('strideVal').textContent = val;
+        state.calibrations[state.animName].stride = val;
+        savePersistedState();
+      }
+    };
+
+    // Copy Button
+    $('copyBtn').onclick = () => {
+      copyCalibrationValues();
+    };
+  }
+
+  // Update Summary UI
+  function updateSavedSummaryUI() {
+    for (const k of ['walk', 'stalk', 'run']) {
+      const cal = state.calibrations[k];
+      const el = $('saved' + k.charAt(0).toUpperCase() + k.slice(1));
+      const txt = $('saved' + k.charAt(0).toUpperCase() + k.slice(1) + 'Txt');
+      if (el && txt) {
+        txt.textContent = `stride: ${cal.stride}px | ${cal.minSpeed}–${cal.maxSpeed} px/s`;
+        el.className = 'saved-row' + (state.animName === k ? ' active' : '');
+      }
+    }
+  }
+
+  // Suggest algorithm:
+  // for each frame, find ground contact clusters (lowest opaque rows, within 6px of ground),
+  // match clusters between consecutive frames moving left (facing right),
+  // take median shift and multiply by 8.
+  function calculateSuggestedStride(animName) {
+    const img = state.images[animName];
+    if (!img) return;
+
+    const off = document.createElement('canvas');
+    off.width = CELL_W;
+    off.height = CELL_H;
+    const octx = off.getContext('2d');
+
+    const frameClusters = [];
+    for (let f = 0; f < 8; f++) {
+      octx.clearRect(0, 0, CELL_W, CELL_H);
+      octx.drawImage(img, f * CELL_W, 0, CELL_W, CELL_H, 0, 0, CELL_W, CELL_H);
+      const imgData = octx.getImageData(0, 0, CELL_W, CELL_H);
+      const d = imgData.data;
+
+      // Find lowest opaque pixel
+      let maxOpaqueY = 0;
+      for (let y = CELL_H - 1; y >= 0; y--) {
+        let found = false;
+        for (let x = 0; x < CELL_W; x++) {
+          const a = d[(y * CELL_W + x) * 4 + 3];
+          if (a > 50) {
+            maxOpaqueY = y;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+
+      // Collect x coordinates in lowest 6 pixels
+      const minY = Math.max(0, maxOpaqueY - 6);
+      const xs = [];
+      for (let y = minY; y <= maxOpaqueY; y++) {
+        for (let x = 0; x < CELL_W; x++) {
+          const a = d[(y * CELL_W + x) * 4 + 3];
+          if (a > 50) {
+            // Flip x because sprite PNG faces left, but viewer faces right:
+            xs.push(CELL_W - 1 - x);
+          }
+        }
+      }
+
+      // Cluster adjacent x coordinates
+      xs.sort((a, b) => a - b);
+      const clusters = [];
+      if (xs.length > 0) {
+        let cur = [xs[0]];
+        for (let i = 1; i < xs.length; i++) {
+          if (xs[i] - cur[cur.length - 1] <= 6) {
+            cur.push(xs[i]);
+          } else {
+            const avg = cur.reduce((sum, v) => sum + v, 0) / cur.length;
+            clusters.push(avg);
+            cur = [xs[i]];
+          }
+        }
+        const avg = cur.reduce((sum, v) => sum + v, 0) / cur.length;
+        clusters.push(avg);
+      }
+      frameClusters.push(clusters);
+    }
+
+    // Match clusters moving left between frame f and (f+1)%8
+    // When cat faces right, planted paw moves backward (left, p2 < p1)
+    const shifts = [];
+    for (let f = 0; f < 8; f++) {
+      const c1 = frameClusters[f];
+      const c2 = frameClusters[(f + 1) % 8];
+      for (const p1 of c1) {
+        for (const p2 of c2) {
+          const shift = p1 - p2; // shift left
+          if (shift >= 2 && shift <= 32) {
+            shifts.push(shift);
+            break;
+          }
+        }
+      }
+    }
+
+    shifts.sort((a, b) => a - b);
+    let medianShift = 10;
+    if (shifts.length > 0) {
+      const mid = Math.floor(shifts.length / 2);
+      medianShift = shifts.length % 2 !== 0 ? shifts[mid] : (shifts[mid - 1] + shifts[mid]) / 2;
+    }
+
+    const scale = 0.6 * (state.catSize / 100);
+    const suggestedCellCycle = medianShift * 8;
+    const suggestedScreenPx = Math.round(suggestedCellCycle * scale);
+
+    $('suggestPx').textContent = suggestedScreenPx + ' px';
+    $('suggestPx').dataset.val = suggestedScreenPx;
+    $('suggestBox').style.display = 'flex';
+  }
+
+  // Copy values formatted plain text
+  function copyCalibrationValues() {
+    const w = state.calibrations.walk;
+    const s = state.calibrations.stalk;
+    const r = state.calibrations.run;
+
+    const text = [
+      `WALK_PX_PER_CYCLE=${w.stride}`,
+      `STALK_PX_PER_CYCLE=${s.stride}`,
+      `RUN_PX_PER_CYCLE=${r.stride}`,
+      ``,
+      `# Preferred speed ranges:`,
+      `# walk: ${w.minSpeed} - ${w.maxSpeed} px/s`,
+      `# stalk: ${s.minSpeed} - ${s.maxSpeed} px/s`,
+      `# run: ${r.minSpeed} - ${r.maxSpeed} px/s`
+    ].join('\n');
+
+    const toast = $('copyToast');
+    const showToast = () => {
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(showToast).catch(() => fallbackCopy(text, showToast));
+    } else {
+      fallbackCopy(text, showToast);
+    }
+  }
+
+  function fallbackCopy(text, cb) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy');
+      cb();
+    } catch (e) {
+      console.warn('Fallback copy failed', e);
+    }
+    document.body.removeChild(ta);
+  }
+
+  // Main Animation & Render Loop
+  function loop(now) {
+    const dt = Math.min(0.1, (now - state.lastTime) / 1000);
+    state.lastTime = now;
+    state.elapsedTotalTime += dt;
+
+    const cal = state.calibrations[state.animName];
+    const groundSpeed = cal.speed; // px/s
+    const stride = cal.stride; // screen px per cycle
+    const baseFps = state.baseFps[state.animName] || 12;
+
+    // Playback rate: rate = groundSpeed / (stride * baseFps / 8)
+    const nominalCycleSpeed = (stride * baseFps) / 8;
+    const rawRate = nominalCycleSpeed > 0 ? (groundSpeed / nominalCycleSpeed) : 1;
+    const clampedRate = Math.min(2.0, Math.max(0.25, rawRate));
+    const isClamped = rawRate < 0.25 || rawRate > 2.0;
+
+    const effectiveFps = baseFps * clampedRate;
+    const cyclesPerSec = effectiveFps / 8;
+
+    // Diagnostics UI update
+    $('diagBaseFps').textContent = baseFps + ' fps';
+    $('diagRate').textContent = rawRate.toFixed(2) + 'x';
+    $('diagEffectiveFps').textContent = effectiveFps.toFixed(1) + ' fps';
+    $('diagCyclesSec').textContent = cyclesPerSec.toFixed(2) + ' c/s';
+    
+    if (isClamped) {
+      $('clampTag').style.display = 'inline-block';
+      $('clampTag').textContent = rawRate < 0.25 ? 'Clamped min (0.25x)' : 'Clamped max (2.0x)';
+      $('diagRate').className = 'stat-val clamp-active';
+    } else {
+      $('clampTag').style.display = 'none';
+      $('diagRate').className = 'stat-val';
+    }
+
+    // Step frame based on effectiveFps
+    if (state.playing) {
+      const frameDuration = 1000 / effectiveFps;
+      state.frameAccumulator += dt * 1000;
+      while (state.frameAccumulator >= frameDuration) {
+        state.frameAccumulator -= frameDuration;
+        state.currentFrame = (state.currentFrame + 1) % 8;
+      }
+    }
+
+    // Position updates
+    const scale = 0.6 * (state.catSize / 100);
+    const catW = Math.round(CELL_W * scale);
+    const catH = Math.round(CELL_H * scale);
+    const groundLineY = CANVAS_GROUND_Y;
+    const catY = Math.round(groundLineY - (GROUND_CELL_Y * scale));
+
+    if (state.mode === 'A') {
+      // MODE A (Foot-lock):
+      // Cat stays fixed in center.
+      // Ground scrolls LEFT at chosen ground speed (if facing right).
+      // If mirrored (facing left), ground scrolls RIGHT.
+      const scrollDir = state.mirror ? 1 : -1;
+      if (state.playing) {
+        state.groundOffset += scrollDir * groundSpeed * dt;
+      }
+      state.catX = Math.round((canvas.width - catW) / 2);
+    } else {
+      // MODE B (Like the app):
+      // Ground is fixed.
+      // Cat walks across screen at chosen speed in facing direction and wraps.
+      state.groundOffset = 0;
+      const walkDir = state.mirror ? -1 : 1;
+      if (state.playing) {
+        state.catX += walkDir * groundSpeed * dt;
+        if (walkDir === 1 && state.catX > canvas.width + 40) {
+          state.catX = -catW - 40;
+        } else if (walkDir === -1 && state.catX < -catW - 40) {
+          state.catX = canvas.width + 40;
+        }
+      }
+    }
+
+    // Update overlay readout
+    $('overlayFrame').textContent = `Frame: ${state.currentFrame + 1}/8`;
+    $('overlayScroll').textContent = `Scroll: ${Math.round(state.groundOffset)} px`;
+    $('overlayFps').textContent = `${effectiveFps.toFixed(1)} fps`;
+
+    // ─── Canvas Render ───
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw Background Sky / Room
+    ctx.fillStyle = '#16161e';
+    ctx.fillRect(0, 0, canvas.width, groundLineY);
+
+    // 2. Draw Ground Slab
+    ctx.fillStyle = '#0f0f15';
+    ctx.fillRect(0, groundLineY, canvas.width, canvas.height - groundLineY);
+
+    // Ground Baseline
+    ctx.strokeStyle = '#4e4e64';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, groundLineY + 0.5);
+    ctx.lineTo(canvas.width, groundLineY + 0.5);
+    ctx.stroke();
+
+    // 3. Draw Ticks & Measuring Markers on Ground
+    // Ticks every 20px, major every 100px
+    const tickSpacing = 20;
+    const majorInterval = 100;
+    const startX = ((state.groundOffset % tickSpacing) + tickSpacing) % tickSpacing - tickSpacing;
+
+    for (let x = startX; x <= canvas.width + tickSpacing; x += tickSpacing) {
+      const worldX = Math.round(x - state.groundOffset);
+      const isMajor = Math.abs(worldX) % majorInterval < 1;
+
+      if (isMajor) {
+        // Major tick (100px)
+        ctx.strokeStyle = '#f6b93b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, groundLineY + 1);
+        ctx.lineTo(Math.round(x) + 0.5, groundLineY + 16);
+        ctx.stroke();
+
+        // Major tick label
+        ctx.fillStyle = 'rgba(246, 185, 59, 0.7)';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${worldX}`, Math.round(x), groundLineY + 28);
+      } else {
+        // Minor tick (20px)
+        ctx.strokeStyle = '#434358';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, groundLineY + 1);
+        ctx.lineTo(Math.round(x) + 0.5, groundLineY + 8);
+        ctx.stroke();
+      }
+
+      // Small dots between 20px ticks (at 10px marks)
+      ctx.fillStyle = '#2c2c3c';
+      ctx.fillRect(Math.round(x + 10) - 1, groundLineY + 6, 2, 2);
+    }
+
+    // 4. Draw Center Alignment Guide in Mode A
+    if (state.mode === 'A') {
+      ctx.strokeStyle = 'rgba(246, 185, 59, 0.15)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2 + 0.5, 0);
+      ctx.lineTo(canvas.width / 2 + 0.5, canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 5. Draw Cat Sprite
+    const img = state.images[state.animName];
+    if (img) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+
+      // Note: Source sprite faces LEFT.
+      // If state.mirror === false (default): cat faces RIGHT -> flip horizontally.
+      // If state.mirror === true: cat faces LEFT -> draw directly without flipping.
+      if (!state.mirror) {
+        // Facing RIGHT: flip horizontally around cat bounding box
+        ctx.translate(Math.round(state.catX) + catW, catY);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, state.currentFrame * CELL_W, 0, CELL_W, CELL_H, 0, 0, catW, catH);
+      } else {
+        // Facing LEFT: direct draw
+        ctx.drawImage(img, state.currentFrame * CELL_W, 0, CELL_W, CELL_H, Math.round(state.catX), catY, catW, catH);
+      }
+      ctx.restore();
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  // Boot
+  window.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
