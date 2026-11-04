@@ -55,6 +55,10 @@ export const GIFT_CHANCE = 0.10
 export const GIFT_COOLDOWN_MS = 600000 // 10 minutes
 export const GIFT_MIN_AFFECTION = 95
 
+// Reaction cooldown constants
+export const REACTION_COOLDOWN_EVENT_MS = 60000
+export const REACTION_COOLDOWN_IDLE_MS = 180000
+
 const FALLBACK_WIDTH = SPRITE_WIDTH
 const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
@@ -1741,7 +1745,8 @@ export default function Mascot({
 
       const now = Date.now()
       const lastTime = lastReactionTimesRef.current[reactionType] || 0
-      if (now - lastTime < 3 * 60 * 1000) return false
+      const cooldown = isExplicitTrigger ? REACTION_COOLDOWN_EVENT_MS : REACTION_COOLDOWN_IDLE_MS
+      if (now - lastTime < cooldown) return false
     } else {
       if (isCareActionRef.current || isReactionActiveRef.current || draggingRef.current || dragPointerDownRef.current || poseRef.current === 'sleep' || poseRef.current === 'typing' || poseRef.current === 'typingfast' || isReminder) {
         return false
