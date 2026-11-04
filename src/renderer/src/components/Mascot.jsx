@@ -5,6 +5,8 @@ import listeningManifest from '../assets/cat-sprite/listening-manifest.json'
 import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
 import animsManifest from '../assets/cat-sprite/anims/anims.json'
 import { useMood, moodModifiers, MOOD_EMOJIS } from '../hooks/useMood'
+// Replace this file to change the meow.
+import meowUrl from '../assets/sounds/meow.wav'
 
 const MARGIN = 16
 const SPRITE_WIDTH = 126
@@ -119,6 +121,8 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
   let playWeight = 12 * mods.play
   let toyplayWeight = 14 * mods.toyplay
   let curiousWeight = 14 * mods.curious
+  let sadWeight = mood === 'Lonely' ? 14 : 0
+  let annoyedWeight = mood === 'Annoyed' ? 14 : 0
 
   // Base chain items
   let lookaroundWeight = 10
@@ -179,6 +183,8 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
     { pose: 'play', type: 'loop', duration: getAnimationDuration('play'), weight: playWeight },
     { pose: 'toyplay', type: 'loop', duration: getAnimationDuration('toyplay'), weight: toyplayWeight },
     { pose: 'curious', type: 'loop', duration: getAnimationDuration('curious'), weight: curiousWeight },
+    { pose: 'sad', type: 'oneshot', duration: getAnimationDuration('sad'), weight: sadWeight },
+    { pose: 'annoyed', type: 'oneshot', duration: getAnimationDuration('annoyed'), weight: annoyedWeight },
     // Life chains
     { id: 'lookaround', pose: 'lookaround', type: 'oneshot', isChain: true, weight: lookaroundWeight },
     { id: 'tailflick', pose: 'tailflick', type: 'oneshot', isChain: true, weight: tailflickWeight },
@@ -189,9 +195,6 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
     { id: 'run_burst', pose: 'run_burst', isChain: true, weight: runBurstWeight },
     { id: 'nap_elsewhere', pose: 'nap_elsewhere', isChain: true, weight: napElsewhereWeight },
   ]
-  if (mods.sadWeight > 0) {
-    base.push({ pose: 'sad', type: 'oneshot', duration: getAnimationDuration('sad'), weight: mods.sadWeight })
-  }
   return base.filter((item) => item.weight > 0)
 }
 
@@ -235,12 +238,14 @@ const BUTTON_MASK = {
 }
 
 export default function Mascot({
+  settings = null,
   reminderState,
   reminderType = 'water',
   hungerState = 'IDLE',
   onFeed,
   feedSignal = 0,
   drinkSignal = 0,
+  hungerLaterSignal = 0,
   hungerBehavior = 'search-food',
   pomodoroCelebrating = false,
   REMINDER_STATE,
@@ -380,6 +385,19 @@ export default function Mascot({
   const lastDrinkAffectionTimeRef = useRef(0)
   const runBurstDebugTrackingRef = useRef(false)
   const moveHistoryRef = useRef([])
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+  const lastMeowTimeRef = useRef(0)
+  const meowAudioRef = useRef(null)
+  const isReactionActiveRef = useRef(false)
+  const reactionTokenRef = useRef(0)
+  const reactionTimeoutRef = useRef(null)
+  const lastReactionTimesRef = useRef({ sad: 0, annoyed: 0 })
+  const isKnockoffActiveRef = useRef(false)
+  const pendingKnockoffAnnoyedRef = useRef(false)
+  const lastLongNoInteractSadTimeRef = useRef(0)
+  const performReactionRef = useRef(null)
+  const playMeowRef = useRef(null)
 
   // Wakeup from sleep transition refs
   const wakingUpRef = useRef(false)
@@ -545,13 +563,23 @@ export default function Mascot({
 
   const cancelActiveLifeChain = useCallback((reason = 'interrupted') => {
     const isCareInterrupt = reason.startsWith('care_') || reason === 'pointerdown' || reason === 'unmount'
-    if (!isChainActiveRef.current && (!isCareActionRef.current || !isCareInterrupt)) return
+    const isReactionInterrupt = reason.startsWith('react_') || reason === 'pointerdown' || reason === 'unmount' || reason.startsWith('care_')
+    if (!isChainActiveRef.current && (!isCareActionRef.current || !isCareInterrupt) && (!isReactionActiveRef.current || !isReactionInterrupt)) return
     if (isDebugRef.current) {
       if (isChainActiveRef.current) {
         console.log(`[life] chain ${activeChainIdRef.current || 'unknown'} abort ${reason}`)
       }
       if (isCareActionRef.current && isCareInterrupt) {
         console.log(`[life] care abort ${reason}`)
+      }
+      if (isReactionActiveRef.current && isReactionInterrupt) {
+        console.log(`[life] react abort ${reason}`)
+      }
+    }
+    if (isKnockoffActiveRef.current) {
+      isKnockoffActiveRef.current = false
+      if (Math.random() < 0.60) {
+        pendingKnockoffAnnoyedRef.current = true
       }
     }
     if (isCareInterrupt && isCareActionRef.current) {
@@ -560,6 +588,14 @@ export default function Mascot({
       if (eatTimeoutRef.current) {
         clearTimeout(eatTimeoutRef.current)
         eatTimeoutRef.current = null
+      }
+    }
+    if (isReactionInterrupt && isReactionActiveRef.current) {
+      reactionTokenRef.current += 1
+      isReactionActiveRef.current = false
+      if (reactionTimeoutRef.current) {
+        clearTimeout(reactionTimeoutRef.current)
+        reactionTimeoutRef.current = null
       }
     }
     if (isChainActiveRef.current) {
@@ -584,6 +620,12 @@ export default function Mascot({
 
   const cancelIdleAndOneShot = useCallback(() => {
     cancelActiveLifeChainRef.current?.('cancelIdleAndOneShot')
+    if (isKnockoffActiveRef.current) {
+      isKnockoffActiveRef.current = false
+      if (Math.random() < 0.60) {
+        pendingKnockoffAnnoyedRef.current = true
+      }
+    }
     clearTimeout(idleBehaviorTimeoutRef.current)
     idleBehaviorTimeoutRef.current = null
     clearTimeout(oneShotTimeoutRef.current)
@@ -1168,8 +1210,12 @@ export default function Mascot({
       falling ||
       poseRef.current === 'eat' ||
       poseRef.current === 'drink' ||
+      poseRef.current === 'sad' ||
+      poseRef.current === 'annoyed' ||
       isCareActionRef.current ||
-      eatTimeoutRef.current
+      isReactionActiveRef.current ||
+      eatTimeoutRef.current ||
+      reactionTimeoutRef.current
     ) {
       if (isDebugRef.current) console.log(`[life] chain ${chainId} abort not seated idle (pose=${poseRef.current}, posture=${postureRef.current})`)
       return false
@@ -1642,6 +1688,140 @@ export default function Mascot({
   }, [wakeTo, onEatStart, onFeedComplete, onTriggerRemark, moodAddAffection, catAnimationSpeed])
   performCareActionRef.current = performCareAction
 
+  const playMeow = useCallback((reason, isOverride = false) => {
+    if (!isOverride) {
+      if (poseRef.current === 'sleep') return
+      if (draggingRef.current || dragPointerDownRef.current) return
+      if (poseRef.current === 'typing' || poseRef.current === 'typingfast') return
+
+      const cooldown = (reason === 'reminder' || reason === 'hunger') ? 4000 : 12000
+      if (Date.now() - lastMeowTimeRef.current < cooldown) return
+
+      if (paused) return
+      if (!settingsRef.current?.soundEffects) return
+    }
+
+    try {
+      if (!meowAudioRef.current) {
+        meowAudioRef.current = new Audio(meowUrl)
+      }
+      const audio = meowAudioRef.current.cloneNode()
+      const vol = typeof settingsRef.current?.soundVolume === 'number' ? settingsRef.current.soundVolume : 70
+      audio.volume = Math.max(0, Math.min(1, vol / 100))
+      const p = audio.play()
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {})
+      }
+      lastMeowTimeRef.current = Date.now()
+      if (isDebugRef.current) {
+        console.log(`[life] meow ${reason}`)
+      }
+    } catch (_err) {
+      // silent
+    }
+  }, [paused])
+  playMeowRef.current = playMeow
+
+  const performReaction = useCallback((reactionType, reason, isOverride = false) => {
+    if (!['sad', 'annoyed'].includes(reactionType)) {
+      console.warn(`[life] react: unknown reaction '${reactionType}'`)
+      return false
+    }
+
+    if (!isOverride) {
+      if (isCareActionRef.current) return false
+      if (isReactionActiveRef.current) return false
+      if (draggingRef.current || dragPointerDownRef.current) return false
+      if (poseRef.current === 'sleep') return false
+      if (poseRef.current === 'typing' || poseRef.current === 'typingfast') return false
+      if (isReminder) return false
+
+      const isExplicitTrigger = reason === 'hunger_later' || reason === 'no_interaction' || reason === 'wake_click' || reason === 'knockoff_aborted'
+      if (isChainActiveRef.current && !isExplicitTrigger) return false
+
+      const now = Date.now()
+      const lastTime = lastReactionTimesRef.current[reactionType] || 0
+      if (now - lastTime < 3 * 60 * 1000) return false
+    } else {
+      if (isCareActionRef.current || isReactionActiveRef.current || draggingRef.current || dragPointerDownRef.current || poseRef.current === 'sleep' || poseRef.current === 'typing' || poseRef.current === 'typingfast' || isReminder) {
+        return false
+      }
+    }
+
+    cancelActiveLifeChainRef.current?.(`react_${reactionType}`)
+    const token = ++chainTokenRef.current
+    reactionTokenRef.current = token
+    isReactionActiveRef.current = true
+    lastReactionTimesRef.current[reactionType] = Date.now()
+
+    console.log(`[life] react ${reactionType} (${reason})`)
+    console.log(`[life] react ${reactionType} start (reason=${reason}, token=${token})`)
+
+    walkTweenRef.current = null
+    setWalkMs(0)
+    setWalkSpeedRate(1)
+    clearTimeout(roamTimeoutRef.current)
+    clearTimeout(idleBehaviorTimeoutRef.current)
+    clearTimeout(eatTimeoutRef.current)
+    if (oneShotTimeoutRef.current) {
+      clearTimeout(oneShotTimeoutRef.current)
+      oneShotTimeoutRef.current = null
+    }
+    oneShotPoseRef.current = null
+    setOneShotPose(null)
+    setIsHoveringHead(false)
+
+    let isFinished = false
+
+    const finishReaction = (finishReason) => {
+      if (isFinished || reactionTokenRef.current !== token || chainTokenRef.current !== token) return
+      isFinished = true
+      if (reactionTimeoutRef.current) {
+        clearTimeout(reactionTimeoutRef.current)
+        reactionTimeoutRef.current = null
+      }
+
+      isReactionActiveRef.current = false
+      postureRef.current = 'sit'
+      lastSeatedTimeRef.current = Date.now()
+      poseRef.current = 'idle'
+      setPose('idle')
+      restartIdleVariantTimerRef.current?.('new')
+      lastActivityEndRef.current = Date.now()
+
+      console.log(`[life] react ${reactionType} end (${finishReason})`)
+    }
+
+    const runReactionAnimation = () => {
+      if (reactionTokenRef.current !== token || chainTokenRef.current !== token) return
+      console.log(`[life] react ${reactionType} posture: sitting ready`)
+
+      waitForAnimShownRef.current?.(reactionType, () => {
+        if (reactionTokenRef.current !== token || chainTokenRef.current !== token) return
+        console.log(`[life] react ${reactionType} strip shown: ${reactionType}`)
+      })
+
+      const animDuration = getAnimationDuration(reactionType, catAnimationSpeed) || 2670
+      clearTimeout(reactionTimeoutRef.current)
+      reactionTimeoutRef.current = setTimeout(() => {
+        reactionTimeoutRef.current = null
+        finishReaction('timeout_safety')
+      }, animDuration + 1500)
+
+      playOnceAnimationRef.current?.(token, reactionType, () => {
+        if (reactionTimeoutRef.current) {
+          clearTimeout(reactionTimeoutRef.current)
+          reactionTimeoutRef.current = null
+        }
+        finishReaction('complete')
+      })
+    }
+
+    ensureSittingRef.current?.(token, runReactionAnimation)
+    return true
+  }, [isReminder, catAnimationSpeed])
+  performReactionRef.current = performReaction
+
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
       if (onFeed) onFeed()
@@ -1650,18 +1830,32 @@ export default function Mascot({
   }, [hungerState, onFeed, performCareAction])
 
   const executeAction = useCallback((action) => {
+    lastInteractRef.current = Date.now()
     switch (action) {
       case 'react':
         if (poseRef.current === 'sleep') {
-          wakeTo('idle', () => {
-            setRoamEpoch((n) => n + 1)
-          })
+          const rollAnnoyed = Math.random() < 0.50
+          if (rollAnnoyed) {
+            suppressWakeStretchRef.current = true
+            wakeTo('idle', () => {
+              suppressWakeStretchRef.current = false
+              setRoamEpoch((n) => n + 1)
+              performReactionRef.current?.('annoyed', 'wake_click')
+            })
+          } else {
+            wakeTo('idle', () => {
+              setRoamEpoch((n) => n + 1)
+            })
+          }
           onWakeUpClick?.()
         } else if (hungerState === 'ACTIVE') {
           handleFeedTrigger()
         } else {
           triggerAccentRef.current('is-stretch')
           onLeftClickReact?.()
+          if (Math.random() < 0.40) {
+            playMeowRef.current?.('click')
+          }
         }
         break
       case 'chat':
@@ -1727,6 +1921,67 @@ export default function Mascot({
       }
     }
   }, [])
+
+  const prevReminderStateRef = useRef(reminderState)
+  useEffect(() => {
+    if (prevReminderStateRef.current !== reminderState) {
+      if (reminderState === REMINDER_STATE?.ACTIVE) {
+        playMeowRef.current?.('reminder')
+      }
+      prevReminderStateRef.current = reminderState
+    }
+  }, [reminderState, REMINDER_STATE])
+
+  const prevHungerStateRef = useRef(hungerState)
+  useEffect(() => {
+    if (prevHungerStateRef.current !== hungerState) {
+      if (hungerState === 'ACTIVE') {
+        playMeowRef.current?.('hunger')
+      }
+      prevHungerStateRef.current = hungerState
+    }
+  }, [hungerState])
+
+  const prevHungerLaterSignalRef = useRef(hungerLaterSignal)
+  useEffect(() => {
+    if (prevHungerLaterSignalRef.current !== hungerLaterSignal) {
+      prevHungerLaterSignalRef.current = hungerLaterSignal
+      if (hungerLaterSignal > 0) {
+        if (Math.random() < 0.60) {
+          setTimeout(() => {
+            performReactionRef.current?.('sad', 'hunger_later')
+          }, 400)
+        }
+      }
+    }
+  }, [hungerLaterSignal])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now()
+      const idleTime = now - lastInteractRef.current
+      const sinceLastSad = now - lastLongNoInteractSadTimeRef.current
+      if (idleTime >= 20 * 60 * 1000 && sinceLastSad >= 20 * 60 * 1000) {
+        const started = performReactionRef.current?.('sad', 'no_interaction')
+        if (started) {
+          lastLongNoInteractSadTimeRef.current = now
+        }
+      }
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    if (pendingKnockoffAnnoyedRef.current && pose === 'idle' && postureRef.current === 'sit' && !dragging && !isCareActionRef.current && !isReactionActiveRef.current) {
+      const timer = setTimeout(() => {
+        if (pendingKnockoffAnnoyedRef.current && poseRef.current === 'idle' && postureRef.current === 'sit' && !draggingRef.current && !isCareActionRef.current && !isReactionActiveRef.current) {
+          pendingKnockoffAnnoyedRef.current = false
+          performReactionRef.current?.('annoyed', 'knockoff_aborted')
+        }
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [pose, dragging])
 
   // Wake cat from sleep when music starts playing
   useEffect(() => {
@@ -2184,6 +2439,7 @@ export default function Mascot({
                 Math.random() < KNOCKOFF_ARRIVE_CHANCE
               ) {
                 lastKnockoffRef.current = now
+                isKnockoffActiveRef.current = true
                 const remainingDist = trueRightEdge - posRef.current.x
                 if (remainingDist <= 3) {
                   standingFacingRef.current = 'right'
@@ -2194,7 +2450,9 @@ export default function Mascot({
                     poseRef.current = 'idle'
                     setPose('idle')
                     restartIdleVariantTimerRef.current?.('new')
-                    playOneShotRef.current?.('knockoff')
+                    playOneShotRef.current?.('knockoff', () => {
+                      isKnockoffActiveRef.current = false
+                    })
                   })
                 } else if (!roamBlockedRef.current) {
                   performMovementRef.current?.({
@@ -2216,12 +2474,20 @@ export default function Mascot({
                           poseRef.current = 'idle'
                           setPose('idle')
                           restartIdleVariantTimerRef.current?.('new')
-                          playOneShotRef.current?.('knockoff')
+                          playOneShotRef.current?.('knockoff', () => {
+                            isKnockoffActiveRef.current = false
+                          })
                         })
                       }, randBetween(600, 1000))
                     },
                     onAbort: () => {
                       scheduleStandSafetyNetRef.current?.()
+                      if (isKnockoffActiveRef.current) {
+                        isKnockoffActiveRef.current = false
+                        if (Math.random() < 0.60) {
+                          pendingKnockoffAnnoyedRef.current = true
+                        }
+                      }
                     }
                   })
                 }
@@ -2369,18 +2635,27 @@ export default function Mascot({
       if (inEdgeZone && canKnockoff && Math.random() < KNOCKOFF_IDLE_CHANCE) {
         lastKnockoffRef.current = now
         lastIdleBehaviorRef.current = 'knockoff'
+        isKnockoffActiveRef.current = true
         const remainingDist = trueRightEdge - posRef.current.x
         if (remainingDist <= 3) {
           facingRef.current = 'right'
           if (isDebugRef.current) {
             console.log(`[Mascot] Idle-life outcome: started knockoff at edge zone, next attempt in ${Math.round(nextDelay)}ms`)
           }
-          playOneShotRef.current?.('knockoff')
+          playOneShotRef.current?.('knockoff', () => {
+            isKnockoffActiveRef.current = false
+          })
           return nextDelay
         } else if (!roamBlockedRef.current) {
           ensureStandingRef.current?.(null, () => {
             if (roamBlockedRef.current || draggingRef.current || dragPointerDownRef.current) {
               scheduleStandSafetyNetRef.current?.()
+              if (isKnockoffActiveRef.current) {
+                isKnockoffActiveRef.current = false
+                if (Math.random() < 0.60) {
+                  pendingKnockoffAnnoyedRef.current = true
+                }
+              }
               return
             }
             performMovementRef.current?.({
@@ -2404,12 +2679,20 @@ export default function Mascot({
                     if (isDebugRef.current) {
                       console.log(`[Mascot] Idle-life outcome: completed edge walk and started knockoff, next attempt in ${Math.round(nextDelay)}ms`)
                     }
-                    playOneShotRef.current?.('knockoff')
+                    playOneShotRef.current?.('knockoff', () => {
+                      isKnockoffActiveRef.current = false
+                    })
                   })
                 }, randBetween(600, 1000))
               },
               onAbort: () => {
                 scheduleStandSafetyNetRef.current?.()
+                if (isKnockoffActiveRef.current) {
+                  isKnockoffActiveRef.current = false
+                  if (Math.random() < 0.60) {
+                    pendingKnockoffAnnoyedRef.current = true
+                  }
+                }
               }
             })
           })
@@ -2464,7 +2747,11 @@ export default function Mascot({
             console.log(`[Mascot] Idle-life outcome: started ${selected.pose} (${selected.type}), next attempt in ${Math.round(nextDelay)}ms`)
           }
           if (selected.type === 'oneshot') {
-            playOneShotRef.current?.(selected.pose)
+            if (selected.pose === 'sad' || selected.pose === 'annoyed') {
+              performReactionRef.current?.(selected.pose, 'idle_life')
+            } else {
+              playOneShotRef.current?.(selected.pose)
+            }
           } else {
             startIdleBehaviorRef.current?.(selected.pose, selected.duration)
           }
@@ -3359,7 +3646,11 @@ export default function Mascot({
       poseRef.current = 'idle'
       setPose('idle')
       setIsHoveringHead(true)
+      lastInteractRef.current = Date.now()
       onPetStart?.()
+      if (Math.random() < 0.40) {
+        playMeowRef.current?.('pet')
+      }
       moodHandlePetStart()
       moodHandlePetStateChange(true)
     }
@@ -3561,6 +3852,17 @@ export default function Mascot({
         performCareActionRef.current?.(action, true)
         return true
       },
+      meow: () => {
+        playMeowRef.current?.('debug', true)
+        return true
+      },
+      react: (reaction) => {
+        if (!['sad', 'annoyed'].includes(reaction)) {
+          console.warn(`[life] react: unknown reaction '${reaction}'. Expected sad|annoyed`)
+          return false
+        }
+        return performReactionRef.current?.(reaction, 'debug', true) ?? false
+      },
     }
 
     return () => {
@@ -3586,11 +3888,12 @@ export default function Mascot({
     }
   }
   const isCareAction = currentPose === 'eat' || currentPose === 'drink' || isCareActionRef.current
-  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep' && !isCareAction) {
+  const isReactionAction = currentPose === 'sad' || currentPose === 'annoyed' || isReactionActiveRef.current
+  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep' && !isCareAction && !isReactionAction) {
     currentPose = 'purr'
   }
 
-  const displayPose = isCareAction
+  const displayPose = (isCareAction || isReactionAction)
     ? currentPose
     : (isReminder && reminderCatAnimation !== false)
       ? 'alert'

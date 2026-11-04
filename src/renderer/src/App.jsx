@@ -99,6 +99,7 @@ export default function App() {
     isReminderActive,
   })
   const [drinkSignal, setDrinkSignal] = useState(0)
+  const [hungerLaterSignal, setHungerLaterSignal] = useState(0)
 
   const prevShowHungerRef = useRef(false)
   useEffect(() => {
@@ -152,6 +153,7 @@ export default function App() {
   const handleSnoozeWithAnimation = useCallback(() => {
     triggerHungerExit()
     handleSnooze()
+    setHungerLaterSignal((s) => s + 1)
   }, [triggerHungerExit, handleSnooze])
 
   const [nowPlayingExiting, setNowPlayingExiting] = useState(false)
@@ -923,6 +925,7 @@ export default function App() {
   return (
     <>
       {settings && <Mascot
+        settings={settings}
         reminderState={reminderState}
         reminderType={reminderType}
         reminderCatAnimation={settings.reminderCatAnimation !== false}
@@ -930,6 +933,7 @@ export default function App() {
         onFeed={handleFeedWithAnimation}
         feedSignal={feedSignal}
         drinkSignal={drinkSignal}
+        hungerLaterSignal={hungerLaterSignal}
         hungerBehavior={settings.hungerBehavior || 'search-food'}
         onSleepChange={handleSleepChangeCombined}
         pomodoroCelebrating={pomodoroCelebrating}
