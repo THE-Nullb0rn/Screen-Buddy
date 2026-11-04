@@ -544,6 +544,7 @@ export function useMood({
     handleBodyClick,
     handleShortcutCall,
     handleChatReply,
+    addAffection,
     moodModifiers,
   }
 }

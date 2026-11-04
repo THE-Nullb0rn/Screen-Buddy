@@ -1748,6 +1748,13 @@ function buildTrayMenu() {
         mainWindow?.webContents.send('tray:test-hunger')
       },
     },
+    // TEMP: remove before release
+    {
+      label: '💧 Test Water (immediate)',
+      click: () => {
+        mainWindow?.webContents.send('tray:test-water')
+      },
+    },
     {
       label: '⏱️ Pomodoro & Stopwatch',
       submenu: [

@@ -58,7 +58,7 @@ const FALLBACK_HEIGHT = SPRITE_HEIGHT
 const SLEEP_AFTER_MS = 2 * 60 * 1000
 const SLEEP_CHANCE = 0.4
 
-export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff', 'annoyed', 'sad', 'standup', 'sitdown', 'stretch', 'lookaround', 'tailflick'])
+export const ONE_SHOT_ANIMATIONS = new Set(['yawn', 'pounce', 'crouch', 'crouchpounce', 'wakeup', 'gift', 'knockoff', 'annoyed', 'sad', 'standup', 'sitdown', 'stretch', 'lookaround', 'tailflick', 'eat', 'drink'])
 
 export function getAnimationDuration(name, speed = 'normal', holdMs = 800) {
   let animName = name
@@ -221,7 +221,7 @@ function defaultPosition() {
 }
 
 // Animations that have a listening-spritesheet equivalent
-const LISTENING_ANIMATIONS = ['idle', 'idle-old', 'walk', 'talk', 'eat', 'pet', 'typing', 'typingfast', 'play']
+const LISTENING_ANIMATIONS = ['idle', 'idle-old', 'walk', 'talk', 'eat', 'drink', 'pet', 'typing', 'typingfast', 'play']
 
 const DRAG_BUTTON_MAP = {
   left: 0,
@@ -240,6 +240,7 @@ export default function Mascot({
   hungerState = 'IDLE',
   onFeed,
   feedSignal = 0,
+  drinkSignal = 0,
   hungerBehavior = 'search-food',
   pomodoroCelebrating = false,
   REMINDER_STATE,
@@ -373,6 +374,10 @@ export default function Mascot({
     walk: null,
     run: null
   })
+  const isCareActionRef = useRef(false)
+  const careTokenRef = useRef(0)
+  const performCareActionRef = useRef(null)
+  const lastDrinkAffectionTimeRef = useRef(0)
   const runBurstDebugTrackingRef = useRef(false)
   const moveHistoryRef = useRef([])
 
@@ -465,14 +470,14 @@ export default function Mascot({
 
   const isBigTreatment = isReminder && (reminderCatAnimation !== false) && reminderType === 'movementBreak'
 
-  const isEating = pose === 'eat'
+  const isCareActive = pose === 'eat' || pose === 'drink' || isCareActionRef.current
   const isRoamBlocked = Boolean(
     isReminder ||
     pomodoroCelebrating ||
     chatState !== 'idle' ||
     notificationVisible ||
     (hungerState === 'ACTIVE' && hungerBehavior === 'sit') ||
-    isEating
+    isCareActive
   )
   const roamBlockedRef = useRef(isRoamBlocked)
   roamBlockedRef.current = isRoamBlocked
@@ -539,25 +544,41 @@ export default function Mascot({
   scheduleStandSafetyNetRef.current = scheduleStandSafetyNet
 
   const cancelActiveLifeChain = useCallback((reason = 'interrupted') => {
-    if (!isChainActiveRef.current) return
+    const isCareInterrupt = reason.startsWith('care_') || reason === 'pointerdown' || reason === 'unmount'
+    if (!isChainActiveRef.current && (!isCareActionRef.current || !isCareInterrupt)) return
     if (isDebugRef.current) {
-      console.log(`[life] chain ${activeChainIdRef.current || 'unknown'} abort ${reason}`)
+      if (isChainActiveRef.current) {
+        console.log(`[life] chain ${activeChainIdRef.current || 'unknown'} abort ${reason}`)
+      }
+      if (isCareActionRef.current && isCareInterrupt) {
+        console.log(`[life] care abort ${reason}`)
+      }
     }
-    chainTokenRef.current += 1
-    isChainActiveRef.current = false
-    activeChainIdRef.current = null
-    runBurstDebugTrackingRef.current = false
-    chainTimeoutsRef.current.forEach((t) => {
-      if (typeof t === 'function') t()
-      else clearTimeout(t)
-    })
-    chainTimeoutsRef.current = []
-    if (walkTweenRef.current) {
-      walkTweenRef.current = null
-      setWalkMs(0)
-      setWalkSpeedRate(1)
+    if (isCareInterrupt && isCareActionRef.current) {
+      careTokenRef.current += 1
+      isCareActionRef.current = false
+      if (eatTimeoutRef.current) {
+        clearTimeout(eatTimeoutRef.current)
+        eatTimeoutRef.current = null
+      }
     }
-    scheduleStandSafetyNetRef.current?.()
+    if (isChainActiveRef.current) {
+      chainTokenRef.current += 1
+      isChainActiveRef.current = false
+      activeChainIdRef.current = null
+      runBurstDebugTrackingRef.current = false
+      chainTimeoutsRef.current.forEach((t) => {
+        if (typeof t === 'function') t()
+        else clearTimeout(t)
+      })
+      chainTimeoutsRef.current = []
+      if (walkTweenRef.current) {
+        walkTweenRef.current = null
+        setWalkMs(0)
+        setWalkSpeedRate(1)
+      }
+      scheduleStandSafetyNetRef.current?.()
+    }
   }, [])
   cancelActiveLifeChainRef.current = cancelActiveLifeChain
 
@@ -811,6 +832,7 @@ export default function Mascot({
     handleBodyClick: moodHandleBodyClick,
     handleShortcutCall: moodHandleShortcutCall,
     handleChatReply: moodHandleChatReply,
+    addAffection: moodAddAffection,
   } = useMood({
     moodEnabled,
     hungerState,
@@ -1145,6 +1167,8 @@ export default function Mascot({
       fallRafRef.current ||
       falling ||
       poseRef.current === 'eat' ||
+      poseRef.current === 'drink' ||
+      isCareActionRef.current ||
       eatTimeoutRef.current
     ) {
       if (isDebugRef.current) console.log(`[life] chain ${chainId} abort not seated idle (pose=${poseRef.current}, posture=${postureRef.current})`)
@@ -1497,44 +1521,133 @@ export default function Mascot({
     prevChatStateRef.current = chatState
   }, [chatState, moodHandleChatReply])
 
-  const startEating = useCallback(() => {
-    // Interrupt whatever it was doing to eat
-    cancelActiveLifeChainRef.current?.('eating')
+  const performCareAction = useCallback((actionType, isDebugOverride = false) => {
+    if (!['eat', 'drink'].includes(actionType)) {
+      console.warn(`[life] care: unknown actionType '${actionType}'`)
+      return
+    }
+
+    if (!isDebugOverride) {
+      if (isCareActionRef.current) {
+        console.log(`[life] care ${actionType} ignored: care action already in progress`)
+        return
+      }
+      if (draggingRef.current || dragPointerDownRef.current) {
+        console.log(`[life] care ${actionType} ignored: dragging active`)
+        return
+      }
+    }
+
+    // Interrupt whatever she was doing
+    cancelActiveLifeChainRef.current?.(`care_${actionType}`)
+    const token = ++chainTokenRef.current
+    careTokenRef.current = token
+    isCareActionRef.current = true
+    console.log(`[life] care ${actionType} start (token=${token})`)
+
     walkTweenRef.current = null
     setWalkMs(0)
+    setWalkSpeedRate(1)
     clearTimeout(roamTimeoutRef.current)
     clearTimeout(idleBehaviorTimeoutRef.current)
     clearTimeout(eatTimeoutRef.current)
+    if (oneShotTimeoutRef.current) {
+      clearTimeout(oneShotTimeoutRef.current)
+      oneShotTimeoutRef.current = null
+    }
+    oneShotPoseRef.current = null
+    setOneShotPose(null)
     setIsHoveringHead(false)
 
-    const doEat = () => {
-      poseRef.current = 'eat'
-      setPose('eat')
-      onEatStart?.()
-      const eatDuration = getAnimationDuration('eat', catAnimationSpeed)
-      eatTimeoutRef.current = setTimeout(() => {
-        if (poseRef.current === 'eat') {
-          poseRef.current = 'idle'
-          setPose('idle')
-          onFeedComplete?.()
-        }
+    let isFinished = false
+
+    const finishCare = (reason) => {
+      if (isFinished || careTokenRef.current !== token || chainTokenRef.current !== token) return
+      isFinished = true
+      if (eatTimeoutRef.current) {
+        clearTimeout(eatTimeoutRef.current)
         eatTimeoutRef.current = null
-      }, eatDuration)
+      }
+
+      isCareActionRef.current = false
+      postureRef.current = 'sit'
+      lastSeatedTimeRef.current = Date.now()
+      poseRef.current = 'idle'
+      setPose('idle')
+      restartIdleVariantTimerRef.current?.('new')
+      lastActivityEndRef.current = Date.now()
+
+      if (actionType === 'eat') {
+        onFeedComplete?.()
+      }
+
+      console.log(`[life] care ${actionType} end (${reason})`)
+    }
+
+    const runCareAnimation = () => {
+      if (careTokenRef.current !== token || chainTokenRef.current !== token) return
+      console.log(`[life] care ${actionType} posture: sitting ready`)
+
+      // Wait for strip first frame to be shown
+      waitForAnimShownRef.current?.(actionType, () => {
+        if (careTokenRef.current !== token || chainTokenRef.current !== token) return
+        console.log(`[life] care ${actionType} strip shown: ${actionType}`)
+      })
+
+      // Audio & speech bubble
+      if (actionType === 'eat') {
+        onEatStart?.()
+        onTriggerRemark?.('Yum!')
+        moodAddAffection?.(3)
+      } else if (actionType === 'drink') {
+        const now = Date.now()
+        if (now - lastDrinkAffectionTimeRef.current >= 3 * 60 * 1000) {
+          lastDrinkAffectionTimeRef.current = now
+          moodAddAffection?.(2)
+        }
+        onTriggerRemark?.('Cheers!')
+      }
+
+      // Safety net timeout
+      const animDuration = getAnimationDuration(actionType, catAnimationSpeed) || 2670
+      clearTimeout(eatTimeoutRef.current)
+      eatTimeoutRef.current = setTimeout(() => {
+        eatTimeoutRef.current = null
+        finishCare('timeout_safety')
+      }, animDuration + 1500)
+
+      playOnceAnimationRef.current?.(token, actionType, () => {
+        if (eatTimeoutRef.current) {
+          clearTimeout(eatTimeoutRef.current)
+          eatTimeoutRef.current = null
+        }
+        finishCare('complete')
+      })
+    }
+
+    const prepareAndRun = () => {
+      if (careTokenRef.current !== token || chainTokenRef.current !== token) return
+      ensureSittingRef.current?.(token, runCareAnimation)
     }
 
     if (poseRef.current === 'sleep') {
-      wakeTo('eat', doEat)
+      suppressWakeStretchRef.current = true
+      wakeTo('idle', () => {
+        suppressWakeStretchRef.current = false
+        prepareAndRun()
+      })
     } else {
-      doEat()
+      prepareAndRun()
     }
-  }, [wakeTo, onEatStart, onFeedComplete, catAnimationSpeed])
+  }, [wakeTo, onEatStart, onFeedComplete, onTriggerRemark, moodAddAffection, catAnimationSpeed])
+  performCareActionRef.current = performCareAction
 
   const handleFeedTrigger = useCallback(() => {
     if (hungerState === 'ACTIVE') {
       if (onFeed) onFeed()
-      startEating()
+      performCareAction('eat')
     }
-  }, [hungerState, onFeed, startEating])
+  }, [hungerState, onFeed, performCareAction])
 
   const executeAction = useCallback((action) => {
     switch (action) {
@@ -1570,9 +1683,50 @@ export default function Mascot({
   useEffect(() => {
     if (prevFeedSignalRef.current !== feedSignal) {
       prevFeedSignalRef.current = feedSignal
-      startEating()
+      performCareAction('eat')
     }
-  }, [feedSignal, startEating])
+  }, [feedSignal, performCareAction])
+
+  const pendingDrinkRef = useRef(false)
+  const pendingDrinkTimerRef = useRef(null)
+
+  const prevDrinkSignalRef = useRef(drinkSignal)
+  useEffect(() => {
+    if (prevDrinkSignalRef.current !== drinkSignal) {
+      prevDrinkSignalRef.current = drinkSignal
+      if (isReminder) {
+        pendingDrinkRef.current = true
+        if (pendingDrinkTimerRef.current) clearTimeout(pendingDrinkTimerRef.current)
+        pendingDrinkTimerRef.current = setTimeout(() => {
+          if (pendingDrinkRef.current) {
+            pendingDrinkRef.current = false
+            performCareAction('drink')
+          }
+        }, 350)
+      } else {
+        performCareAction('drink')
+      }
+    }
+  }, [drinkSignal, isReminder, performCareAction])
+
+  useEffect(() => {
+    if (!isReminder && pendingDrinkRef.current) {
+      pendingDrinkRef.current = false
+      if (pendingDrinkTimerRef.current) {
+        clearTimeout(pendingDrinkTimerRef.current)
+        pendingDrinkTimerRef.current = null
+      }
+      performCareAction('drink')
+    }
+  }, [isReminder, performCareAction])
+
+  useEffect(() => {
+    return () => {
+      if (pendingDrinkTimerRef.current) {
+        clearTimeout(pendingDrinkTimerRef.current)
+      }
+    }
+  }, [])
 
   // Wake cat from sleep when music starts playing
   useEffect(() => {
@@ -1665,7 +1819,7 @@ export default function Mascot({
       }
       
       // Do not interrupt important interactive/idle behaviors
-      if (['eat', 'pet', 'purr', 'play', 'toyplay'].includes(poseRef.current)) {
+      if (['eat', 'drink', 'pet', 'purr', 'play', 'toyplay'].includes(poseRef.current)) {
         return
       }
 
@@ -1807,6 +1961,10 @@ export default function Mascot({
         if (window.api?.setWindowMode) {
           window.api.setWindowMode('mascot', saved.x, saved.y)
         }
+        postureRef.current = 'sit'
+        lastSeatedTimeRef.current = Date.now()
+        restartIdleVariantTimerRef.current?.('new')
+        lastActivityEndRef.current = Date.now()
       }
     }
   }, [reminderState, isBigTreatment, REMINDER_STATE])
@@ -1822,16 +1980,16 @@ export default function Mascot({
     if (isRoamBlocked) {
       walkTweenRef.current = null
       clearTimeout(roamTimeoutRef.current)
-      if (!isEating) {
+      if (!isCareActive) {
         clearTimeout(idleBehaviorTimeoutRef.current)
       }
       setWalkMs(0)
-      if (isReminder) {
+      if (isCareActive) {
+        // preserve care action (eat / drink)
+      } else if (isReminder) {
         lastInteractRef.current = Date.now()
         poseRef.current = 'alert'
         setPose('alert')
-      } else if (isEating) {
-        // preserve eating pose
       } else {
         wakeUp()
         if (poseRef.current !== 'idle') {
@@ -1842,13 +2000,13 @@ export default function Mascot({
       return () => {
         roamGenRef.current += 1
         clearTimeout(roamTimeoutRef.current)
-        if (!isEating) {
+        if (!isCareActive) {
           clearTimeout(idleBehaviorTimeoutRef.current)
         }
       }
     }
 
-    if (poseRef.current === 'alert') {
+    if (poseRef.current === 'alert' && !isCareActive) {
       poseRef.current = 'idle'
       setPose('idle')
     }
@@ -2126,11 +2284,11 @@ export default function Mascot({
     return () => {
       roamGenRef.current += 1
       clearTimeout(roamTimeoutRef.current)
-      if (!isEating) {
+      if (!isCareActive) {
         clearTimeout(idleBehaviorTimeoutRef.current)
       }
     }
-  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, chatState, notificationVisible, wakeUp, isRoamBlocked, isEating])
+  }, [isReminder, roamEpoch, measure, pomodoroCelebrating, chatState, notificationVisible, wakeUp, isRoamBlocked, isCareActive])
 
   // ── Part 2: Idle Life Scheduler (every 10–25s) ────────────────────────────
   useEffect(() => {
@@ -2366,7 +2524,7 @@ export default function Mascot({
         hungerState === 'ACTIVE' ||
         chatState !== 'idle' ||
         isReminder ||
-        isEating
+        isCareActive
       ) {
         return
       }
@@ -2456,17 +2614,19 @@ export default function Mascot({
     return () => {
       unsub?.()
     }
-  }, [mouseReaction, reduceResourceUsage, paused, isRoamBlocked, cancelIdleAndOneShot, playOneShot, onTriggerRemark, measure, hungerState, chatState, isReminder, isEating])
+  }, [mouseReaction, reduceResourceUsage, paused, isRoamBlocked, cancelIdleAndOneShot, playOneShot, onTriggerRemark, measure, hungerState, chatState, isReminder, isCareActive])
 
   // ── Part 4: Call Cat Listener ─────────────────────────────────────────────
   useEffect(() => {
     const unsub = window.api?.on?.('mascot:call', (payload) => {
       moodHandleShortcutCall()
-      // Ignore if dragging, eating, or in reminder / chat
+      // Ignore if dragging, eating/drinking, or in reminder / chat
       if (
         draggingRef.current ||
         dragPointerDownRef.current ||
+        isCareActionRef.current ||
         poseRef.current === 'eat' ||
+        poseRef.current === 'drink' ||
         isReminder ||
         chatState !== 'idle'
       ) {
@@ -3393,6 +3553,14 @@ export default function Mascot({
         })
         return true
       },
+      care: (action) => {
+        if (!['eat', 'drink'].includes(action)) {
+          console.warn(`[life] care: unknown action '${action}'. Expected eat|drink`)
+          return false
+        }
+        performCareActionRef.current?.(action, true)
+        return true
+      },
     }
 
     return () => {
@@ -3417,11 +3585,18 @@ export default function Mascot({
       setPose('idle')
     }
   }
-  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep') {
+  const isCareAction = currentPose === 'eat' || currentPose === 'drink' || isCareActionRef.current
+  if (isHoveringHead && !dragging && !isReminder && !pomodoroCelebrating && pose !== 'sleep' && !isCareAction) {
     currentPose = 'purr'
   }
 
-  const displayPose = (isReminder && reminderCatAnimation !== false) ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
+  const displayPose = isCareAction
+    ? currentPose
+    : (isReminder && reminderCatAnimation !== false)
+      ? 'alert'
+      : pomodoroCelebrating
+        ? 'jump'
+        : currentPose
   const moving = walkMs > 0 && !dragging && (displayPose.startsWith('walk') || displayPose.startsWith('run'))
 
   // ── Run Burst Pose Tracking Debug Check ──────────────────────────────────
@@ -3532,6 +3707,9 @@ export default function Mascot({
     flipped = false
   } else if (displayPose === 'eat') {
     animationName = 'eat'
+    flipped = false
+  } else if (displayPose === 'drink') {
+    animationName = 'drink'
     flipped = false
   } else if (displayPose === 'pet' || displayPose === 'purr') {
     animationName = 'purr'
@@ -3801,7 +3979,7 @@ export default function Mascot({
           <SpriteAnimator
             animation={animationName}
             flipped={flipped}
-            loop={!ONE_SHOT_ANIMATIONS.has(animationName) && animsManifest?.animations?.[animationName]?.mode !== 'once'}
+            loop={isBigTreatment || (!ONE_SHOT_ANIMATIONS.has(animationName) && animsManifest?.animations?.[animationName]?.mode !== 'once')}
             onAnimationEnd={handleAnimationEnd}
             onShown={handleSpriteShown}
             manifest={useListening ? listeningManifest : undefined}

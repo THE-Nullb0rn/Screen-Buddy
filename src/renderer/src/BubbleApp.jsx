@@ -455,6 +455,17 @@ export default function BubbleApp() {
             <div className="mascot-reminder-card__text-wrap">
               <div className="mascot-reminder-card__title">{reminderInfo.title}</div>
               <div className="mascot-reminder-card__message">{reminderInfo.text || reminderInfo.message}</div>
+              {reminderType === 'water' && (
+                <button
+                  className="mascot-hunger-feed-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    window.api.bubble.action('reminder:drink')
+                  }}
+                >
+                  Drink together
+                </button>
+              )}
             </div>
           </div>
           <div className="mascot-reminder-card__actions">

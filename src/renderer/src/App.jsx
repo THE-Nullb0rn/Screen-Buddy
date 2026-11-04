@@ -98,6 +98,7 @@ export default function App() {
     paused,
     isReminderActive,
   })
+  const [drinkSignal, setDrinkSignal] = useState(0)
 
   const prevShowHungerRef = useRef(false)
   useEffect(() => {
@@ -424,6 +425,11 @@ export default function App() {
       triggerReminder(data?.type)
     })
 
+    // TEMP: remove before release
+    const offTestWater = window.api.on('tray:test-water', () => {
+      triggerReminder('water')
+    })
+
     const offTrigger = window.api.on('reminder:trigger', (data) => {
       triggerReminder(data?.type)
     })
@@ -450,6 +456,7 @@ export default function App() {
 
     return () => {
       offTest()
+      offTestWater()
       offTrigger()
       offStartPomodoro()
       offStartStopwatch()
@@ -599,6 +606,10 @@ export default function App() {
     const offAction = window.api.on('bubble:action', (type, payload) => {
       if (type === 'reminder:dismiss') {
         dismissReminder()
+      } else if (type === 'reminder:drink') {
+        console.log('[life] reminder dismissed')
+        dismissReminder()
+        setDrinkSignal((s) => s + 1)
       } else if (type === 'reminder:snooze') {
         snoozeReminder()
       } else if (type === 'now-playing:dismiss') {
@@ -918,6 +929,7 @@ export default function App() {
         hungerState={hungerState}
         onFeed={handleFeedWithAnimation}
         feedSignal={feedSignal}
+        drinkSignal={drinkSignal}
         hungerBehavior={settings.hungerBehavior || 'search-food'}
         onSleepChange={handleSleepChangeCombined}
         pomodoroCelebrating={pomodoroCelebrating}
