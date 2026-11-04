@@ -35,15 +35,11 @@ export const IDLE_LIFE_SIT_CHANCE = 0.25
 
 export const WALK_SPEED_MIN_PX_S = 80
 export const WALK_SPEED_MAX_PX_S = 120
-export const WALK_PX_PER_CYCLE = 72
-
-export const STALK_SPEED_MIN_PX_S = 35
-export const STALK_SPEED_MAX_PX_S = 60
-export const STALK_PX_PER_CYCLE = 68
+export const WALK_PX_PER_CYCLE = 84
 
 export const RUN_SPEED_MIN_PX_S = 240
 export const RUN_SPEED_MAX_PX_S = 320
-export const RUN_PX_PER_CYCLE = 170
+export const RUN_PX_PER_CYCLE = 219
 
 // Knockoff constants
 export const KNOCKOFF_ARRIVE_CHANCE = 0.40
@@ -107,7 +103,6 @@ export const LIFE_CHAINS = [
   { id: 'wake_stretch', baseWeight: 0, isChain: true },
   { id: 'patrol', baseWeight: 8, isChain: true },
   { id: 'walk_then_act', baseWeight: 10, isChain: true },
-  { id: 'stalk_pounce', baseWeight: 6, isChain: true },
   { id: 'run_burst', baseWeight: 6, isChain: true },
   { id: 'nap_elsewhere', baseWeight: 5, isChain: true },
 ]
@@ -132,19 +127,16 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
   let wakeStretchWeight = 0
   let patrolWeight = 8
   let walkThenActWeight = 10
-  let stalkPounceWeight = 6
   let runBurstWeight = 6
   let napElsewhereWeight = 5
 
   // ── Energy modifiers ──
   if (energy >= 65) {
     runBurstWeight *= 1.6
-    stalkPounceWeight *= 1.6
     yawnWeight *= 0.6
     napElsewhereWeight = 0
   } else if (energy <= 35) {
     runBurstWeight *= 0.2
-    stalkPounceWeight *= 0.2
     yawnWeight *= 1.8
     napElsewhereWeight *= 2.5
   }
@@ -153,13 +145,10 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
   if (mood === 'Sleepy') {
     napElsewhereWeight *= 2
     runBurstWeight = 0
-    stalkPounceWeight = 0
   } else if (mood === 'Hungry') {
     runBurstWeight *= 0.3
-    stalkPounceWeight *= 0.3
   } else if (mood === 'Lonely' || mood === 'Annoyed') {
     runBurstWeight = 0
-    stalkPounceWeight = 0
   }
 
   // ── Time-of-day modifiers ──
@@ -174,7 +163,6 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
     napElsewhereWeight *= (1 + shift)
     yawnWeight *= (1 + shift)
     runBurstWeight *= (1 - shift)
-    stalkPounceWeight *= (1 - shift)
   }
 
   // ── Requirement gates ──
@@ -183,9 +171,6 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
 
   const canRun = energy >= 45 && mood !== 'Sleepy' && mood !== 'Lonely' && mood !== 'Annoyed'
   if (!canRun) runBurstWeight = 0
-
-  const canStalk = energy >= 40 && mood !== 'Sleepy' && mood !== 'Lonely' && mood !== 'Annoyed'
-  if (!canStalk) stalkPounceWeight = 0
 
   const base = [
     { pose: 'groom', type: 'loop', duration: getAnimationDuration('groom'), weight: groomWeight },
@@ -201,7 +186,6 @@ export function getIdleWeights(mood = null, energy = 100, date = new Date()) {
     { id: 'wake_stretch', pose: 'wake_stretch', isChain: true, weight: wakeStretchWeight },
     { id: 'patrol', pose: 'patrol', isChain: true, weight: patrolWeight },
     { id: 'walk_then_act', pose: 'walk_then_act', isChain: true, weight: walkThenActWeight },
-    { id: 'stalk_pounce', pose: 'stalk_pounce', isChain: true, weight: stalkPounceWeight },
     { id: 'run_burst', pose: 'run_burst', isChain: true, weight: runBurstWeight },
     { id: 'nap_elsewhere', pose: 'nap_elsewhere', isChain: true, weight: napElsewhereWeight },
   ]
@@ -387,9 +371,9 @@ export default function Mascot({
   const getStrideForAnimRef = useRef(null)
   const strideOverridesRef = useRef({
     walk: null,
-    stalk: null,
     run: null
   })
+  const runBurstDebugTrackingRef = useRef(false)
   const moveHistoryRef = useRef([])
 
   // Wakeup from sleep transition refs
@@ -562,6 +546,7 @@ export default function Mascot({
     chainTokenRef.current += 1
     isChainActiveRef.current = false
     activeChainIdRef.current = null
+    runBurstDebugTrackingRef.current = false
     chainTimeoutsRef.current.forEach((t) => {
       if (typeof t === 'function') t()
       else clearTimeout(t)
@@ -891,7 +876,7 @@ export default function Mascot({
   const getStrideForAnim = (anim) => {
     const override = strideOverridesRef.current?.[anim]
     if (typeof override === 'number' && override > 0) return override
-    const base = anim === 'stalk' ? STALK_PX_PER_CYCLE : anim === 'run' ? RUN_PX_PER_CYCLE : WALK_PX_PER_CYCLE
+    const base = anim === 'run' ? RUN_PX_PER_CYCLE : WALK_PX_PER_CYCLE
     return Math.round(base * ((catSize || 100) / 100))
   }
   getStrideForAnimRef.current = getStrideForAnim
@@ -904,6 +889,8 @@ export default function Mascot({
     token = null,
     gen = null,
     forcedDir = null,
+    holdPose = false,
+    skipStartAccent = false,
     onArrive,
     onAbort
   }) => {
@@ -987,11 +974,9 @@ export default function Mascot({
     facingRef.current = dir
 
     const effectiveSpeedRange = speedRange || (
-      anim === 'stalk'
-        ? [STALK_SPEED_MIN_PX_S, STALK_SPEED_MAX_PX_S]
-        : anim === 'run'
-          ? [RUN_SPEED_MIN_PX_S, RUN_SPEED_MAX_PX_S]
-          : [WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S]
+      anim === 'run'
+        ? [RUN_SPEED_MIN_PX_S, RUN_SPEED_MAX_PX_S]
+        : [WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S]
     )
 
     const speedMult = getMovementSpeedMultiplier(statsRef.current?.energy ?? 100, new Date())
@@ -1000,7 +985,7 @@ export default function Mascot({
     const duration = (realDist / nominalSpeed) * 1000
     const groundSpeed = realDist / (duration / 1000)
 
-    const baseFps = anim === 'stalk' ? 8 : anim === 'run' ? 14 : 12
+    const baseFps = anim === 'run' ? 14 : 12
     const totalFrames = 8
     const stridePxPerCycle = getStrideForAnim(anim)
 
@@ -1051,12 +1036,16 @@ export default function Mascot({
       }
       walkTweenRef.current = null
       setWalkMs(0)
-      setWalkSpeedRate(1)
-      if (postureRef.current === 'stand') {
-        poseRef.current = 'standidle'
-        setPose('standidle')
+      if (holdPose) {
+        // Continuous movement across legs: keep playing run animation
+      } else {
+        setWalkSpeedRate(1)
+        if (postureRef.current === 'stand') {
+          poseRef.current = 'standidle'
+          setPose('standidle')
+        }
+        triggerAccentRef.current('is-squash')
       }
-      triggerAccentRef.current('is-squash')
       lastActivityEndRef.current = Date.now()
       if (reason === 'blocked') {
         onAbort?.('blocked during move')
@@ -1065,7 +1054,7 @@ export default function Mascot({
       }
     }
 
-    const cancelShown = waitForAnimShownRef.current?.(anim, () => {
+    const startMoving = () => {
       if (moveEnded) return
       if (token && chainTokenRef.current !== token) return
       if (gen && (gen !== roamGenRef.current || roamBlockedRef.current || draggingRef.current || dragPointerDownRef.current)) {
@@ -1074,7 +1063,9 @@ export default function Mascot({
       }
 
       setWalkMs(duration)
-      triggerAccentRef.current('is-stretch')
+      if (!skipStartAccent) {
+        triggerAccentRef.current('is-stretch')
+      }
 
       walkTweenRef.current = {
         startX: posRef.current.x,
@@ -1099,14 +1090,32 @@ export default function Mascot({
       if (token) {
         chainTimeoutsRef.current.push(fallbackTimeout)
       }
-    })
-    if (cancelShown && token) {
-      chainTimeoutsRef.current.push(cancelShown)
+    }
+
+    if (currentDrawnAnimRef.current === anim) {
+      startMoving()
+    } else {
+      const cancelShown = waitForAnimShownRef.current?.(anim, () => {
+        startMoving()
+      })
+      if (cancelShown && token) {
+        chainTimeoutsRef.current.push(cancelShown)
+      }
     }
   }
   performMovementRef.current = performMovement
 
-  const executeChainMove = (token, anim, distanceOrTarget, pxPerCycle, speedRange, edgeMargin, onArrive, onAbort) => {
+  const executeChainMove = (
+    token,
+    anim,
+    distanceOrTarget,
+    pxPerCycle,
+    speedRange,
+    edgeMargin,
+    onArrive,
+    onAbort,
+    options = {}
+  ) => {
     performMovement({
       anim,
       distanceOrTarget,
@@ -1114,7 +1123,8 @@ export default function Mascot({
       edgeMargin,
       token,
       onArrive,
-      onAbort
+      onAbort,
+      ...options
     })
   }
   executeChainMoveRef.current = executeChainMove
@@ -1153,7 +1163,7 @@ export default function Mascot({
       return false
     }
     if (moodRef.current === 'Annoyed') {
-      const isPlayful = chainId === 'run_burst' || chainId === 'stalk_pounce' || (chainId === 'walk_then_act' && forcedActionX === 'toyplay')
+      const isPlayful = chainId === 'run_burst' || (chainId === 'walk_then_act' && forcedActionX === 'toyplay')
       if (isPlayful) {
         if (isDebugRef.current) console.log(`[life] chain ${chainId} abort annoyed mood`)
         return false
@@ -1332,48 +1342,20 @@ export default function Mascot({
           })
         })
       })
-    } else if (chainId === 'stalk_pounce') {
-      advanceStep(1, () => {
-        if (isDebugRef.current) console.log('[life] chain stalk_pounce step 1 standup')
-        ensureStandingRef.current?.(token, () => {
-          advanceStep(2, () => {
-            if (isDebugRef.current) console.log('[life] chain stalk_pounce step 2 stalk')
-            executeChainMoveRef.current(
-              token,
-              'stalk',
-              [80, 200],
-              STALK_PX_PER_CYCLE,
-              [STALK_SPEED_MIN_PX_S, STALK_SPEED_MAX_PX_S],
-              40,
-              () => {
-                advanceStep(3, () => {
-                  if (isDebugRef.current) console.log('[life] chain stalk_pounce step 3 crouchpounce')
-                  playOnceAnimationRef.current?.(token, 'crouchpounce', () => {
-                    postureRef.current = 'sit'
-                    lastSeatedTimeRef.current = Date.now()
-                    poseRef.current = 'idle'
-                    setPose('idle')
-                    restartIdleVariantTimerRef.current?.('new')
-                    endChain('complete')
-                  })
-                })
-              },
-              (abortReason) => {
-                endChain(abortReason)
-              }
-            )
-          })
-        })
-      })
     } else if (chainId === 'run_burst') {
       advanceStep(1, () => {
         if (isDebugRef.current) console.log('[life] chain run_burst step 1 standup')
         ensureStandingRef.current?.(token, () => {
           const totalLegs = Math.floor(randBetween(1, 3.99))
           let currentLeg = 0
+          runBurstDebugTrackingRef.current = true
           const runNextLeg = () => {
-            if (chainTokenRef.current !== token) return
+            if (chainTokenRef.current !== token) {
+              runBurstDebugTrackingRef.current = false
+              return
+            }
             currentLeg += 1
+            const isLastLeg = currentLeg === totalLegs
             if (isDebugRef.current) {
               console.log(`[life] chain run_burst step 2 run (leg ${currentLeg}/${totalLegs})`)
             }
@@ -1386,10 +1368,12 @@ export default function Mascot({
               60,
               () => {
                 if (currentLeg < totalLegs) {
-                  chainLater(runNextLeg, 100)
+                  runNextLeg()
                 } else {
                   advanceStep(3, () => {
                     if (isDebugRef.current) console.log('[life] chain run_burst step 3 standidle')
+                    runBurstDebugTrackingRef.current = false
+                    setWalkSpeedRate(1)
                     poseRef.current = 'standidle'
                     setPose('standidle')
                     waitForAnimShownRef.current?.('standidle', () => {
@@ -1406,7 +1390,12 @@ export default function Mascot({
                 }
               },
               (abortReason) => {
+                runBurstDebugTrackingRef.current = false
                 endChain(abortReason)
+              },
+              {
+                holdPose: !isLastLeg,
+                skipStartAccent: currentLeg > 1
               }
             )
           }
@@ -1743,7 +1732,7 @@ export default function Mascot({
         walkTweenRef.current = null
         setWalkMs(0)
         setWalkSpeedRate(1)
-        if (poseRef.current.startsWith('walk') || poseRef.current.startsWith('run') || poseRef.current.startsWith('stalk')) {
+        if (poseRef.current.startsWith('walk') || poseRef.current.startsWith('run')) {
           poseRef.current = 'idle'
           setPose('idle')
         }
@@ -1762,18 +1751,21 @@ export default function Mascot({
         if (reachedTarget) {
           const onComplete = tween.onComplete
           walkTweenRef.current = null
-          setWalkMs(0)
-          setWalkSpeedRate(1)
-          if (postureRef.current === 'stand') {
-            poseRef.current = 'standidle'
-            setPose('standidle')
-          } else if (poseRef.current.startsWith('walk') || poseRef.current.startsWith('run') || poseRef.current.startsWith('stalk')) {
-            poseRef.current = 'idle'
-            setPose('idle')
+          if (onComplete) {
+            onComplete()
+          } else {
+            setWalkMs(0)
+            setWalkSpeedRate(1)
+            if (postureRef.current === 'stand') {
+              poseRef.current = 'standidle'
+              setPose('standidle')
+            } else if (poseRef.current.startsWith('walk') || poseRef.current.startsWith('run')) {
+              poseRef.current = 'idle'
+              setPose('idle')
+            }
+            triggerAccentRef.current('is-squash')
+            lastActivityEndRef.current = Date.now()
           }
-          triggerAccentRef.current('is-squash')
-          lastActivityEndRef.current = Date.now()
-          onComplete?.()
         }
       }
       rafId = requestAnimationFrame(step)
@@ -3337,11 +3329,6 @@ export default function Mascot({
             effectivePx: getStrideForAnimRef.current?.('walk'),
             overridePx: strideOverridesRef.current.walk
           },
-          stalk: {
-            defaultPx: STALK_PX_PER_CYCLE,
-            effectivePx: getStrideForAnimRef.current?.('stalk'),
-            overridePx: strideOverridesRef.current.stalk
-          },
           run: {
             defaultPx: RUN_PX_PER_CYCLE,
             effectivePx: getStrideForAnimRef.current?.('run'),
@@ -3361,8 +3348,8 @@ export default function Mascot({
         }
       },
       setStride: (name, px) => {
-        if (!['walk', 'stalk', 'run'].includes(name)) {
-          console.warn(`[life] setStride: invalid anim '${name}'. Expected walk|stalk|run`)
+        if (!['walk', 'run'].includes(name)) {
+          console.warn(`[life] setStride: invalid anim '${name}'. Expected walk|run`)
           return false
         }
         const val = typeof px === 'number' && px > 0 ? px : null
@@ -3375,7 +3362,7 @@ export default function Mascot({
           console.warn('[life] moveTest abort: chain active or dragging')
           return false
         }
-        const anim = ['walk', 'stalk', 'run'].includes(name) ? name : 'walk'
+        const anim = ['walk', 'run'].includes(name) ? name : 'walk'
         const dist = typeof px === 'number' ? px : 150
         console.log(`[life] moveTest starting: anim=${anim}, px=${dist}`)
         ensureStandingRef.current?.(null, () => {
@@ -3435,7 +3422,18 @@ export default function Mascot({
   }
 
   const displayPose = (isReminder && reminderCatAnimation !== false) ? 'alert' : pomodoroCelebrating ? 'jump' : currentPose
-  const moving = walkMs > 0 && !dragging && (displayPose.startsWith('walk') || displayPose.startsWith('run') || displayPose.startsWith('stalk'))
+  const moving = walkMs > 0 && !dragging && (displayPose.startsWith('walk') || displayPose.startsWith('run'))
+
+  // ── Run Burst Pose Tracking Debug Check ──────────────────────────────────
+  useEffect(() => {
+    if (isDebugRef.current && runBurstDebugTrackingRef.current) {
+      if (pose === 'standidle') {
+        runBurstDebugTrackingRef.current = false
+      } else {
+        console.log(`[life] run_burst pose change: ${pose}`)
+      }
+    }
+  }, [pose])
 
   // ── Idle Variant Alternating (old 2-frame vs new 6-frame) ──────────────────
   useEffect(() => {
@@ -3508,12 +3506,6 @@ export default function Mascot({
   } else if (displayPose === 'run-right') {
     animationName = 'run'
     flipped = false
-  } else if (displayPose === 'stalk-left') {
-    animationName = 'stalk'
-    flipped = true
-  } else if (displayPose === 'stalk-right') {
-    animationName = 'stalk'
-    flipped = false
   } else if (displayPose === 'standidle') {
     animationName = 'standidle'
     flipped = standingFacingRef.current === 'left'
@@ -3528,9 +3520,6 @@ export default function Mascot({
     flipped = false
   } else if (displayPose === 'run') {
     animationName = 'run'
-    flipped = standingFacingRef.current === 'left'
-  } else if (displayPose === 'stalk') {
-    animationName = 'stalk'
     flipped = standingFacingRef.current === 'left'
   } else if (displayPose === 'lookaround') {
     animationName = 'lookaround'
@@ -3817,7 +3806,7 @@ export default function Mascot({
             onShown={handleSpriteShown}
             manifest={useListening ? listeningManifest : undefined}
             spritesheet={useListening ? listeningSheetSrc : undefined}
-            catAnimationSpeed={displayPose.startsWith('walk') || displayPose.startsWith('run') || displayPose.startsWith('stalk') ? walkSpeedRate : catAnimationSpeed}
+            catAnimationSpeed={displayPose.startsWith('walk') || displayPose.startsWith('run') ? walkSpeedRate : catAnimationSpeed}
             eyeTracking={isEyeTrackingEligible}
             cursorOffset={cursorOffset}
             fpsCap={effectiveFps}
