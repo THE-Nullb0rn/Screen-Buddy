@@ -218,6 +218,7 @@ export function useSpriteAnimation({
   onAnimationEnd,
   speed = 'normal',
   fpsCap = 60,
+  idlePaused = false,
 }) {
   const isStrip = Boolean(stripConfig)
   let totalFrames = 1
@@ -281,78 +282,103 @@ export function useSpriteAnimation({
   }, [switchKey, animation])
 
   useEffect(() => {
-    let animFrameId
-    let lastTime = performance.now()
-    let lastStepTime = 0
-    let accumulated = 0
+    if (idlePaused) return undefined
 
-    const tick = (now) => {
+    let timerId = null
+    let rafId = null
+    let isCancelled = false
+    let expectedNextTime = performance.now()
+
+    const getFrameDuration = (idx) => {
+      const { totalFrames: tf, fps: fRate, frameDurations: fDurs, isStrip: sMode } = animRef.current
+      const speedFactor = speedFactorRef.current || 1
+      let rawDuration
+      const isTwoFrameIdle = !sMode && (currentAnimationRef.current === 'idle' || currentAnimationRef.current === 'idle-old') && tf === 2
+      if (isTwoFrameIdle) {
+        if (idx === 0) {
+          rawDuration = idleBlinkStateRef.current.isSecondBlinkOpen
+            ? 120 + Math.random() * 50
+            : idleBlinkStateRef.current.openDuration
+        } else {
+          rawDuration = idleBlinkStateRef.current.blinkDuration
+        }
+      } else {
+        rawDuration = fDurs
+          ? (fDurs[idx] ?? (1000 / (fRate || 1)))
+          : (1000 / (fRate || 1))
+      }
+      let duration = rawDuration / speedFactor
       const cap = fpsCapRef.current || 60
       const minInterval = 1000 / cap
-      if (now - lastStepTime < minInterval - 1) {
-        animFrameId = requestAnimationFrame(tick)
-        return
+      if (duration < minInterval) {
+        duration = minInterval
       }
-      lastStepTime = now
-      accumulated += now - lastTime
-      lastTime = now
+      return Math.max(1, duration)
+    }
 
-      const { totalFrames: tf, fps: fRate, loop: isLoop, frameDurations: fDurs, isStrip: sMode } = animRef.current
+    const scheduleWake = (delay) => {
+      if (isCancelled) return
+      if (timerId !== null) {
+        clearTimeout(timerId)
+        timerId = null
+      }
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+
+      const clampedDelay = Math.max(0, delay)
+      if (clampedDelay > 4) {
+        timerId = setTimeout(() => {
+          timerId = null
+          if (isCancelled) return
+          rafId = requestAnimationFrame(step)
+        }, clampedDelay - 4)
+      } else {
+        rafId = requestAnimationFrame(step)
+      }
+    }
+
+    const step = (now) => {
+      rafId = null
+      if (isCancelled) return
+
+      if (typeof window !== 'undefined' && window.__sbPerfCounters) {
+        window.__sbPerfCounters.rafTicks++
+      }
+
+      const { totalFrames: tf, loop: isLoop, isStrip: sMode } = animRef.current
       let idx = frameIndexRef.current
-      const speedFactor = speedFactorRef.current || 1
+      const isTwoFrameIdle = !sMode && (currentAnimationRef.current === 'idle' || currentAnimationRef.current === 'idle-old') && tf === 2
 
-      let safety = 0
-      while (safety++ < tf + 1) {
-        let rawDuration
-        const isTwoFrameIdle = !sMode && (currentAnimationRef.current === 'idle' || currentAnimationRef.current === 'idle-old') && tf === 2
-        if (isTwoFrameIdle) {
-          if (idx === 0) {
-            rawDuration = idleBlinkStateRef.current.isSecondBlinkOpen
-              ? 120 + Math.random() * 50
-              : idleBlinkStateRef.current.openDuration
-          } else {
-            rawDuration = idleBlinkStateRef.current.blinkDuration
+      const next = idx + 1
+      if (next >= tf) {
+        if (isLoop) {
+          idx = 0
+          if (isTwoFrameIdle) {
+            if (idleBlinkStateRef.current.doubleBlinkPending) {
+              idleBlinkStateRef.current.isSecondBlinkOpen = true
+              idleBlinkStateRef.current.doubleBlinkPending = false
+              idleBlinkStateRef.current.blinkDuration = 120 + Math.random() * 60
+            } else {
+              idleBlinkStateRef.current.isSecondBlinkOpen = false
+              idleBlinkStateRef.current.openDuration = 3000 + Math.random() * 3000
+              idleBlinkStateRef.current.blinkDuration = 120 + Math.random() * 60
+              idleBlinkStateRef.current.doubleBlinkPending = Math.random() < 0.2
+            }
           }
         } else {
-          rawDuration = fDurs
-            ? (fDurs[idx] ?? (1000 / (fRate || 1)))
-            : (1000 / (fRate || 1))
-        }
-        const duration = rawDuration / speedFactor
-
-        if (accumulated < duration) break
-
-        accumulated -= duration
-
-        const next = idx + 1
-        if (next >= tf) {
-          if (isLoop) {
-            idx = 0
-            if (isTwoFrameIdle) {
-              if (idleBlinkStateRef.current.doubleBlinkPending) {
-                idleBlinkStateRef.current.isSecondBlinkOpen = true
-                idleBlinkStateRef.current.doubleBlinkPending = false
-                idleBlinkStateRef.current.blinkDuration = 120 + Math.random() * 60
-              } else {
-                idleBlinkStateRef.current.isSecondBlinkOpen = false
-                idleBlinkStateRef.current.openDuration = 3000 + Math.random() * 3000
-                idleBlinkStateRef.current.blinkDuration = 120 + Math.random() * 60
-                idleBlinkStateRef.current.doubleBlinkPending = Math.random() < 0.2
-              }
-            }
-          } else {
-            // Mode "once": hold the last frame and notify end
-            idx = tf - 1
-            if (idx !== frameIndexRef.current) {
-              frameIndexRef.current = idx
-              setFrameIndex(idx)
-            }
-            onEndRef.current?.(currentAnimationRef.current)
-            return
+          // Mode "once": hold the last frame and notify end
+          idx = tf - 1
+          if (idx !== frameIndexRef.current) {
+            frameIndexRef.current = idx
+            setFrameIndex(idx)
           }
-        } else {
-          idx = next
+          onEndRef.current?.(currentAnimationRef.current)
+          return
         }
+      } else {
+        idx = next
       }
 
       if (idx !== frameIndexRef.current) {
@@ -360,12 +386,33 @@ export function useSpriteAnimation({
         setFrameIndex(idx)
       }
 
-      animFrameId = requestAnimationFrame(tick)
+      const duration = getFrameDuration(idx)
+      if (Math.abs(now - expectedNextTime) > duration * 2) {
+        expectedNextTime = now + duration
+      } else {
+        expectedNextTime += duration
+      }
+      const delay = expectedNextTime - performance.now()
+      scheduleWake(delay)
     }
 
-    animFrameId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(animFrameId)
-  }, [switchKey])
+    // Schedule the wake for when the current frame duration expires
+    const initialDuration = getFrameDuration(frameIndexRef.current)
+    expectedNextTime = performance.now() + initialDuration
+    scheduleWake(initialDuration)
+
+    return () => {
+      isCancelled = true
+      if (timerId !== null) {
+        clearTimeout(timerId)
+        timerId = null
+      }
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+    }
+  }, [switchKey, idlePaused, speed, fpsCap])
 
   let currentFrame = activeFrameIndex
   if (!isStrip) {
@@ -606,6 +653,7 @@ export default function SpriteAnimator({
   eyeTracking = false,
   cursorOffset = null,
   fpsCap = 60,
+  idlePaused = false,
   ...rest
 }) {
   const canvasRef = useRef(null)
@@ -725,6 +773,7 @@ export default function SpriteAnimator({
     onAnimationEnd,
     speed: effectiveSpeed,
     fpsCap,
+    idlePaused,
   })
 
   const scale = propScale ?? manifest.scale ?? 0.6
@@ -737,6 +786,8 @@ export default function SpriteAnimator({
 
   // Draw current frame to canvas
   useEffect(() => {
+    if (idlePaused) return
+
     const canvas = canvasRef.current
     const img = currentImgRef.current || activeAsset.image
     if (!canvas || !img) return
@@ -744,6 +795,10 @@ export default function SpriteAnimator({
     // Atomicity guard: do not clear or draw if activeAsset does not match the requested animation
     if (activeAsset.assetKey !== targetAssetKey) {
       return
+    }
+
+    if (typeof window !== 'undefined' && window.__sbPerfCounters) {
+      window.__sbPerfCounters.canvasDraws++
     }
 
     const ctx = canvas.getContext('2d')
@@ -859,7 +914,8 @@ export default function SpriteAnimator({
     eyeTracking,
     eyeDx,
     eyeDy,
-    spritesheet
+    spritesheet,
+    idlePaused,
   ])
 
   return (

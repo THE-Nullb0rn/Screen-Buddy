@@ -241,6 +241,15 @@ const BUTTON_MASK = {
   2: 2, // right
 }
 
+if (typeof window !== 'undefined') {
+  window.__sbPerfCounters = window.__sbPerfCounters || {
+    mascotRenders: 0,
+    rafTicks: 0,
+    canvasDraws: 0,
+    timerTicks: 0,
+  }
+}
+
 export default function Mascot({
   settings = null,
   reminderState,
@@ -256,6 +265,11 @@ export default function Mascot({
   mediaPlaying = false,
   chatState = 'idle',
   chatReply = '',
+  chatAnimPhase = 'done',
+  chatCatAnimations = true,
+  isSystemIdle = false,
+  pauseAnimationIdle = false,
+  limitBackgroundCpu = false,
   onChatSend,
   onChatDismiss,
   onChatActivity,
@@ -276,6 +290,7 @@ export default function Mascot({
   catOpacity = 100,
   catAnimationSpeed = 'normal',
   mouseReaction = false,
+  eyeTracking = false,
   paused = false,
   reminderCatAnimation = true,
   animationFps = 60,
@@ -302,9 +317,21 @@ export default function Mascot({
   )
   const effectiveOpacity = clampedOpacity / 100
   const effectiveFps = reduceResourceUsage ? 30 : (animationFps || 60)
+  if (typeof window !== 'undefined' && window.__sbPerfCounters) {
+    window.__sbPerfCounters.mascotRenders++
+  }
+
   const isDebug = Boolean(developerMode) || process.env.NODE_ENV === 'development' || (typeof process !== 'undefined' && process.env?.SCREEN_BUDDY_DEBUG === '1')
   const isDebugRef = useRef(isDebug)
   isDebugRef.current = isDebug
+
+  const perfIntervalRef = useRef(null)
+
+  const chatPropsRef = useRef({ chatReply, onChatSend, onChatDismiss, onChatActivity, onChatOpen })
+  chatPropsRef.current = { chatReply, onChatSend, onChatDismiss, onChatActivity, onChatOpen }
+
+  const [debugIdlePauseOverride, setDebugIdlePauseOverride] = useState(null)
+  const rawIdlePaused = debugIdlePauseOverride !== null ? debugIdlePauseOverride : Boolean(pauseAnimationIdle && isSystemIdle)
   
 
   const [cursorOffset, setCursorOffset] = useState(null)
@@ -320,8 +347,9 @@ export default function Mascot({
   const fallVelocityRef = useRef(0)
   const [roamEpoch, setRoamEpoch] = useState(0)
   
-  // Hover state for petting
+  // Hover state for petting and mood indicator
   const [isHoveringHead, setIsHoveringHead] = useState(false)
+  const [isHoveringCat, setIsHoveringCat] = useState(false)
 
   // Walk tween: rAF-driven ease-in-out interpolation
   const walkTweenRef = useRef(null) // { startX, targetX, startTime, duration }
@@ -493,16 +521,47 @@ export default function Mascot({
   const isBigTreatment = isReminder && (reminderCatAnimation !== false) && reminderType === 'movementBreak'
 
   const isCareActive = pose === 'eat' || pose === 'drink' || isCareActionRef.current
+  const effectiveIdlePaused = Boolean(
+    rawIdlePaused &&
+    !isReminder &&
+    hungerState !== 'ACTIVE' &&
+    !pomodoroCelebrating &&
+    !dragging &&
+    !isCareActive
+  )
   const isRoamBlocked = Boolean(
     isReminder ||
     pomodoroCelebrating ||
     chatState !== 'idle' ||
     notificationVisible ||
     (hungerState === 'ACTIVE' && hungerBehavior === 'sit') ||
-    isCareActive
+    isCareActive ||
+    effectiveIdlePaused
   )
   const roamBlockedRef = useRef(isRoamBlocked)
   roamBlockedRef.current = isRoamBlocked
+
+  const effectiveIdlePausedRef = useRef(effectiveIdlePaused)
+  effectiveIdlePausedRef.current = effectiveIdlePaused
+
+  const prevEffectiveIdlePausedRef = useRef(false)
+  useEffect(() => {
+    if (effectiveIdlePaused && !prevEffectiveIdlePausedRef.current) {
+      if (isDebugRef.current) {
+        console.log('[power] Mascot entering idle pause')
+      }
+      clearTimeout(roamTimeoutRef.current)
+      cancelActiveLifeChainRef.current?.('idle_paused')
+    } else if (!effectiveIdlePaused && prevEffectiveIdlePausedRef.current) {
+      if (isDebugRef.current) {
+        console.log('[power] Mascot waking from idle pause')
+      }
+      setRoamEpoch((e) => e + 1)
+      restartIdleVariantTimerRef.current?.('old')
+      window.api?.reportActivity?.()
+    }
+    prevEffectiveIdlePausedRef.current = effectiveIdlePaused
+  }, [effectiveIdlePaused])
 
   const measure = useCallback(() => ({
     width: SPRITE_WIDTH,    // always the sprite, never the container
@@ -759,6 +818,13 @@ export default function Mascot({
         }
       }, 800)
     }
+
+    if (animName === 'curious' && (chatAnimPhaseRef.current === 'sending' || chatAnimPhaseRef.current === 'thinking')) {
+      if (chatCatAnimationsRef.current && !isChatAnimBlockedRef.current?.()) {
+        setPose('purr')
+        postureRef.current = 'sit'
+      }
+    }
   }, [])
 
   const handleSpriteShown = useCallback((animName) => {
@@ -888,11 +954,19 @@ export default function Mascot({
     playOneShot,
     developerMode,
     isIdleForRemarks,
+    limitBackgroundCpu,
+    idlePaused: effectiveIdlePaused,
   })
 
-  // Log mood changes and initial state on mount
+  // Log mood changes and initial state on mount (guarded against spam)
+  const lastLoggedMoodRef = useRef('')
   useEffect(() => {
-    console.log(`[mood] enabled=${moodEnabled} indicator=${moodIndicator} mood=${mood} stats=${JSON.stringify(stats)}`)
+    const statsStr = JSON.stringify(stats)
+    const logKey = `${moodEnabled}|${moodIndicator}|${mood}|${statsStr}`
+    if (lastLoggedMoodRef.current !== logKey) {
+      lastLoggedMoodRef.current = logKey
+      console.log(`[mood] enabled=${moodEnabled} indicator=${moodIndicator} mood=${mood} stats=${statsStr}`)
+    }
   }, [moodEnabled, moodIndicator, mood, stats])
 
   const moodRef = useRef(mood)
@@ -1962,6 +2036,7 @@ export default function Mascot({
   }, [hungerLaterSignal])
 
   useEffect(() => {
+    const checkInterval = limitBackgroundCpu ? 30000 : 15000
     const interval = setInterval(() => {
       const now = Date.now()
       const idleTime = now - lastInteractRef.current
@@ -1972,9 +2047,97 @@ export default function Mascot({
           lastLongNoInteractSadTimeRef.current = now
         }
       }
-    }, 15000)
+    }, checkInterval)
     return () => clearInterval(interval)
-  }, [])
+  }, [limitBackgroundCpu])
+
+  // ── Chat animations ────────────────────────────────────────────────────────
+  const chatCatAnimationsRef = useRef(chatCatAnimations)
+  chatCatAnimationsRef.current = chatCatAnimations
+  const chatAnimPhaseRef = useRef(chatAnimPhase)
+  chatAnimPhaseRef.current = chatAnimPhase
+  const chatAnimTokenRef = useRef(0)
+  const chatDoneTimerRef = useRef(null)
+
+  const isChatAnimBlocked = useCallback(() => {
+    return (
+      !chatCatAnimationsRef.current ||
+      isReminder ||
+      isCareActionRef.current ||
+      poseRef.current === 'eat' ||
+      poseRef.current === 'drink' ||
+      draggingRef.current ||
+      poseRef.current === 'sleep' ||
+      wakingUpRef.current ||
+      poseRef.current === 'typing' ||
+      poseRef.current === 'typingfast'
+    )
+  }, [isReminder])
+  const isChatAnimBlockedRef = useRef(isChatAnimBlocked)
+  isChatAnimBlockedRef.current = isChatAnimBlocked
+
+  const triggerChatAnimPhase = useCallback((phase) => {
+    if (isDebugRef.current) {
+      console.log(`[chat-anim] phase: ${phase}`)
+    }
+    chatAnimPhaseRef.current = phase
+    if (chatDoneTimerRef.current) {
+      clearTimeout(chatDoneTimerRef.current)
+      chatDoneTimerRef.current = null
+    }
+
+    if (phase === 'done') {
+      chatAnimTokenRef.current += 1
+      chatDoneTimerRef.current = setTimeout(() => {
+        chatDoneTimerRef.current = null
+        if (poseRef.current === 'curious' || poseRef.current === 'purr' || poseRef.current === 'talk') {
+          setPose('idle')
+          postureRef.current = 'sit'
+        }
+      }, 200)
+      return
+    }
+
+    if (isChatAnimBlocked()) {
+      if (isDebugRef.current) {
+        console.log('[chat-anim] blocked by active state or pose')
+      }
+      return
+    }
+
+    cancelActiveLifeChainRef.current?.('chat_anim')
+    const token = ++chatAnimTokenRef.current
+
+    if (phase === 'sending') {
+      ensureSittingRef.current?.(null, () => {
+        if (token !== chatAnimTokenRef.current || isChatAnimBlocked()) return
+        setPose('curious')
+        postureRef.current = 'sit'
+      })
+    } else if (phase === 'thinking') {
+      if (poseRef.current !== 'curious') {
+        ensureSittingRef.current?.(null, () => {
+          if (token !== chatAnimTokenRef.current || isChatAnimBlocked()) return
+          setPose('purr')
+          postureRef.current = 'sit'
+        })
+      }
+    } else if (phase === 'replying') {
+      ensureSittingRef.current?.(null, () => {
+        if (token !== chatAnimTokenRef.current || isChatAnimBlocked()) return
+        setPose('talk')
+        postureRef.current = 'sit'
+      })
+    }
+  }, [isChatAnimBlocked])
+
+  const triggerChatAnimPhaseRef = useRef(triggerChatAnimPhase)
+  triggerChatAnimPhaseRef.current = triggerChatAnimPhase
+
+  useEffect(() => {
+    if (!chatCatAnimations && chatAnimPhase !== 'done') return
+    triggerChatAnimPhase(chatAnimPhase)
+  }, [chatAnimPhase, chatCatAnimations, triggerChatAnimPhase])
 
   useEffect(() => {
     if (pendingKnockoffAnnoyedRef.current && pose === 'idle' && postureRef.current === 'sit' && !dragging && !isCareActionRef.current && !isReactionActiveRef.current) {
@@ -2279,6 +2442,13 @@ export default function Mascot({
           console.log('[Mascot] Roam outcome: blocked by guard (roam blocked), next attempt in 2000ms')
         }
         later(walkOnce, 2000)
+        return
+      }
+      if (effectiveIdlePausedRef.current) {
+        if (isDebugRef.current) {
+          console.log('[Mascot] Roam outcome: blocked by guard (idle paused), next attempt in 5000ms')
+        }
+        later(walkOnce, 5000)
         return
       }
       if (Date.now() < calmUntilRef.current) {
@@ -2777,136 +2947,198 @@ export default function Mascot({
   }, [])
 
   // ── Part 3: Chase Cursor Effect ───────────────────────────────────────────
+  const processChaseCursorOffset = useCallback((offset) => {
+    if (!offset || typeof offset.x !== 'number' || typeof offset.y !== 'number') return
+
+    const now = performance.now()
+    const hist = cursorHistoryRef.current
+    hist.push({ x: offset.x, y: offset.y, time: now })
+
+    // Retain samples within the last 600ms
+    while (hist.length > 0 && now - hist[0].time > 600) {
+      hist.shift()
+    }
+
+    // Check horizontal distance: between 100px and 300px away horizontally
+    const absX = Math.abs(offset.x)
+    if (absX < 100 || absX > 300 || Math.abs(offset.y) > 300) return
+
+    // Eligible: cat is idle, not dragging, not in reminder/chat/walk, not chasing, cooldown 30s, not in calm window
+    if (
+      isChainActiveRef.current ||
+      poseRef.current !== 'idle' ||
+      oneShotPoseRef.current ||
+      walkTweenRef.current ||
+      chaseRafRef.current ||
+      draggingRef.current ||
+      dragPointerDownRef.current ||
+      isRoamBlocked ||
+      isChasingRef.current ||
+      Date.now() < calmUntilRef.current ||
+      Date.now() - lastChaseTimeRef.current < 30000 ||
+      mediaPlayingRef.current ||
+      hungerState === 'ACTIVE' ||
+      chatState !== 'idle' ||
+      isReminder ||
+      isCareActive
+    ) {
+      return
+    }
+
+    // Check if cursor is ahead of her in the direction she is currently facing
+    const facing = facingRef.current || 'right'
+    const isAhead = (facing === 'right' && offset.x > 0) || (facing === 'left' && offset.x < 0)
+    if (!isAhead) {
+      // Behind her: do nothing (no pounce, no move, no remark, NO cooldown started)
+      return
+    }
+
+    if (hist.length < 2) return
+
+    const dt = (now - hist[0].time) / 1000
+    if (dt < 0.25) return
+
+    const dx = offset.x - hist[0].x
+    const dy = offset.y - hist[0].y
+    const cursorSpeed = Math.hypot(dx, dy) / dt
+    if (cursorSpeed < 250) return
+
+    // Random chance: roll Math.random() < 0.4
+    if (Math.random() >= 0.4) {
+      // Roll failed: short re-roll cooldown (8s) so she doesn't re-test every tick
+      lastChaseTimeRef.current = Date.now() - 22000
+      return
+    }
+
+    // Roll succeeded: start chase with 30s cooldown
+    lastChaseTimeRef.current = Date.now()
+    isChasingRef.current = true
+
+    // Never turn her around just to chase the cursor. Facing must NOT change.
+    chaseFlippedRef.current = facing === 'left'
+
+    // Lock target position before mouse moves
+    const { width } = measure()
+    const minX = MARGIN
+    const screenW = window.screen.availWidth || window.screen.width || 1920
+    const maxX = Math.max(minX, screenW - width - MARGIN)
+    const lockedStartX = posRef.current.x
+    const lockedTargetX = clamp(posRef.current.x + offset.x - Math.sign(offset.x) * 40, minX, maxX)
+
+    cancelIdleAndOneShot()
+    playOneShot('crouchpounce', () => {
+      isChasingRef.current = false
+      chaseFlippedRef.current = null
+      poseRef.current = 'idle'
+      setPose('idle')
+      onTriggerRemark?.('pounce')
+    })
+
+    // Frame 4 is the leap (roughly 400-500ms into the animation)
+    // Smoothly move window towards cursor position using rAF tween over ~400ms with ease-out
+    chaseStartTimeoutRef.current = setTimeout(() => {
+      chaseStartTimeoutRef.current = null
+      const startTime = performance.now()
+      const duration = 400
+      const easeOut = (t) => 1 - Math.pow(1 - t, 3)
+
+      const step = (tNow) => {
+        if (draggingRef.current || dragPointerDownRef.current) {
+          chaseRafRef.current = null
+          return
+        }
+        const elapsed = tNow - startTime
+        const t = Math.min(1, elapsed / duration)
+        const eased = easeOut(t)
+        const currentX = lockedStartX + (lockedTargetX - lockedStartX) * eased
+        posRef.current = { x: currentX, y: posRef.current.y }
+        setX(currentX)
+        window.api?.moveWindow?.(Math.round(currentX), Math.round(posRef.current.y))
+
+        if (t < 1) {
+          chaseRafRef.current = requestAnimationFrame(step)
+        } else {
+          chaseRafRef.current = null
+          window.api?.persistPosition?.(Math.round(lockedTargetX), Math.round(posRef.current.y))
+        }
+      }
+
+      chaseRafRef.current = requestAnimationFrame(step)
+    }, 450)
+  }, [
+    isRoamBlocked,
+    hungerState,
+    chatState,
+    isReminder,
+    isCareActive,
+    measure,
+    cancelIdleAndOneShot,
+    playOneShot,
+    onTriggerRemark,
+  ])
+
+  // On-demand chase sampling when eyeTracking is OFF
+  const activeChaseCheckRef = useRef(false)
+  const isChaseEligible = useCallback(() => {
+    return Boolean(
+      mouseReaction &&
+      !reduceResourceUsage &&
+      !paused &&
+      !isChainActiveRef.current &&
+      poseRef.current === 'idle' &&
+      !oneShotPoseRef.current &&
+      !walkTweenRef.current &&
+      !chaseRafRef.current &&
+      !draggingRef.current &&
+      !dragPointerDownRef.current &&
+      !isRoamBlocked &&
+      !isChasingRef.current &&
+      Date.now() >= calmUntilRef.current &&
+      Date.now() - lastChaseTimeRef.current >= 30000 &&
+      !mediaPlayingRef.current &&
+      hungerState !== 'ACTIVE' &&
+      chatState === 'idle' &&
+      !isReminder &&
+      !isCareActive
+    )
+  }, [mouseReaction, reduceResourceUsage, paused, isRoamBlocked, hungerState, chatState, isReminder, isCareActive])
+
+  const handlePointerNearForChase = useCallback(async () => {
+    if (eyeTracking || !mouseReaction || activeChaseCheckRef.current || !isChaseEligible()) return
+    activeChaseCheckRef.current = true
+    let ticks = 0
+    const checkInterval = setInterval(async () => {
+      ticks++
+      if (ticks > 4 || !isChaseEligible() || !window.api?.getCursorOffset) {
+        clearInterval(checkInterval)
+        activeChaseCheckRef.current = false
+        return
+      }
+      const offset = await window.api.getCursorOffset()
+      if (offset) {
+        processChaseCursorOffset(offset)
+      }
+    }, 300)
+  }, [eyeTracking, mouseReaction, isChaseEligible, processChaseCursorOffset])
+
   useEffect(() => {
     if (!mouseReaction || reduceResourceUsage || paused) {
       cursorHistoryRef.current = []
       return undefined
     }
 
+    if (!eyeTracking) {
+      return undefined
+    }
+
     const unsub = window.api?.on?.('mascot:cursor-offset', (offset) => {
-      if (!offset || typeof offset.x !== 'number' || typeof offset.y !== 'number') return
-
-      const now = performance.now()
-      const hist = cursorHistoryRef.current
-      hist.push({ x: offset.x, y: offset.y, time: now })
-
-      // Retain samples within the last 600ms
-      while (hist.length > 0 && now - hist[0].time > 600) {
-        hist.shift()
-      }
-
-      // Check horizontal distance: between 100px and 300px away horizontally
-      const absX = Math.abs(offset.x)
-      if (absX < 100 || absX > 300 || Math.abs(offset.y) > 300) return
-
-      // Eligible: cat is idle, not dragging, not in reminder/chat/walk, not chasing, cooldown 30s, not in calm window
-      if (
-        isChainActiveRef.current ||
-        poseRef.current !== 'idle' ||
-        oneShotPoseRef.current ||
-        walkTweenRef.current ||
-        chaseRafRef.current ||
-        draggingRef.current ||
-        dragPointerDownRef.current ||
-        isRoamBlocked ||
-        isChasingRef.current ||
-        Date.now() < calmUntilRef.current ||
-        Date.now() - lastChaseTimeRef.current < 30000 ||
-        mediaPlayingRef.current ||
-        hungerState === 'ACTIVE' ||
-        chatState !== 'idle' ||
-        isReminder ||
-        isCareActive
-      ) {
-        return
-      }
-
-      // Check if cursor is ahead of her in the direction she is currently facing
-      const facing = facingRef.current || 'right'
-      const isAhead = (facing === 'right' && offset.x > 0) || (facing === 'left' && offset.x < 0)
-      if (!isAhead) {
-        // Behind her: do nothing (no pounce, no move, no remark, NO cooldown started)
-        return
-      }
-
-      if (hist.length < 2) return
-
-      const dt = (now - hist[0].time) / 1000
-      if (dt < 0.25) return
-
-      const dx = offset.x - hist[0].x
-      const dy = offset.y - hist[0].y
-      const cursorSpeed = Math.hypot(dx, dy) / dt
-      if (cursorSpeed < 250) return
-
-      // Random chance: roll Math.random() < 0.4
-      if (Math.random() >= 0.4) {
-        // Roll failed: short re-roll cooldown (8s) so she doesn't re-test every tick
-        lastChaseTimeRef.current = Date.now() - 22000
-        return
-      }
-
-      // Roll succeeded: start chase with 30s cooldown
-      lastChaseTimeRef.current = Date.now()
-      isChasingRef.current = true
-
-      // Never turn her around just to chase the cursor. Facing must NOT change.
-      chaseFlippedRef.current = facing === 'left'
-
-      // Lock target position before mouse moves
-      const { width } = measure()
-      const minX = MARGIN
-      const screenW = window.screen.availWidth || window.screen.width || 1920
-      const maxX = Math.max(minX, screenW - width - MARGIN)
-      const lockedStartX = posRef.current.x
-      const lockedTargetX = clamp(posRef.current.x + offset.x - Math.sign(offset.x) * 40, minX, maxX)
-
-      cancelIdleAndOneShot()
-      playOneShot('crouchpounce', () => {
-        isChasingRef.current = false
-        chaseFlippedRef.current = null
-        poseRef.current = 'idle'
-        setPose('idle')
-        onTriggerRemark?.('pounce')
-      })
-
-      // Frame 4 is the leap (roughly 400-500ms into the animation)
-      // Smoothly move window towards cursor position using rAF tween over ~400ms with ease-out
-      chaseStartTimeoutRef.current = setTimeout(() => {
-        chaseStartTimeoutRef.current = null
-        const startTime = performance.now()
-        const duration = 400
-        const easeOut = (t) => 1 - Math.pow(1 - t, 3)
-
-        const step = (tNow) => {
-          if (draggingRef.current || dragPointerDownRef.current) {
-            chaseRafRef.current = null
-            return
-          }
-          const elapsed = tNow - startTime
-          const t = Math.min(1, elapsed / duration)
-          const eased = easeOut(t)
-          const currentX = lockedStartX + (lockedTargetX - lockedStartX) * eased
-          posRef.current = { x: currentX, y: posRef.current.y }
-          setX(currentX)
-          window.api?.moveWindow?.(Math.round(currentX), Math.round(posRef.current.y))
-
-          if (t < 1) {
-            chaseRafRef.current = requestAnimationFrame(step)
-          } else {
-            chaseRafRef.current = null
-            window.api?.persistPosition?.(Math.round(lockedTargetX), Math.round(posRef.current.y))
-          }
-        }
-
-        chaseRafRef.current = requestAnimationFrame(step)
-      }, 450)
+      processChaseCursorOffset(offset)
     })
 
     return () => {
       unsub?.()
     }
-  }, [mouseReaction, reduceResourceUsage, paused, isRoamBlocked, cancelIdleAndOneShot, playOneShot, onTriggerRemark, measure, hungerState, chatState, isReminder, isCareActive])
+  }, [mouseReaction, reduceResourceUsage, paused, eyeTracking, processChaseCursorOffset])
 
   // ── Part 4: Call Cat Listener ─────────────────────────────────────────────
   useEffect(() => {
@@ -3136,7 +3368,7 @@ export default function Mascot({
     isStartingDragRef.current = true
     dragStartedRef.current = true
     dragPointerIdRef.current = event.pointerId
-    try { containerRef.current?.setPointerCapture(event.pointerId) } catch (_) {}
+    try { containerRef.current?.setPointerCapture(event.pointerId) } catch (err) { void err }
 
     walkTweenRef.current = null
     wakingUpRef.current = false
@@ -3551,6 +3783,7 @@ export default function Mascot({
   }
 
   const handlePointerDown = (event) => {
+    window.api?.reportActivity?.()
     if (event.target.closest?.('.mascot-reminder-card')) return
     if (event.button !== 0 && event.button !== 1 && event.button !== 2) return
 
@@ -3677,8 +3910,13 @@ export default function Mascot({
     strokeTrackingRef.current = { currentDir: 0, apexX: 0, reversals: [] }
   }
 
-  const handleMouseEnter = () => {}
-  const handleMouseLeave = () => {}
+  const handleMouseEnter = () => {
+    setIsHoveringCat(true)
+    handlePointerNearForChase?.()
+  }
+  const handleMouseLeave = () => {
+    setIsHoveringCat(false)
+  }
 
   useEffect(() => {
     return () => {
@@ -3868,9 +4106,115 @@ export default function Mascot({
         }
         return performReactionRef.current?.(reaction, 'debug', true) ?? false
       },
+      idlePause: (val) => {
+        setDebugIdlePauseOverride(Boolean(val))
+        return Boolean(val)
+      },
+      chatState: (state) => {
+        if (!['sending', 'thinking', 'replying', 'done'].includes(state)) {
+          console.warn(`[life] chatState: unknown state '${state}'. Expected sending|thinking|replying|done`)
+          return false
+        }
+        triggerChatAnimPhaseRef.current?.(state)
+        return true
+      },
+      perf: (enable) => {
+        if (!enable) {
+          if (perfIntervalRef.current) {
+            clearInterval(perfIntervalRef.current)
+            perfIntervalRef.current = null
+            console.log('[perf] Profiling stopped')
+          }
+          return false
+        }
+        if (perfIntervalRef.current) {
+          clearInterval(perfIntervalRef.current)
+        }
+        console.log('[perf] Profiling started (reporting every 10s)')
+        let lastReportTime = Date.now()
+        let lastRenders = window.__sbPerfCounters?.mascotRenders || 0
+        let lastRafs = window.__sbPerfCounters?.rafTicks || 0
+        let lastDraws = window.__sbPerfCounters?.canvasDraws || 0
+        let lastTimers = window.__sbPerfCounters?.timerTicks || 0
+        let lastHyprctl = 0
+        let lastIpcReceived = {}
+        let lastIpcSent = {}
+
+        const report = async () => {
+          const now = Date.now()
+          const elapsedSec = (now - lastReportTime) / 1000 || 10
+          lastReportTime = now
+
+          const curRenders = window.__sbPerfCounters?.mascotRenders || 0
+          const curRafs = window.__sbPerfCounters?.rafTicks || 0
+          const curDraws = window.__sbPerfCounters?.canvasDraws || 0
+          const curTimers = window.__sbPerfCounters?.timerTicks || 0
+
+          const diffRenders = ((curRenders - lastRenders) / elapsedSec).toFixed(1)
+          const diffRafs = ((curRafs - lastRafs) / elapsedSec).toFixed(1)
+          const diffDraws = ((curDraws - lastDraws) / elapsedSec).toFixed(1)
+          const diffTimers = ((curTimers - lastTimers) / elapsedSec).toFixed(1)
+
+          lastRenders = curRenders
+          lastRafs = curRafs
+          lastDraws = curDraws
+          lastTimers = curTimers
+
+          let diffHyprctl = '0.0'
+          if (window.api?.getMainPerfStats) {
+            try {
+              const mainStats = await window.api.getMainPerfStats()
+              if (mainStats) {
+                const curHypr = mainStats.hyprctlSpawns || 0
+                diffHyprctl = ((curHypr - lastHyprctl) / elapsedSec).toFixed(1)
+                lastHyprctl = curHypr
+              }
+            } catch (err) {
+              void err
+            }
+          }
+
+          let topRxStr = 'none'
+          let topTxStr = 'none'
+          if (window.api?.getIpcStats) {
+            try {
+              const ipcStats = window.api.getIpcStats()
+              const rxDiffs = []
+              for (const [ch, cnt] of Object.entries(ipcStats.received || {})) {
+                const delta = cnt - (lastIpcReceived[ch] || 0)
+                if (delta > 0) rxDiffs.push({ ch, rate: (delta / elapsedSec).toFixed(1) })
+              }
+              rxDiffs.sort((a, b) => b.rate - a.rate)
+              topRxStr = rxDiffs.slice(0, 5).map((x) => `${x.ch}: ${x.rate}/s`).join(', ') || 'none'
+              lastIpcReceived = { ...ipcStats.received }
+
+              const txDiffs = []
+              for (const [ch, cnt] of Object.entries(ipcStats.sent || {})) {
+                const delta = cnt - (lastIpcSent[ch] || 0)
+                if (delta > 0) txDiffs.push({ ch, rate: (delta / elapsedSec).toFixed(1) })
+              }
+              txDiffs.sort((a, b) => b.rate - a.rate)
+              topTxStr = txDiffs.slice(0, 5).map((x) => `${x.ch}: ${x.rate}/s`).join(', ') || 'none'
+              lastIpcSent = { ...ipcStats.sent }
+            } catch (err) {
+              void err
+            }
+          }
+
+          console.log(`[perf] Mascot renders/s: ${diffRenders} | rAF/s: ${diffRafs} | Draws/s: ${diffDraws} | hyprctl/s: ${diffHyprctl} | Timers/s: ${diffTimers}`)
+          console.log(`[perf] Top IPC Rx: [${topRxStr}] | Tx: [${topTxStr}]`)
+        }
+
+        perfIntervalRef.current = setInterval(report, 10000)
+        return true
+      },
     }
 
     return () => {
+      if (perfIntervalRef.current) {
+        clearInterval(perfIntervalRef.current)
+        perfIntervalRef.current = null
+      }
       if (typeof window !== 'undefined' && window.__sbLife) {
         delete window.__sbLife
       }
@@ -4072,7 +4416,7 @@ export default function Mascot({
 
   const isEyeTrackingEligible = Boolean(
     !reduceResourceUsage &&
-    mouseReaction &&
+    eyeTracking &&
     !paused &&
     (animationName === 'idle' || animationName === 'idle-old') &&
     !dragging &&
@@ -4178,7 +4522,8 @@ export default function Mascot({
 
   const isCursorNear = Boolean(
     (cursorOffset && Math.hypot(cursorOffset.x, cursorOffset.y) <= 120) ||
-    isHoveringHead
+    isHoveringHead ||
+    isHoveringCat
   )
 
   const isIndicatorVisible = Boolean(
@@ -4219,7 +4564,7 @@ export default function Mascot({
       lastIndicatorDecisionRef.current = logMsg
       console.log(logMsg)
     }
-  })
+  }, [moodEnabled, mood, isOverlayShowing, isIndicatorVisible, moodIndicator, isCursorNear, recentMoodChange])
 
   const emojiSize = Math.max(16, Math.min(26, Math.round(22 * ((catSize || 100) / 100))))
 
@@ -4295,7 +4640,8 @@ export default function Mascot({
             catAnimationSpeed={displayPose.startsWith('walk') || displayPose.startsWith('run') ? walkSpeedRate : catAnimationSpeed}
             eyeTracking={isEyeTrackingEligible}
             cursorOffset={cursorOffset}
-            fpsCap={effectiveFps}
+            fpsCap={limitBackgroundCpu && (displayPose === 'sleep' || pose === 'sleep') ? Math.round(effectiveFps / 2) : effectiveFps}
+            idlePaused={effectiveIdlePaused}
           />
         </div>
       </div>

@@ -93,6 +93,8 @@ let trayHostWatcher = null
 let settings = null // loaded from disk at startup
 let notificationsManager = null
 let stopEyeTrackingPolling = null
+let startEyeTrackingPolling = null
+let updateIdlePollTimer = null
 // Manual pause is intentionally not persisted. Fullscreen pause is a separate
 // transient reason, so leaving fullscreen never overrides a manual pause.
 let isPaused = false
@@ -106,6 +108,27 @@ const TRAY_TOOLTIP_UPDATE_INTERVAL_MS = 10 * 1000
 let lastTrayTooltipUpdateAt = 0
 let lastTrayTooltipMode = null
 let typingDetector = null
+
+// ─── Idle / Power State ────────────────────────────────────────────────────
+let lastUserActivityTime = Date.now()
+let isSystemIdleState = false
+let lastKnownCursorX = null
+let lastKnownCursorY = null
+let lastActivityReason = 'init'
+let lastCursorMovedTime = Date.now()
+let hyprctlSpawnCount = 0
+
+function noteUserActivity(reason) {
+  lastUserActivityTime = Date.now()
+  lastActivityReason = reason
+  if (isSystemIdleState) {
+    isSystemIdleState = false
+    console.log(`[power] System active (resumed via ${reason})`)
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('power:idle', false, reason)
+    }
+  }
+}
 
 // ─── Mood State Persistence ────────────────────────────────────────────────
 let latestMoodState = null
@@ -278,6 +301,7 @@ app.whenReady().then(async () => {
   syncDeveloperMode(Boolean(settings?.developerMode))
 
   typingDetector = new TypingDetector((channel, event) => {
+    noteUserActivity('typing_event')
     // Optional chaining alone is insufficient: a closed BrowserWindow is still
     // a non-null object whose webContents.send() throws "Object has been destroyed".
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
@@ -333,7 +357,84 @@ app.whenReady().then(async () => {
   if (process.argv.includes('--settings')) {
     openSettingsWindow()
   }
+
+  if (!app.isPackaged) {
+    startDevCpuLogging()
+  }
 })
+
+let devCpuInterval = null
+
+function startDevCpuLogging() {
+  if (app.isPackaged) return
+  if (devCpuInterval) return
+
+  devCpuInterval = setInterval(() => {
+    try {
+      const metrics = app.getAppMetrics()
+      let overlayPid = null
+      let bubblesPid = null
+      let settingsPid = null
+
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        try {
+          overlayPid = mainWindow.webContents.getOSProcessId()
+        } catch (err) {
+          void err
+        }
+      }
+      if (bubbleWindow && !bubbleWindow.isDestroyed() && !bubbleWindow.webContents.isDestroyed()) {
+        try {
+          bubblesPid = bubbleWindow.webContents.getOSProcessId()
+        } catch (err) {
+          void err
+        }
+      }
+      if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+        try {
+          settingsPid = settingsWindow.webContents.getOSProcessId()
+        } catch (err) {
+          void err
+        }
+      }
+
+      let mainCpu = 0
+      let overlayCpu = 0
+      let bubblesCpu = 0
+      let settingsCpu = 0
+      let gpuCpu = 0
+      let otherCpu = 0
+      let totalCpu = 0
+
+      for (const m of metrics) {
+        const usage = m.cpu?.percentCPUUsage || 0
+        totalCpu += usage
+        if (m.type === 'Browser') {
+          mainCpu += usage
+        } else if (m.type === 'GPU') {
+          gpuCpu += usage
+        } else if (m.type === 'Tab') {
+          if (overlayPid && m.pid === overlayPid) {
+            overlayCpu += usage
+          } else if (bubblesPid && m.pid === bubblesPid) {
+            bubblesCpu += usage
+          } else if (settingsPid && m.pid === settingsPid) {
+            settingsCpu += usage
+          } else {
+            otherCpu += usage
+          }
+        } else {
+          otherCpu += usage
+        }
+      }
+
+      const r = (val) => val.toFixed(1)
+      console.log(`[cpu] main=${r(mainCpu)}% overlay=${r(overlayCpu)}% bubbles=${r(bubblesCpu)}% settings=${r(settingsCpu)}% gpu=${r(gpuCpu)}% other=${r(otherCpu)}% total=${r(totalCpu)}%`)
+    } catch (err) {
+      void err
+    }
+  }, 15000)
+}
 
 // Quit when all windows are closed (shouldn't normally happen for an overlay,
 // but keeps the app well-behaved during development).
@@ -344,6 +445,10 @@ app.on('window-all-closed', () => {
 // Clean up child processes before exit
 app.on('will-quit', () => {
   isShuttingDown = true
+  if (devCpuInterval) {
+    clearInterval(devCpuInterval)
+    devCpuInterval = null
+  }
   // Stop typing detection first — kills any /dev/input 'cat' child processes
   // and nulls the IPC sender so no destroyed-webContents errors can fire.
   // stop() is idempotent; safe to call even if never started.
@@ -919,7 +1024,14 @@ function startHyprlandFullscreenMonitor() {
   connect()
   // socket2 is the primary mechanism. The low-frequency check covers the
   // documented case where Hyprland emits duplicate or missing fullscreen events.
-  fullscreenSafetyPoll = setInterval(() => reconcileHyprlandFullscreen('safety poll'), 2000)
+  updateFullscreenSafetyPoll()
+}
+
+function updateFullscreenSafetyPoll() {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
+  if (fullscreenSafetyPoll) clearInterval(fullscreenSafetyPoll)
+  const pollInterval = settings?.limitBackgroundCpu ? 4000 : 2000
+  fullscreenSafetyPoll = setInterval(() => reconcileHyprlandFullscreen('safety poll'), pollInterval)
 }
 
 function stopHyprlandFullscreenMonitor() {
@@ -1249,7 +1361,7 @@ async function applyBubbleWindowSize(w, h) {
 
   try {
     if (bubbleWindow && !bubbleWindow.isDestroyed()) {
-      try { bubbleWindow.setSize(w, h); } catch (e) {}
+      try { bubbleWindow.setSize(w, h); } catch (e) { void e; }
     }
     
     if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
@@ -1273,7 +1385,7 @@ async function applyBubbleWindowSize(w, h) {
               confirmed = true;
               break;
             }
-          } catch (err) {}
+          } catch (err) { void err; }
           await new Promise(r => setTimeout(r, BUBBLE_SIZE_POLL_INTERVAL_MS));
         }
         if (!confirmed) {
@@ -1858,14 +1970,27 @@ function registerIpcHandlers() {
       }
     }
 
-    // If reduce resource usage is enabled, stop any ongoing eye tracking polling
-    if (settings.reduceResourceUsage) {
+    // Stop or resume eye tracking polling based on eyeTracking setting
+    if (!settings.eyeTracking || settings.reduceResourceUsage) {
       stopEyeTrackingPolling?.()
+    } else if (isRendererEyeTrackingActive) {
+      startEyeTrackingPolling?.()
     }
 
     // Update typing detector settings
     if (typingDetector) {
       typingDetector.updateSettings(settings)
+    }
+
+    // Update fullscreen safety poll interval if limitBackgroundCpu changed
+    updateFullscreenSafetyPoll()
+
+    // Update idle poll timer based on pauseAnimationIdle and eyeTracking
+    updateIdlePollTimer?.()
+
+    // If pauseAnimationIdle was toggled off, wake from idle state
+    if (!settings.pauseAnimationIdle) {
+      noteUserActivity('pauseAnimationIdle_disabled')
     }
 
     if (settings.paused !== undefined && Boolean(settings.paused) !== isPaused) {
@@ -2334,9 +2459,18 @@ function registerIpcHandlers() {
     positionBubbleWindow()
   })
 
-  // Remove old mouse hit-testing since we rely on natural small window bounds
-  ipcMain.on('mouse:enter-interactive', () => {})
-  ipcMain.on('mouse:leave-interactive', () => {})
+  // Mouse hit-testing & activity tracking
+  ipcMain.on('mouse:enter-interactive', () => {
+    // Passive pointer enter does not count as real user activity (avoids false idle wakes)
+    void 0
+  })
+  ipcMain.on('mouse:leave-interactive', () => {
+    // Passive pointer leave does not count as real user activity
+    void 0
+  })
+  ipcMain.on('mascot:activity', () => {
+    noteUserActivity('mascot_interaction')
+  })
 
   // ── Pause / resume ────────────────────────────────────────────────────────
 
@@ -2457,26 +2591,29 @@ function registerIpcHandlers() {
   })
 
   // ── Eye tracking (cursor follower) ──────────────────────────────────────
-  let eyeTrackingInterval = null
+  let eyeTrackingTimer = null
   let eyeTrackingBusy = false
   let lastCatBoundsRefreshTime = 0
   let cachedCatBounds = null
+  let isRendererEyeTrackingActive = false
 
   stopEyeTrackingPolling = function () {
-    if (eyeTrackingInterval) {
-      clearInterval(eyeTrackingInterval)
-      eyeTrackingInterval = null
+    if (eyeTrackingTimer) {
+      clearTimeout(eyeTrackingTimer)
+      eyeTrackingTimer = null
     }
     eyeTrackingBusy = false
   }
 
-  function startEyeTrackingPolling() {
-    if (settings && settings.reduceResourceUsage) return
-    if (eyeTrackingInterval) return
+  startEyeTrackingPolling = function () {
+    if (!settings || !settings.eyeTracking || settings.reduceResourceUsage) return
+    if (eyeTrackingTimer) return
 
     const poll = async () => {
       if (eyeTrackingBusy) return
       eyeTrackingBusy = true
+
+      let nextInterval = 125
 
       try {
         if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
@@ -2485,6 +2622,18 @@ function registerIpcHandlers() {
         }
 
         const now = Date.now()
+
+        // Check idle timeout if pauseAnimationIdle is enabled
+        if (settings?.pauseAnimationIdle) {
+          if (!isSystemIdleState && now - lastUserActivityTime >= 120000) {
+            isSystemIdleState = true
+            console.log(`[power] System idle (no activity for 120s; last activity was ${lastActivityReason}) - pausing animation`)
+            if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+              mainWindow.webContents.send('power:idle', true, lastActivityReason)
+            }
+          }
+        }
+
         let catX
         let catY
         let catW
@@ -2522,7 +2671,8 @@ function registerIpcHandlers() {
             catH = bounds.height
           }
 
-          const { stdout } = await execFile('hyprctl', ['cursorpos'])
+          hyprctlSpawnCount++
+          const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
           let cursorX = 0
           let cursorY = 0
           const trimmed = stdout.trim()
@@ -2536,10 +2686,33 @@ function registerIpcHandlers() {
             cursorY = parts[1] || 0
           }
 
+          if (lastKnownCursorX != null && lastKnownCursorY != null) {
+            if (Math.hypot(cursorX - lastKnownCursorX, cursorY - lastKnownCursorY) > 3) {
+              lastCursorMovedTime = now
+              noteUserActivity('cursor_moved')
+            }
+          }
+          lastKnownCursorX = cursorX
+          lastKnownCursorY = cursorY
+
           const catCenterX = catX + catW / 2
           const catCenterY = catY + catH / 2
           const relX = Math.round(cursorX - catCenterX)
           const relY = Math.round(cursorY - catCenterY)
+
+          const dist = Math.hypot(relX, relY)
+          const timeSinceMove = now - lastCursorMovedTime
+          if (isSystemIdleState) {
+            nextInterval = 1000
+          } else if (timeSinceMove >= 5000) {
+            nextInterval = 500
+          } else if (settings?.limitBackgroundCpu && dist > 400) {
+            nextInterval = 375
+          } else if (timeSinceMove < 2000) {
+            nextInterval = 125
+          } else {
+            nextInterval = 250
+          }
 
           if (!mainWindow.isDestroyed()) {
             mainWindow.webContents.send('mascot:cursor-offset', { x: relX, y: relY })
@@ -2552,10 +2725,33 @@ function registerIpcHandlers() {
           catH = bounds.height
 
           const pt = electronScreen.getCursorScreenPoint()
+          if (lastKnownCursorX != null && lastKnownCursorY != null) {
+            if (Math.hypot(pt.x - lastKnownCursorX, pt.y - lastKnownCursorY) > 3) {
+              lastCursorMovedTime = now
+              noteUserActivity('cursor_moved')
+            }
+          }
+          lastKnownCursorX = pt.x
+          lastKnownCursorY = pt.y
+
           const catCenterX = catX + catW / 2
           const catCenterY = catY + catH / 2
           const relX = Math.round(pt.x - catCenterX)
           const relY = Math.round(pt.y - catCenterY)
+
+          const dist = Math.hypot(relX, relY)
+          const timeSinceMove = now - lastCursorMovedTime
+          if (isSystemIdleState) {
+            nextInterval = 1000
+          } else if (timeSinceMove >= 5000) {
+            nextInterval = 500
+          } else if (settings?.limitBackgroundCpu && dist > 400) {
+            nextInterval = 375
+          } else if (timeSinceMove < 2000) {
+            nextInterval = 125
+          } else {
+            nextInterval = 250
+          }
 
           if (!mainWindow.isDestroyed()) {
             mainWindow.webContents.send('mascot:cursor-offset', { x: relX, y: relY })
@@ -2565,18 +2761,82 @@ function registerIpcHandlers() {
         // Silently ignore transient hyprctl / IPC errors
       } finally {
         eyeTrackingBusy = false
+        if (eyeTrackingTimer !== null) {
+          eyeTrackingTimer = setTimeout(poll, nextInterval)
+        }
       }
     }
 
-    eyeTrackingInterval = setInterval(poll, 125)
-    poll()
+    eyeTrackingTimer = setTimeout(poll, 125)
   }
 
   ipcMain.on('mascot:eye-tracking-active', (_event, active) => {
-    if (active) {
+    isRendererEyeTrackingActive = Boolean(active)
+    if (active && settings?.eyeTracking) {
       startEyeTrackingPolling()
     } else {
       stopEyeTrackingPolling()
+    }
+  })
+
+  // On-demand cursor offset query for active chase checks when eyeTracking is OFF
+  ipcMain.handle('mascot:get-cursor-offset', async () => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
+        return null
+      }
+      let catX = 0
+      let catY = 0
+      let catW = currentWinW
+      let catH = currentWinH
+      if (lastKnownCatWinX != null && lastKnownCatWinY != null) {
+        catX = lastKnownCatWinX
+        catY = lastKnownCatWinY
+      } else {
+        const bounds = mainWindow.getBounds()
+        catX = bounds.x
+        catY = bounds.y
+        catW = bounds.width
+        catH = bounds.height
+      }
+
+      let cursorX = 0
+      let cursorY = 0
+      if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+        hyprctlSpawnCount++
+        const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
+        const trimmed = stdout.trim()
+        if (trimmed.startsWith('{')) {
+          const parsed = JSON.parse(trimmed)
+          cursorX = parsed.x
+          cursorY = parsed.y
+        } else {
+          const parts = trimmed.split(/[\s,]+/).map(Number)
+          cursorX = parts[0] || 0
+          cursorY = parts[1] || 0
+        }
+      } else {
+        const pt = electronScreen.getCursorScreenPoint()
+        cursorX = pt.x
+        cursorY = pt.y
+      }
+
+      const catCenterX = catX + catW / 2
+      const catCenterY = catY + catH / 2
+      return {
+        x: Math.round(cursorX - catCenterX),
+        y: Math.round(cursorY - catCenterY),
+      }
+    } catch (_err) {
+      return null
+    }
+  })
+
+  // Perf diagnostics statistics handler
+  ipcMain.handle('perf:get-stats', () => {
+    return {
+      hyprctlSpawns: hyprctlSpawnCount,
+      lastActivityReason,
     }
   })
 
@@ -2588,6 +2848,7 @@ function registerIpcHandlers() {
    * Values: 'idle' | 'input' | 'waiting' | 'reply'
    */
   ipcMain.on('chat:state', (_event, state) => {
+    noteUserActivity('chat_state')
     notificationsManager?.setChatState(state)
     chatInputOpen = state
     console.log('[main] chat state updated to:', state)
@@ -2596,13 +2857,13 @@ function registerIpcHandlers() {
         if (bubbleWindow) {
           bubbleWindow.setFocusable(true);
         }
-      } catch (_) {}
+      } catch (err) { void err }
     } else {
       try {
         if (bubbleWindow) {
           bubbleWindow.setFocusable(false);
         }
-      } catch (_) {}
+      } catch (err) { void err }
     }
   })
 
@@ -2914,6 +3175,82 @@ function registerIpcHandlers() {
  * suspended or the screen is locked, then resume when the user comes back.
  */
 function registerPowerMonitor() {
+  try {
+    const idleTime = powerMonitor.getSystemIdleTime()
+    console.log(`[power] powerMonitor.getSystemIdleTime() initial test: ${idleTime}s`)
+  } catch (err) {
+    console.log(`[power] powerMonitor.getSystemIdleTime() test error: ${err?.message}`)
+  }
+
+  let idlePollTimer = null
+  updateIdlePollTimer = function () {
+    if (idlePollTimer) {
+      clearInterval(idlePollTimer)
+      idlePollTimer = null
+    }
+
+    // Poll cursor only when pauseAnimationIdle is ON and eyeTracking is OFF.
+    // When eyeTracking is ON, startEyeTrackingPolling already tracks cursor movement & idle state.
+    // When both are OFF, zero cursor polling runs.
+    if (settings?.pauseAnimationIdle && !settings?.eyeTracking) {
+      idlePollTimer = setInterval(async () => {
+        const now = Date.now()
+        if (!isSystemIdleState && now - lastUserActivityTime >= 120000) {
+          isSystemIdleState = true
+          console.log(`[power] System idle (no activity for 120s; last activity was ${lastActivityReason}) - pausing animation`)
+          if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send('power:idle', true, lastActivityReason)
+          }
+        }
+
+        if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+          try {
+            hyprctlSpawnCount++
+            const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
+            const trimmed = stdout.trim()
+            let curX = 0
+            let curY = 0
+            if (trimmed.startsWith('{')) {
+              const parsed = JSON.parse(trimmed)
+              curX = parsed.x
+              curY = parsed.y
+            } else {
+              const parts = trimmed.split(/[\s,]+/).map(Number)
+              curX = parts[0] || 0
+              curY = parts[1] || 0
+            }
+            if (lastKnownCursorX != null && lastKnownCursorY != null) {
+              if (Math.hypot(curX - lastKnownCursorX, curY - lastKnownCursorY) > 3) {
+                lastCursorMovedTime = Date.now()
+                noteUserActivity('cursor_moved')
+              }
+            }
+            lastKnownCursorX = curX
+            lastKnownCursorY = curY
+          } catch (_err) {
+            // ignore transient errors
+          }
+        } else {
+          try {
+            const pt = electronScreen.getCursorScreenPoint()
+            if (lastKnownCursorX != null && lastKnownCursorY != null) {
+              if (Math.hypot(pt.x - lastKnownCursorX, pt.y - lastKnownCursorY) > 3) {
+                lastCursorMovedTime = Date.now()
+                noteUserActivity('cursor_moved')
+              }
+            }
+            lastKnownCursorX = pt.x
+            lastKnownCursorY = pt.y
+          } catch (_err) {
+            // ignore
+          }
+        }
+      }, 1000)
+    }
+  }
+
+  updateIdlePollTimer()
+
   powerMonitor.on('suspend', () => {
     console.log('[main] System suspending — pausing reminders')
     mainWindow?.webContents.send('power:suspend')
@@ -2922,6 +3259,7 @@ function registerPowerMonitor() {
   powerMonitor.on('resume', () => {
     console.log('[main] System resumed — resuming reminders')
     mainWindow?.webContents.send('power:resume')
+    noteUserActivity('system_resume')
   })
 
   powerMonitor.on('lock-screen', () => {
@@ -2932,5 +3270,6 @@ function registerPowerMonitor() {
   powerMonitor.on('unlock-screen', () => {
     console.log('[main] Screen unlocked — resuming reminders')
     mainWindow?.webContents.send('power:unlock-screen')
+    noteUserActivity('screen_unlock')
   })
 }

@@ -12,6 +12,27 @@
 
 const { contextBridge, ipcRenderer } = require('electron')
 
+const ipcReceiveCounts = {}
+const ipcSendCounts = {}
+
+function recordSend(channel) {
+  ipcSendCounts[channel] = (ipcSendCounts[channel] || 0) + 1
+}
+
+function recordReceive(channel) {
+  ipcReceiveCounts[channel] = (ipcReceiveCounts[channel] || 0) + 1
+}
+
+const safeSend = (channel, ...args) => {
+  recordSend(channel)
+  return ipcRenderer.send(channel, ...args)
+}
+
+const safeInvoke = (channel, ...args) => {
+  recordSend(channel)
+  return ipcRenderer.invoke(channel, ...args)
+}
+
 /**
  * window.api — the only surface the React renderer touches.
  *
@@ -26,20 +47,20 @@ contextBridge.exposeInMainWorld('api', {
   // ── Settings ──────────────────────────────────────────────────────────────
 
   /** Fetch the full settings object from the main process */
-  getSettings: () => ipcRenderer.invoke('settings:get'),
+  getSettings: () => safeInvoke('settings:get'),
 
   /**
    * Persist updated settings. Pass a partial object; main process merges it.
    * Returns the new full settings object.
    * @param {object} updates
    */
-  setSettings: (updates) => ipcRenderer.invoke('settings:set', updates),
+  setSettings: (updates) => safeInvoke('settings:set', updates),
 
   /** Get the absolute path of the settings file (for display in the UI) */
-  getSettingsPath: () => ipcRenderer.invoke('settings:get-path'),
+  getSettingsPath: () => safeInvoke('settings:get-path'),
 
   /** Open the Settings window */
-  openSettings: () => ipcRenderer.send('settings:open'),
+  openSettings: () => safeSend('settings:open'),
 
   // ── Mouse hit-region ──────────────────────────────────────────────────────
 
@@ -47,29 +68,35 @@ contextBridge.exposeInMainWorld('api', {
    * Call when the pointer enters the interactive mascot/UI area.
    * Main process disables click-through so clicks are captured.
    */
-  mouseEnterInteractive: () => ipcRenderer.send('mouse:enter-interactive'),
+  mouseEnterInteractive: () => safeSend('mouse:enter-interactive'),
 
   /**
    * Call when the pointer leaves the interactive area.
    * Main process re-enables click-through.
    */
-  mouseLeaveInteractive: () => ipcRenderer.send('mouse:leave-interactive'),
-  setEyeTrackingActive: (active) => ipcRenderer.send('mascot:eye-tracking-active', active),
+  mouseLeaveInteractive: () => safeSend('mouse:leave-interactive'),
+  setEyeTrackingActive: (active) => safeSend('mascot:eye-tracking-active', active),
 
-  moveWindow: (x, y) => ipcRenderer.send('window:move', x, y),
-  persistPosition: (x, y) => ipcRenderer.send('window:persist-position', x, y),
-  setWindowMode: (mode, ...args) => ipcRenderer.invoke('window:mode', mode, ...args),
-  openExternal: (url) => ipcRenderer.send('app:open-external', url),
-  copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
-  getVersion: () => ipcRenderer.invoke('app:get-version'),
-  getAppInfo: () => ipcRenderer.invoke('app:get-info'),
-  openSettingsFolder: () => ipcRenderer.invoke('app:open-settings-folder'),
-  resetSettings: () => ipcRenderer.invoke('settings:reset'),
-  testChatConnection: () => ipcRenderer.invoke('chat:test-connection'),
-  getMoodState: () => ipcRenderer.invoke('get-mood-state'),
-  saveMoodState: (state) => ipcRenderer.invoke('save-mood-state', state),
+  moveWindow: (x, y) => safeSend('window:move', x, y),
+  persistPosition: (x, y) => safeSend('window:persist-position', x, y),
+  setWindowMode: (mode, ...args) => safeInvoke('window:mode', mode, ...args),
+  openExternal: (url) => safeSend('app:open-external', url),
+  copyText: (text) => safeInvoke('app:copy-text', text),
+  getVersion: () => safeInvoke('app:get-version'),
+  getAppInfo: () => safeInvoke('app:get-info'),
+  openSettingsFolder: () => safeInvoke('app:open-settings-folder'),
+  resetSettings: () => safeInvoke('settings:reset'),
+  testChatConnection: () => safeInvoke('chat:test-connection'),
+  getMoodState: () => safeInvoke('get-mood-state'),
+  saveMoodState: (state) => safeInvoke('save-mood-state', state),
   platform: process.platform,
-  updates: { check: () => ipcRenderer.invoke('updates:check') },
+  updates: { check: () => safeInvoke('updates:check') },
+  getMainPerfStats: () => safeInvoke('perf:get-stats'),
+  getCursorOffset: () => safeInvoke('mascot:get-cursor-offset'),
+  getIpcStats: () => ({
+    received: { ...ipcReceiveCounts },
+    sent: { ...ipcSendCounts },
+  }),
 
   // ── Pause / resume ────────────────────────────────────────────────────────
 
@@ -78,7 +105,7 @@ contextBridge.exposeInMainWorld('api', {
    * Updates the tray menu label to match.
    * @param {boolean} paused
    */
-  setPaused: (paused) => ipcRenderer.send('pause:set', paused),
+  setPaused: (paused) => safeSend('pause:set', paused),
 
   // ── Timer status ──────────────────────────────────────────────────────────
 
@@ -87,24 +114,25 @@ contextBridge.exposeInMainWorld('api', {
    * The menu object stays in place so open submenus are not collapsed.
    * @param {{ mode: string, formattedTime: string, running: boolean }} status
    */
-  updateTimerStatus: (status) => ipcRenderer.send('timer:update-status', status),
+  updateTimerStatus: (status) => safeSend('timer:update-status', status),
 
   // ── Typing ────────────────────────────────────────────────────────────────
   
   /** Ask the main process for the status of the typing detection permissions */
-  checkTypingPermission: () => ipcRenderer.invoke('typing:check-permission'),
+  checkTypingPermission: () => safeInvoke('typing:check-permission'),
 
   // ── Chat ──────────────────────────────────────────────────────────────────
   notifications: {
-    dismiss: (id, reason) => ipcRenderer.send('notification:dismiss', id, reason),
-    action: (id, actionKey) => ipcRenderer.send('notification:action', id, actionKey),
-    getStatus: () => ipcRenderer.invoke('notifications:status'),
+    dismiss: (id, reason) => safeSend('notification:dismiss', id, reason),
+    action: (id, actionKey) => safeSend('notification:action', id, actionKey),
+    getStatus: () => safeInvoke('notifications:status'),
   },
-  sendReminderState: (state) => ipcRenderer.send('reminder:state', state),
+  reportActivity: () => safeSend('mascot:activity'),
+  sendReminderState: (state) => safeSend('reminder:state', state),
 
   chat: {
-    send: (message) => ipcRenderer.invoke('chat:send', message),
-    setState: (state) => ipcRenderer.send('chat:state', state),
+    send: (message) => safeInvoke('chat:send', message),
+    setState: (state) => safeSend('chat:state', state),
   },
 
   // ── Push events from main → renderer ─────────────────────────────────────
@@ -131,6 +159,7 @@ contextBridge.exposeInMainWorld('api', {
       'power:resume',
       'power:lock-screen',
       'power:unlock-screen',
+      'power:idle',
       'media:status',
       'typing:activity',
       'chat:open',
@@ -151,7 +180,10 @@ contextBridge.exposeInMainWorld('api', {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)
       return () => {}
     }
-    const wrapped = (_event, ...args) => handler(...args)
+    const wrapped = (_event, ...args) => {
+      recordReceive(channel)
+      handler(...args)
+    }
     ipcRenderer.on(channel, wrapped)
     // Return an unsubscribe function for use in useEffect cleanup
     return () => ipcRenderer.removeListener(channel, wrapped)
@@ -159,8 +191,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── Bubble card state (overlay → bubble window) ──────────────────
   bubble: {
-    sendCardState: (state) => ipcRenderer.send('bubble:card-state', state),
-    action: (type, payload) => ipcRenderer.send('bubble:action', type, payload),
-    reportSize: (w, h) => ipcRenderer.send('bubble:size', w, h),
+    sendCardState: (state) => safeSend('bubble:card-state', state),
+    action: (type, payload) => safeSend('bubble:action', type, payload),
+    reportSize: (w, h) => safeSend('bubble:size', w, h),
   },
 })

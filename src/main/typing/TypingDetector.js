@@ -26,7 +26,7 @@ class TypingDetector {
   }
 
   async updateSettings(settings) {
-    const shouldEnable = !!settings.systemTypingDetection
+    const shouldEnable = !!(settings?.systemTypingDetection || settings?.pauseAnimationIdle)
     
     if (this.isEnabled !== shouldEnable) {
       this.isEnabled = shouldEnable

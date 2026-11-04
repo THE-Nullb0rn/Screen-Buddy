@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
 // ─── Named Constants Block (all rates and thresholds in ONE block) ───────────
 export const MOOD_CONSTANTS = {
@@ -205,6 +205,8 @@ export function useMood({
   playOneShot,
   developerMode = false,
   isIdleForRemarks = true,
+  limitBackgroundCpu = false,
+  idlePaused = false,
 }) {
   const isDebug = Boolean(developerMode) ||
     (typeof process !== 'undefined' && (process.env?.SCREEN_BUDDY_DEBUG === '1' || process.env?.NODE_ENV === 'development'))
@@ -235,6 +237,8 @@ export function useMood({
   isSleepingRef.current = isSleeping
   const isHungryRef = useRef(isHungry)
   isHungryRef.current = isHungry
+  const idlePausedRef = useRef(idlePaused)
+  idlePausedRef.current = idlePaused
 
   const lastInteractionTimeRef = useRef(Date.now())
   const lastSavedTimeRef = useRef(0)
@@ -421,7 +425,10 @@ export function useMood({
     if (!moodEnabled) return undefined
 
     const tick = setInterval(() => {
-      if (!moodEnabledRef.current) return
+      if (typeof window !== 'undefined' && window.__sbPerfCounters) {
+        window.__sbPerfCounters.timerTicks++
+      }
+      if (!moodEnabledRef.current || idlePausedRef.current) return
 
       const now = Date.now()
 
@@ -460,13 +467,20 @@ export function useMood({
   useEffect(() => {
     if (!moodEnabled || !catRemarks) return undefined
 
+    const intervalMs = limitBackgroundCpu ? 20000 : 10000
     const remarkInterval = setInterval(() => {
-      if (!moodEnabledRef.current) return
+      if (typeof window !== 'undefined' && window.__sbPerfCounters) {
+        window.__sbPerfCounters.timerTicks++
+      }
+      if (!moodEnabledRef.current || idlePausedRef.current) return
       const currentMood = moodRef.current
       if (!currentMood || currentMood === 'Content') return
 
       const now = Date.now()
-      if (now - lastMoodRemarkTimeRef.current < MOOD_CONSTANTS.REMARK_INTERVAL_MS) return
+      const minInterval = limitBackgroundCpu
+        ? MOOD_CONSTANTS.REMARK_INTERVAL_MS * 2
+        : MOOD_CONSTANTS.REMARK_INTERVAL_MS
+      if (now - lastMoodRemarkTimeRef.current < minInterval) return
 
       if (isIdleForRemarks && onTriggerRemark && MOOD_REMARKS[currentMood]) {
         const pool = MOOD_REMARKS[currentMood]
@@ -474,12 +488,12 @@ export function useMood({
         lastMoodRemarkTimeRef.current = now
         onTriggerRemark(text)
       }
-    }, 10000)
+    }, intervalMs)
 
     return () => {
       clearInterval(remarkInterval)
     }
-  }, [moodEnabled, catRemarks, isIdleForRemarks, onTriggerRemark])
+  }, [moodEnabled, catRemarks, isIdleForRemarks, onTriggerRemark, limitBackgroundCpu])
 
   // Recompute mood label whenever stats, hungry, or annoyed change
   useEffect(() => {
@@ -530,13 +544,17 @@ export function useMood({
     }
   }, [saveMoodState])
 
+  const roundedAffection = Math.round(affection)
+  const roundedEnergy = Math.round(energy)
+  const stats = useMemo(() => ({
+    affection: roundedAffection,
+    energy: roundedEnergy,
+    hunger: hungerStat,
+  }), [roundedAffection, roundedEnergy, hungerStat])
+
   return {
     mood: moodEnabled ? mood : null,
-    stats: {
-      affection: Math.round(affection),
-      energy: Math.round(energy),
-      hunger: hungerStat,
-    },
+    stats,
     isAnnoyed,
     recentMoodChange,
     handlePetStart,

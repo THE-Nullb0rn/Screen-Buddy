@@ -10,7 +10,6 @@ import {
   MessageSquare,
   Smile,
   Clock,
-  Languages,
   Layers,
   Eye,
   EyeOff,
@@ -179,19 +178,6 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
             checked={settings.chatEnabled !== false}
             onChange={(e) => saveSettingsPatch({ chatEnabled: e.target.checked })}
             ariaLabel="Enable Chat & AI"
-          />
-        </Row>
-        <Row
-          icon={Languages}
-          label="Multi-language support"
-          hint="Automatically detect and reply in your language"
-          soon={true}
-        >
-          <Toggle
-            checked={Boolean(settings.chatMultiLanguage)}
-            onChange={(e) => saveSettingsPatch({ chatMultiLanguage: e.target.checked })}
-            disabled={true}
-            ariaLabel="Multi-language support"
           />
         </Row>
       </Card>
@@ -402,12 +388,10 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
           icon={Bot}
           label="Cat animations during chat"
           hint="Play companion gestures and reactions while chatting"
-          soon={true}
         >
           <Toggle
             checked={settings.chatCatAnimations !== false}
             onChange={(e) => saveSettingsPatch({ chatCatAnimations: e.target.checked })}
-            disabled={true}
             ariaLabel="Cat animations during chat"
           />
         </Row>

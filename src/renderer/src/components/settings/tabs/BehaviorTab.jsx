@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Zap,
   MessageSquare,
+  Eye,
 } from 'lucide-react'
 
 export default function BehaviorTab({ settings, saveSettingsPatch }) {
@@ -120,12 +121,24 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         <Row
           icon={MousePointer}
           label="Mouse movement"
-          hint="Her eyes follow your mouse cursor"
+          hint="React when mouse moves quickly near the cat"
         >
           <Toggle
             checked={Boolean(settings.mouseReaction)}
             onChange={(e) => saveSettingsPatch({ mouseReaction: e.target.checked })}
             ariaLabel="Mouse movement reaction"
+          />
+        </Row>
+
+        <Row
+          icon={Eye}
+          label="Eyes follow cursor"
+          hint="Her pupils follow your mouse. Uses a little extra CPU."
+        >
+          <Toggle
+            checked={Boolean(settings.eyeTracking)}
+            onChange={(e) => saveSettingsPatch({ eyeTracking: e.target.checked })}
+            ariaLabel="Eyes follow cursor"
           />
         </Row>
 

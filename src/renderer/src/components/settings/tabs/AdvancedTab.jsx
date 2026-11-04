@@ -243,7 +243,6 @@ export default function AdvancedTab({
           icon={Clock}
           label="Pause animation when idle"
           hint="Suspend sprite rendering when computer is idle"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.pauseAnimationIdle)}
@@ -256,7 +255,6 @@ export default function AdvancedTab({
           icon={Zap}
           label="Limit background CPU usage"
           hint="Throttles idle loop ticks when window is unfocused"
-          soon={true}
         >
           <Toggle
             checked={Boolean(settings.limitBackgroundCpu)}
@@ -313,19 +311,6 @@ export default function AdvancedTab({
         subtitle="Advanced settings for development and customization."
         icon={Code}
       >
-        <Row
-          icon={Code}
-          label="Experimental features"
-          hint="Unlock experimental mechanics and beta modules"
-          soon={true}
-        >
-          <Toggle
-            checked={Boolean(settings.experimentalFeatures)}
-            onChange={(e) => saveSettingsPatch({ experimentalFeatures: e.target.checked })}
-            ariaLabel="Experimental features"
-          />
-        </Row>
-
         <Row
           icon={Code}
           label="Developer mode"

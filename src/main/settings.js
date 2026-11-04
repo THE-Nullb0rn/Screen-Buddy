@@ -276,6 +276,7 @@ const DEFAULT_SETTINGS = {
 
   // ── Behavior ──
   mouseReaction: false,
+  eyeTracking: false,
   appFocusReaction: false,
   mediaReaction: false,
   clickToInteract: true,
@@ -528,6 +529,7 @@ function validateSettingsUpdate(patch) {
       case 'systemTypingDetection':
       case 'autoCheckUpdates':
       case 'mouseReaction':
+      case 'eyeTracking':
       case 'appFocusReaction':
       case 'mediaReaction':
       case 'clickToInteract':

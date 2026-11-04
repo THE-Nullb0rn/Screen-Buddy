@@ -50,6 +50,8 @@ export default function App() {
   // ── Chat state ─────────────────────────────────────────────────────────────
   const [chatState, setChatState] = useState('idle') // 'idle' | 'input' | 'waiting' | 'reply'
   const [chatReply, setChatReply] = useState('')
+  const [chatAnimPhase, setChatAnimPhase] = useState('done')
+  const [isSystemIdle, setIsSystemIdle] = useState(false)
   const [notificationVisible, setNotificationVisible] = useState(false)
 
   // Cat sleep state
@@ -186,6 +188,7 @@ export default function App() {
   const chatExitTimerRef = useRef(null)
 
   const dismissChatReply = useCallback(() => {
+    setChatAnimPhase('done')
     if (replyDismissTimerRef.current) {
       clearTimeout(replyDismissTimerRef.current)
       replyDismissTimerRef.current = null
@@ -205,6 +208,7 @@ export default function App() {
   }, [])
 
   const handleChatDismiss = useCallback(() => {
+    setChatAnimPhase('done')
     setChatState((prev) => {
       if (prev === 'reply') {
         dismissChatReply()
@@ -479,12 +483,17 @@ export default function App() {
     const offUnlock = window.api.on('power:unlock-screen', () => {
       if (!settingsRef.current?.paused) setPaused(false)
     })
+    const offIdle = window.api.on('power:idle', (idle, reason) => {
+      console.log(`[power] Idle transition: idle=${idle} source=${reason || 'unknown'}`)
+      setIsSystemIdle(Boolean(idle))
+    })
 
     return () => {
       offSuspend()
       offLock()
       offResume()
       offUnlock()
+      offIdle()
     }
   }, [])
 
@@ -650,7 +659,8 @@ export default function App() {
   useEffect(() => {
     let timeoutId = null
     const scheduleNext = () => {
-      const delayMs = (8 + Math.random() * 12) * 60 * 1000
+      const baseDelay = (8 + Math.random() * 12) * 60 * 1000
+      const delayMs = settingsRef.current?.limitBackgroundCpu ? baseDelay * 2 : baseDelay
       timeoutId = setTimeout(() => {
         const canShow = (
           settingsRef.current?.notificationsEnabled !== false &&
@@ -853,6 +863,7 @@ export default function App() {
     const currentRequestId = chatSendRequestIdRef.current
 
     setChatState('waiting')
+    setChatAnimPhase('sending')
 
     if (chatWaitingTimerRef.current) {
       clearTimeout(chatWaitingTimerRef.current)
@@ -864,6 +875,7 @@ export default function App() {
         timedOut = true
         setChatReply({ ok: false, error: 'The AI did not answer in time' })
         setChatState('reply')
+        setChatAnimPhase('done')
       }
     }, 30000)
 
@@ -878,6 +890,7 @@ export default function App() {
       const replyData = result && typeof result === 'object' ? result : { ok: true, text: String(result) }
       setChatReply(replyData)
       setChatState('reply')
+      setChatAnimPhase('replying')
       const isSuccess = Boolean(
         replyData &&
         replyData.ok !== false &&
@@ -901,6 +914,7 @@ export default function App() {
       }
       setChatReply({ ok: false, error: 'The AI did not answer in time' })
       setChatState('reply')
+      setChatAnimPhase('done')
       console.error(err)
     })
   }, [])
@@ -942,6 +956,11 @@ export default function App() {
         mediaPlaying={Boolean(settings.mediaReaction) && mediaStatus.playing}
         chatState={chatState}
         chatReply={chatReply}
+        chatAnimPhase={chatAnimPhase}
+        chatCatAnimations={settings.chatCatAnimations !== false}
+        isSystemIdle={isSystemIdle}
+        pauseAnimationIdle={Boolean(settings.pauseAnimationIdle)}
+        limitBackgroundCpu={Boolean(settings.limitBackgroundCpu)}
         onChatSend={handleChatSend}
         onChatDismiss={handleChatDismiss}
         onChatActivity={resetChatInputTimer}
@@ -962,6 +981,7 @@ export default function App() {
         catOpacity={settings.catOpacity}
         catAnimationSpeed={settings.catAnimationSpeed}
         mouseReaction={settings.mouseReaction}
+        eyeTracking={Boolean(settings.eyeTracking)}
         paused={paused}
         animationFps={settings.animationFps}
         reduceResourceUsage={settings.reduceResourceUsage}
