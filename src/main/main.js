@@ -497,6 +497,19 @@ function broadcastPauseState(source) {
   } else if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
     // Do not take focus away from the game/video that just left fullscreen.
     mainWindow.showInactive()
+    setTimeout(() => {
+      restoreMascotPositionOnResume('fullscreen-resume:50ms')
+      reRaiseAndPinWindows('fullscreen-resume:50ms')
+    }, 50)
+    setTimeout(() => {
+      restoreMascotPositionOnResume('fullscreen-resume:250ms')
+      reRaiseAndPinWindows('fullscreen-resume:250ms')
+    }, 250)
+  } else if (!paused) {
+    setTimeout(() => {
+      restoreMascotPositionOnResume('unpause:50ms')
+      reRaiseAndPinWindows('unpause:50ms')
+    }, 50)
   }
 
   buildTrayMenu()
@@ -944,32 +957,6 @@ async function reconcileHyprlandFullscreen(reason) {
   }
 }
 
-const pinInFlight = new Set()
-
-async function ensurePinned(title, reason) {
-  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
-  if (pinInFlight.has(title)) return
-  pinInFlight.add(title)
-  try {
-    const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
-    const clients = JSON.parse(stdout)
-    if (!Array.isArray(clients)) return
-    const client = clients.find((c) => c?.title === title && (title !== WINDOW_TITLE || c?.floating === true))
-      || clients.find((c) => c?.title === title)
-    if (!client) return
-    if (client.pinned === false) {
-      await execFileAsync('hyprctl', ['dispatch', 'pin', `title:^(${title})$`])
-      console.log(`[pin] re-pinned ${title} after ${reason}`)
-    }
-  } catch (err) {
-    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
-      console.warn(`[pin] ensurePinned failed for ${title}:`, err.message || err)
-    }
-  } finally {
-    pinInFlight.delete(title)
-  }
-}
-
 function startHyprlandFullscreenMonitor() {
   const signature = process.env.HYPRLAND_INSTANCE_SIGNATURE
   const runtimeDir = process.env.XDG_RUNTIME_DIR
@@ -990,20 +977,22 @@ function startHyprlandFullscreenMonitor() {
       for (const line of chunk.split('\n')) {
         const event = line.split('>>', 1)[0]
         if (event === 'fullscreen' || event === 'activewindow' || event === 'activewindowv2' || event === 'openwindow' || event === 'closewindow') {
-          scheduleFullscreenReconcile(`event:${event}`); if (event === 'activewindowv2') positionBubbleWindow();
+          scheduleFullscreenReconcile(`event:${event}`);
+          if (event === 'activewindow' || event === 'activewindowv2') {
+            reRaiseAndPinWindows(`event:${event}`);
+            positionBubbleWindow();
+          }
         }
         if (event === 'openwindow') {
           setTimeout(() => {
-            ensurePinned('screen-buddy-overlay', 'openwindow:150ms')
-            ensurePinned('screen-buddy-bubbles', 'openwindow:150ms')
+            reRaiseAndPinWindows('openwindow:150ms')
           }, 150)
           setTimeout(() => {
-            ensurePinned('screen-buddy-overlay', 'openwindow:700ms')
-            ensurePinned('screen-buddy-bubbles', 'openwindow:700ms')
+            reRaiseAndPinWindows('openwindow:700ms')
           }, 700)
         } else if (event === 'workspace' || event === 'workspacev2') {
-          ensurePinned('screen-buddy-overlay', `event:${event}`)
-          ensurePinned('screen-buddy-bubbles', `event:${event}`)
+          reRaiseAndPinWindows(`event:${event}`)
+          positionBubbleWindow()
         }
       }
     })
@@ -1463,6 +1452,7 @@ function openSettingsWindow() {
 
   settingsWindow.on('closed', () => {
     settingsWindow = null
+    reRaiseAndPinWindows('settings closed')
   })
 }
 
@@ -1597,6 +1587,15 @@ function createOverlayWindow() {
   lastKnownCatWinY = savedPosition.y
   console.log(`[main] Overlay created at saved mascot position (${savedPosition.x}, ${savedPosition.y}); lastKnownCatWin seeded to (${lastKnownCatWinX},${lastKnownCatWinY})`)
 
+  setTimeout(() => {
+    restoreMascotPositionOnResume('init:100ms')
+    reRaiseAndPinWindows('init:100ms')
+  }, 100)
+  setTimeout(() => {
+    restoreMascotPositionOnResume('init:500ms')
+    reRaiseAndPinWindows('init:500ms')
+  }, 500)
+
   // ── Primary-window close → quit the whole application ───────────────────
   // Without this handler:
   //  1. mainWindow reference stays as a destroyed (non-null) BrowserWindow.
@@ -1633,6 +1632,98 @@ function persistMascotPosition(x, y) {
   settings = { ...settings, mascotPosition: { x, y } }
   saveSettings(settings)
   console.log(`[main] Saved mascot position to settings: (${x}, ${y})`)
+}
+
+let restorePositionInFlight = false
+
+async function restoreMascotPositionOnResume(reason = 'resume') {
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return
+  if (restorePositionInFlight) return
+  restorePositionInFlight = true
+  try {
+    const saved = getSavedMascotPosition()
+    const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : saved.x
+    const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : saved.y
+
+    const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
+    const clampedX = Math.max(0, Math.min(targetX, width - currentWinW))
+    const clampedY = Math.max(0, Math.min(targetY, height - currentWinH + BOTTOM_OVERHANG_PX))
+
+    lastKnownCatWinX = clampedX
+    lastKnownCatWinY = clampedY
+
+    try {
+      mainWindow.setPosition(clampedX, clampedY)
+    } catch {
+      // ignore
+    }
+
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      try {
+        await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${clampedX} ${clampedY},${HYPR_TITLE_MATCH}`])
+        if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+          console.log(`[main] restoreMascotPositionOnResume (${reason}): moved to (${clampedX}, ${clampedY})`)
+        }
+      } catch (err) {
+        if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+          console.warn('[main] restoreMascotPositionOnResume hyprctl move error:', err.message || err)
+        }
+      }
+    }
+  } finally {
+    restorePositionInFlight = false
+  }
+}
+
+let reRaiseInFlight = false
+let reRaisePendingReason = null
+
+async function reRaiseAndPinWindows(reason) {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
+  if (reRaiseInFlight) {
+    reRaisePendingReason = reason
+    return
+  }
+  reRaiseInFlight = true
+  try {
+    const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
+    const clients = JSON.parse(stdout)
+    if (Array.isArray(clients)) {
+      // 1. Overlay window
+      const overlayClient = clients.find((c) => c?.title === WINDOW_TITLE && c?.floating === true)
+        || clients.find((c) => c?.title === WINDOW_TITLE)
+      if (overlayClient) {
+        if (overlayClient.pinned === false) {
+          await execFileAsync('hyprctl', ['dispatch', 'pin', `title:^(${WINDOW_TITLE})$`])
+          console.log(`[pin] re-pinned ${WINDOW_TITLE} (${reason})`)
+        }
+        await execFileAsync('hyprctl', ['dispatch', 'alterzorder', `top,title:^(${WINDOW_TITLE})$`])
+      }
+
+      // 2. Bubble window (if mapped or visible)
+      if (bubbleMapped || (bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible())) {
+        const bubbleClient = clients.find((c) => c?.title === 'screen-buddy-bubbles')
+        if (bubbleClient) {
+          if (bubbleClient.pinned === false) {
+            await execFileAsync('hyprctl', ['dispatch', 'pin', 'title:^(screen-buddy-bubbles)$'])
+            console.log(`[pin] re-pinned screen-buddy-bubbles (${reason})`)
+          }
+          await execFileAsync('hyprctl', ['dispatch', 'alterzorder', 'top,title:^(screen-buddy-bubbles)$'])
+        }
+      }
+    }
+  } catch (err) {
+    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+      console.warn(`[pin] reRaiseAndPinWindows failed (${reason}):`, err.message || err)
+    }
+  } finally {
+    reRaiseInFlight = false
+    if (reRaisePendingReason) {
+      const nextReason = reRaisePendingReason
+      reRaisePendingReason = null
+      reRaiseAndPinWindows(nextReason)
+    }
+  }
 }
 
 
@@ -2447,7 +2538,22 @@ function registerIpcHandlers() {
   }
 
   ipcMain.on('window:persist-position', (event, x, y) => {
-    const { width: screenW, height: screenH } = require('electron').screen.getPrimaryDisplay().workAreaSize
+    if (effectivePauseState() || !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        console.log(`[catwin] persist-position ignored (paused=${effectivePauseState()} visible=${mainWindow?.isVisible?.()})`)
+      }
+      return
+    }
+    if (currentWindowMode === 'drag' || mascotRepositionInProgress) {
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        console.log(`[catwin] persist-position ignored (mode=${currentWindowMode} drag=${mascotRepositionInProgress})`)
+      }
+      return
+    }
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+      return
+    }
+    const { width: screenW, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize
     let wx = Math.round(x - NORMAL_CAT_CX)
     let wy = Math.round(y - NORMAL_CAT_CY)
     wx = Math.max(0, Math.min(wx, screenW - currentWinW))

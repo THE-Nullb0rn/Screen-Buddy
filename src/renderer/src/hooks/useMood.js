@@ -432,14 +432,18 @@ export function useMood({
 
       const now = Date.now()
 
-      // Affection decay: drops 1 per 3 min with no interaction
-      const noInteractTime = now - lastInteractionTimeRef.current
-      if (noInteractTime >= MOOD_CONSTANTS.AFFECTION_NO_INTERACTION_THRESHOLD_MS) {
-        setAffection((prev) => {
-          const next = Math.max(MOOD_CONSTANTS.STAT_MIN, prev - MOOD_CONSTANTS.AFFECTION_DECAY_PER_TICK)
-          affectionRef.current = next
-          return next
-        })
+      // Affection decay: drops 1 per 3 min with no interaction (paused while sleeping)
+      if (isSleepingRef.current) {
+        lastInteractionTimeRef.current = now
+      } else {
+        const noInteractTime = now - lastInteractionTimeRef.current
+        if (noInteractTime >= MOOD_CONSTANTS.AFFECTION_NO_INTERACTION_THRESHOLD_MS) {
+          setAffection((prev) => {
+            const next = Math.max(MOOD_CONSTANTS.STAT_MIN, prev - MOOD_CONSTANTS.AFFECTION_DECAY_PER_TICK)
+            affectionRef.current = next
+            return next
+          })
+        }
       }
 
       // Energy update: drops 1 per 4 min while awake, rises 1 per 30 s while asleep
@@ -472,7 +476,7 @@ export function useMood({
       if (typeof window !== 'undefined' && window.__sbPerfCounters) {
         window.__sbPerfCounters.timerTicks++
       }
-      if (!moodEnabledRef.current || idlePausedRef.current) return
+      if (!moodEnabledRef.current || idlePausedRef.current || isSleepingRef.current) return
       const currentMood = moodRef.current
       if (!currentMood || currentMood === 'Content') return
 

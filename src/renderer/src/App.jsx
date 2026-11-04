@@ -99,9 +99,23 @@ export default function App() {
     settings,
     paused,
     isReminderActive,
+    isAsleep,
   })
   const [drinkSignal, setDrinkSignal] = useState(0)
   const [hungerLaterSignal, setHungerLaterSignal] = useState(0)
+
+  const isDebug = Boolean(settings?.developerMode) || (typeof process !== 'undefined' && (process.env?.SCREEN_BUDDY_DEBUG === '1' || process.env?.NODE_ENV === 'development'))
+  const prevIsAsleepLogRef = useRef(false)
+  useEffect(() => {
+    if (prevIsAsleepLogRef.current !== isAsleep) {
+      if (isAsleep) {
+        if (isDebug) console.log('[life] sleep pause: timers paused')
+      } else {
+        if (isDebug) console.log('[life] wake: timers resumed')
+      }
+      prevIsAsleepLogRef.current = isAsleep
+    }
+  }, [isAsleep, isDebug])
 
   const prevShowHungerRef = useRef(false)
   useEffect(() => {

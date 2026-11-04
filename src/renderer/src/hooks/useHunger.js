@@ -21,6 +21,7 @@ export function useHunger({
   settings,
   paused = false,
   isReminderActive = false,
+  isAsleep: isAsleepProp = false,
 }) {
   const hungerEnabled = Boolean(settings?.hungerEnabled)
   const hungerRate = settings?.hungerRate || 'normal'
@@ -31,13 +32,18 @@ export function useHunger({
   const [totalDuration, setTotalDuration] = useState(() => getRandomHungerDuration(hungerRate))
   const [remainingSeconds, setRemainingSeconds] = useState(totalDuration)
   const [feedSignal, setFeedSignal] = useState(0)
-  const [isAsleep, setIsAsleep] = useState(false)
+  const [isAsleep, setIsAsleep] = useState(isAsleepProp)
 
   const hungerStateRef = useRef(hungerState)
   hungerStateRef.current = hungerState
 
   const isAsleepRef = useRef(isAsleep)
   isAsleepRef.current = isAsleep
+
+  useEffect(() => {
+    setIsAsleep(isAsleepProp)
+    isAsleepRef.current = isAsleepProp
+  }, [isAsleepProp])
 
   const pausedRef = useRef(paused)
   pausedRef.current = paused
@@ -106,8 +112,8 @@ export function useHunger({
       if (pausedRef.current || !hungerEnabledRef.current) return
       if (hungerStateRef.current !== 'IDLE') return
 
-      // Pause while sleeping if configured
-      if (hungerPauseSleepingRef.current && isAsleepRef.current) return
+      // Pause while sleeping (preserves remaining time until wake)
+      if (isAsleepRef.current) return
 
       setRemainingSeconds((prev) => {
         const next = Math.max(0, prev - 1)

@@ -316,6 +316,31 @@ export function useReminders({
       const globalIntervalSec = (s.intervalMinutes || 20) * 60
 
       let minRemaining = Infinity
+
+      if (isAway) {
+        for (const item of enabledItems) {
+          const effectiveSec =
+            typeof item.intervalMinutes === 'number' && item.intervalMinutes > 0
+              ? item.intervalMinutes * 60
+              : globalIntervalSec
+          let curRemaining = remainingTimesRef.current.get(item.id)
+          if (curRemaining === undefined || curRemaining > effectiveSec) {
+            curRemaining = effectiveSec
+            remainingTimesRef.current.set(item.id, effectiveSec)
+          }
+          if (curRemaining < minRemaining) {
+            minRemaining = curRemaining
+          }
+        }
+        for (const entry of snoozeTimesRef.current.values()) {
+          if (entry.remaining < minRemaining) {
+            minRemaining = entry.remaining
+          }
+        }
+        setCountdown(Number.isFinite(minRemaining) && minRemaining !== Infinity ? minRemaining : 0)
+        return
+      }
+
       const dueItemsNow = []
 
       // 1. Process active reminder timers

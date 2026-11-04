@@ -584,6 +584,43 @@ export default function Mascot({
     []
   )
 
+  const prevPausedStateRef = useRef(paused)
+  useEffect(() => {
+    const wasPaused = prevPausedStateRef.current
+    prevPausedStateRef.current = paused
+
+    if (paused && !wasPaused) {
+      if (isDebugRef.current) console.log('[life] pause: pausing mascot')
+      clearTimeout(roamTimeoutRef.current)
+      walkTweenRef.current = null
+      cancelActiveLifeChainRef.current?.('paused')
+      if (poseRef.current !== 'sleep' && !wakingUpRef.current) {
+        postureRef.current = 'sit'
+        lastSeatedTimeRef.current = Date.now()
+        poseRef.current = 'idle'
+        setPose('idle')
+      }
+    } else if (!paused && wasPaused) {
+      if (isDebugRef.current) console.log('[life] resume: resuming mascot')
+      const { y: floorY } = clampToViewport(posRef.current.x, 999999)
+      posRef.current.y = floorY
+      setY(floorY)
+      dragTargetRef.current = { ...posRef.current }
+
+      if (poseRef.current !== 'sleep' && !wakingUpRef.current) {
+        postureRef.current = 'sit'
+        lastSeatedTimeRef.current = Date.now()
+        poseRef.current = 'idle'
+        setPose('idle')
+      }
+
+      setRoamEpoch((e) => e + 1)
+      restartIdleVariantTimerRef.current?.('new')
+      lastInteractRef.current = Date.now()
+      lastActivityEndRef.current = Date.now()
+    }
+  }, [paused, clampToViewport])
+
   const snapVisualPosition = useCallback(() => {
     // The window is physically moved now; we don't need to read DOM rects.
     // posRef already perfectly tracks the physical screen position.
@@ -2151,12 +2188,28 @@ export default function Mascot({
     }
   }, [pose, dragging])
 
-  // Wake cat from sleep when music starts playing
+  // Wake cat from sleep when music starts playing and manage sleep timer
+  const prevMediaPlayingStateRef = useRef(mediaPlaying)
   useEffect(() => {
+    const wasPlaying = prevMediaPlayingStateRef.current
+    prevMediaPlayingStateRef.current = mediaPlaying
+
     if (mediaPlaying) {
-      wakeTo('idle')
+      lastInteractRef.current = Date.now()
+      if (isChainActiveRef.current) {
+        cancelActiveLifeChainRef.current?.('music')
+      }
+      if (poseRef.current === 'sleep' || pose === 'sleep' || wakingUpRef.current) {
+        suppressWakeStretchRef.current = true
+        wakeTo('idle', () => {
+          suppressWakeStretchRef.current = false
+        })
+      }
+    } else if (wasPlaying && !mediaPlaying) {
+      // Music stopped: restart sleep timer counting from this moment
+      lastInteractRef.current = Date.now()
     }
-  }, [mediaPlaying, wakeTo])
+  }, [mediaPlaying, pose, wakeTo])
 
   const isAsleep = pose === 'sleep'
   useEffect(() => {
