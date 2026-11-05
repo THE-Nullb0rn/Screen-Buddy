@@ -674,6 +674,9 @@ async function unpark(reason) {
     }
   }
 
+  // Always run reRaiseAndPinWindows sequence at 0, 120, 400, and 900 ms on unpark
+  triggerRaiseSequence('unpark')
+
   // Post-unpark verification at 300ms
   setTimeout(async () => {
     const info = await getOverlayDiagnosticInfo()
@@ -705,6 +708,24 @@ async function unpark(reason) {
       }
     }
   }, 300)
+}
+
+function triggerRaiseSequence(label) {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
+  const delays = [0, 120, 400, 900]
+  for (const ms of delays) {
+    if (ms === 0) {
+      if (!isParked && !isShuttingDown) {
+        reRaiseAndPinWindows(`${label}:${ms}ms`)
+      }
+    } else {
+      setTimeout(() => {
+        if (!isParked && !isShuttingDown) {
+          reRaiseAndPinWindows(`${label}:${ms}ms`)
+        }
+      }, ms)
+    }
+  }
 }
 
 function effectivePauseState() {
@@ -1235,7 +1256,13 @@ function startHyprlandFullscreenMonitor() {
           }, 700)
         } else if (event === 'workspace' || event === 'workspacev2') {
           scheduleFullscreenReconcile(`event:${event}`)
-          reRaiseAndPinWindows(`event:${event}`)
+          if (!isParked && !isShuttingDown) {
+            setTimeout(() => {
+              if (!isParked && !isShuttingDown) {
+                reRaiseAndPinWindows(`event:${event}:100ms`)
+              }
+            }, 100)
+          }
           positionBubbleWindow()
         }
       }
@@ -1936,13 +1963,20 @@ async function reRaiseAndPinWindows(reason) {
   }
   reRaiseInFlight = true
   try {
-    const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
-    const clients = JSON.parse(stdout)
+    const [{ stdout: clientsOut }, { stdout: wsOut }] = await Promise.all([
+      execFileAsync('hyprctl', ['clients', '-j']),
+      execFileAsync('hyprctl', ['activeworkspace', '-j']).catch(() => ({ stdout: '{}' }))
+    ])
+    const clients = JSON.parse(clientsOut)
+    const ws = JSON.parse(wsOut)
+    const fullscreenWindowOnWs = Boolean(ws?.hasfullscreen) || Number(ws?.fullscreenmode || 0) > 0
+
     if (Array.isArray(clients)) {
       // 1. Overlay window
       const overlayClient = clients.find((c) => c?.title === WINDOW_TITLE && c?.floating === true)
         || clients.find((c) => c?.title === WINDOW_TITLE)
       if (overlayClient) {
+        console.log(`[park] raise:${reason} pinned=${Boolean(overlayClient.pinned)} floating=${Boolean(overlayClient.floating)} ws=${overlayClient.workspace?.id} fullscreenWindowOnWs=${fullscreenWindowOnWs}`)
         if (overlayClient.pinned === false) {
           await execFileAsync('hyprctl', ['dispatch', 'pin', `title:^(${WINDOW_TITLE})$`])
           console.log(`[pin] re-pinned ${WINDOW_TITLE} (${reason})`)
