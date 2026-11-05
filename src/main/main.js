@@ -474,15 +474,239 @@ app.on('will-quit', () => {
   if (latestMoodState) {
     saveMoodStateToDisk(latestMoodState)
   }
+  if (isParked) {
+    unpark('quit')
+  }
 })
 
 app.on('before-quit', () => {
   if (latestMoodState) {
     saveMoodStateToDisk(latestMoodState)
   }
+  if (isParked) {
+    unpark('quit')
+  }
 })
 
 // ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
+let isParked = false
+let preParkSavedPos = null // { x, y }
+let parkBubbleVisible = false // whether bubble window was visible when parked
+
+async function getOverlayDiagnosticInfo() {
+  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+    if (!mainWindow || mainWindow.isDestroyed()) return 'window=null/destroyed'
+    const bounds = mainWindow.getBounds()
+    return `mapped=${mainWindow.isVisible()} at=[${bounds.x},${bounds.y}] size=[${bounds.width},${bounds.height}]`
+  }
+  try {
+    const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
+    const clients = JSON.parse(stdout)
+    if (!Array.isArray(clients)) return 'clients=invalid'
+    const overlay = clients.find((c) => c?.title === WINDOW_TITLE && (c?.floating === true || clients.filter((k) => k?.title === WINDOW_TITLE).length === 1))
+      || clients.find((c) => c?.title === WINDOW_TITLE)
+    if (!overlay) return 'overlay=not-found'
+    return `mapped=${overlay.mapped} hidden=${overlay.hidden} pinned=${overlay.pinned} ws=${overlay.workspace?.id} at=[${overlay.at?.[0]},${overlay.at?.[1]}] size=[${overlay.size?.[0]},${overlay.size?.[1]}] focusHistoryID=${overlay.focusHistoryID}`
+  } catch (err) {
+    return `error=${err.message}`
+  }
+}
+
+async function logParkDiagnostic(action, reason, method, phase) {
+  const info = await getOverlayDiagnosticInfo()
+  console.log(`[park] ${action}:${phase} reason=${reason} method=${method} ${info}`)
+}
+
+async function park(reason) {
+  if (isParked) return
+  isParked = true
+
+  const isHyprland = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
+  if (!isHyprland) {
+    await logParkDiagnostic('park', reason, 'hide', 'before')
+    mainWindow?.hide()
+    if (bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible()) {
+      parkBubbleVisible = true
+      bubbleMapped = false
+      bubbleWindow.hide()
+    } else {
+      parkBubbleVisible = false
+    }
+    setTimeout(() => {
+      logParkDiagnostic('park', reason, 'hide', 'after')
+    }, 300)
+    return
+  }
+
+  // Hyprland session: keep window mapped, alpha 0 + offscreen (-3000, -3000)
+  preParkSavedPos = {
+    x: lastKnownCatWinX,
+    y: lastKnownCatWinY,
+  }
+
+  // Ignore mouse events while parked so clicks and hovers pass right through
+  try {
+    mainWindow?.setIgnoreMouseEvents(true)
+  } catch (err) {
+    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+      console.warn('[park] setIgnoreMouseEvents(true) failed:', err.message)
+    }
+  }
+
+  await logParkDiagnostic('park', reason, 'alpha+offscreen', 'before')
+
+  // Park overlay: set alpha 0 and move offscreen
+  try {
+    await execFileAsync('hyprctl', ['dispatch', 'setprop', `title:^(${WINDOW_TITLE})$`, 'alpha', '0', 'lock'])
+    await execFileAsync('hyprctl', ['dispatch', 'setprop', `title:^(${WINDOW_TITLE})$`, 'alphainactive', '0', 'lock'])
+    await execFileAsync('hyprctl', ['dispatch', 'setprop', `title:^(${WINDOW_TITLE})$`, 'alphafullscreen', '0', 'lock'])
+    await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact -3000 -3000,title:^(${WINDOW_TITLE})$`])
+  } catch (err) {
+    console.warn('[park] overlay park commands failed:', err.message)
+  }
+
+  // Park bubbles window if mapped/visible
+  if (bubbleMapped || (bubbleWindow && !bubbleWindow.isDestroyed() && bubbleWindow.isVisible())) {
+    parkBubbleVisible = true
+    try {
+      bubbleWindow?.setIgnoreMouseEvents(true)
+      await execFileAsync('hyprctl', ['dispatch', 'setprop', 'title:^(screen-buddy-bubbles)$', 'alpha', '0', 'lock'])
+      await execFileAsync('hyprctl', ['dispatch', 'setprop', 'title:^(screen-buddy-bubbles)$', 'alphainactive', '0', 'lock'])
+      await execFileAsync('hyprctl', ['dispatch', 'setprop', 'title:^(screen-buddy-bubbles)$', 'alphafullscreen', '0', 'lock'])
+      await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', 'exact -3000 -3000,title:^(screen-buddy-bubbles)$'])
+      console.log('[park] parked bubbles window (alpha 0 + offscreen)')
+    } catch (err) {
+      console.warn('[park] bubbles park failed:', err.message)
+    }
+  } else {
+    parkBubbleVisible = false
+  }
+
+  setTimeout(() => {
+    logParkDiagnostic('park', reason, 'alpha+offscreen', 'after')
+  }, 300)
+}
+
+async function unpark(reason) {
+  if (!isParked) return
+  isParked = false
+
+  const isHyprland = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
+
+  if (!isHyprland) {
+    await logParkDiagnostic('unpark', reason, 'hide', 'before')
+    mainWindow?.showInactive()
+    if (parkBubbleVisible && bubbleWindow && !bubbleWindow.isDestroyed()) {
+      bubbleMapped = false
+      bubbleWindow.showInactive()
+      positionBubbleWindow()
+    }
+    parkBubbleVisible = false
+    setTimeout(() => {
+      logParkDiagnostic('unpark', reason, 'hide', 'after')
+    }, 300)
+    return
+  }
+
+  await logParkDiagnostic('unpark', reason, 'alpha+offscreen', 'before')
+
+  // Move overlay back to pre-park position
+  const restoreX = preParkSavedPos?.x ?? lastKnownCatWinX
+  const restoreY = preParkSavedPos?.y ?? lastKnownCatWinY
+  if (restoreX !== null && restoreY !== null) {
+    try {
+      await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${restoreX} ${restoreY},title:^(${WINDOW_TITLE})$`])
+    } catch (err) {
+      console.warn('[park] offscreen restore move failed:', err.message)
+    }
+  }
+
+  // Restore overlay alpha
+  try {
+    await execFileAsync('hyprctl', ['dispatch', 'setprop', `title:^(${WINDOW_TITLE})$`, 'alpha', '1', 'lock'])
+    await execFileAsync('hyprctl', ['dispatch', 'setprop', `title:^(${WINDOW_TITLE})$`, 'alphainactive', '1', 'lock'])
+    await execFileAsync('hyprctl', ['dispatch', 'setprop', `title:^(${WINDOW_TITLE})$`, 'alphafullscreen', '1', 'lock'])
+  } catch (err) {
+    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+      console.warn('[park] setprop restore alpha error:', err.message)
+    }
+  }
+
+  // Restore mouse interactions
+  try {
+    mainWindow?.setIgnoreMouseEvents(false)
+  } catch (err) {
+    if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+      console.warn('[park] setIgnoreMouseEvents(false) failed:', err.message)
+    }
+  }
+
+  // Unpark bubbles window if it was parked
+  if (parkBubbleVisible) {
+    parkBubbleVisible = false
+    try {
+      bubbleWindow?.setIgnoreMouseEvents(false)
+      await execFileAsync('hyprctl', ['dispatch', 'setprop', 'title:^(screen-buddy-bubbles)$', 'alpha', '1', 'lock'])
+      await execFileAsync('hyprctl', ['dispatch', 'setprop', 'title:^(screen-buddy-bubbles)$', 'alphainactive', '1', 'lock'])
+      await execFileAsync('hyprctl', ['dispatch', 'setprop', 'title:^(screen-buddy-bubbles)$', 'alphafullscreen', '1', 'lock'])
+      await positionBubbleWindow(restoreX, restoreY)
+      console.log('[park] unparked bubbles window (restored alpha 1 + position)')
+    } catch (err) {
+      console.warn('[park] bubbles unpark failed:', err.message)
+    }
+  }
+
+  // If a card arrived while parked, display it now
+  if (lastCardState && lastCardState.hasContent && bubbleWindow && !bubbleWindow.isDestroyed()) {
+    if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
+      bubbleMapped = false
+      bubbleSkipLogged = false
+      bubbleWindow.showInactive()
+      waitForBubbleMapped().then(async () => {
+        if (currentBubbleW !== 300 || currentBubbleH !== 120) {
+          await applyBubbleWindowSize(currentBubbleW, currentBubbleH)
+        } else {
+          await positionBubbleWindow()
+        }
+      }).catch((err) => {
+        console.warn('[bubble] deferred card show failed on unpark:', err.message)
+      })
+    }
+  }
+
+  // Post-unpark verification at 300ms
+  setTimeout(async () => {
+    const info = await getOverlayDiagnosticInfo()
+    console.log(`[park] unpark:after reason=${reason} method=alpha+offscreen ${info}`)
+
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE && !isShuttingDown) {
+      try {
+        const { stdout } = await execFileAsync('hyprctl', ['clients', '-j'])
+        const clients = JSON.parse(stdout)
+        if (Array.isArray(clients)) {
+          const overlay = clients.find((c) => c?.title === WINDOW_TITLE && (c?.floating === true || clients.filter((k) => k?.title === WINDOW_TITLE).length === 1))
+            || clients.find((c) => c?.title === WINDOW_TITLE)
+          const expectedX = preParkSavedPos?.x ?? lastKnownCatWinX
+          const expectedY = preParkSavedPos?.y ?? lastKnownCatWinY
+          const posOk = overlay && expectedX !== null && expectedY !== null &&
+            overlay.at?.[0] === expectedX && overlay.at?.[1] === expectedY
+          const isOk = overlay && overlay.mapped === true && overlay.pinned === true && posOk
+
+          if (!isOk) {
+            console.log(`[park] unpark anomaly detected (mapped=${overlay?.mapped} pinned=${overlay?.pinned} at=${JSON.stringify(overlay?.at)} expected=[${expectedX},${expectedY}]); running recovery restore+repin+reraise`)
+            await restoreMascotPositionOnResume('unpark-anomaly')
+            await reRaiseAndPinWindows('unpark-anomaly')
+          }
+        }
+      } catch (err) {
+        if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+          console.warn('[park] unpark verification check error:', err.message)
+        }
+      }
+    }
+  }, 300)
+}
+
 function effectivePauseState() {
   return isPaused || autoPausedForFullscreen
 }
@@ -492,24 +716,10 @@ function broadcastPauseState(source) {
   mainWindow?.webContents.send('tray:pause-state', paused)
   notificationsManager?.setPaused(paused)
 
-  if (autoPausedForFullscreen) {
-    mainWindow?.hide()
-  } else if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-    // Do not take focus away from the game/video that just left fullscreen.
-    mainWindow.showInactive()
-    setTimeout(() => {
-      restoreMascotPositionOnResume('fullscreen-resume:50ms')
-      reRaiseAndPinWindows('fullscreen-resume:50ms')
-    }, 50)
-    setTimeout(() => {
-      restoreMascotPositionOnResume('fullscreen-resume:250ms')
-      reRaiseAndPinWindows('fullscreen-resume:250ms')
-    }, 250)
-  } else if (!paused) {
-    setTimeout(() => {
-      restoreMascotPositionOnResume('unpause:50ms')
-      reRaiseAndPinWindows('unpause:50ms')
-    }, 50)
+  if (paused) {
+    park(autoPausedForFullscreen ? 'fullscreen' : 'manual')
+  } else {
+    unpark('resume')
   }
 
   buildTrayMenu()
@@ -935,6 +1145,9 @@ async function callGemini(userMessage) {
   return { ok: true, text }
 }
 
+let fullscreenReconcileInFlight = false
+let fullscreenReconcilePendingReason = null
+
 function scheduleFullscreenReconcile(reason) {
   if (fullscreenReconcileTimer) clearTimeout(fullscreenReconcileTimer)
   fullscreenReconcileTimer = setTimeout(() => {
@@ -945,15 +1158,28 @@ function scheduleFullscreenReconcile(reason) {
 
 async function reconcileHyprlandFullscreen(reason) {
   if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return
+  if (fullscreenReconcileInFlight) {
+    fullscreenReconcilePendingReason = reason
+    return
+  }
+  fullscreenReconcileInFlight = true
   try {
-    const { stdout } = await execFileAsync('hyprctl', ['activewindow', '-j'])
-    const activeWindow = JSON.parse(stdout)
-    const isOverlay = activeWindow?.title === WINDOW_TITLE || activeWindow?.title === 'screen-buddy-bubbles' || activeWindow?.title === 'screen-buddy-settings'
-    const fullscreen = !isOverlay && Number(activeWindow?.fullscreen || 0) > 0
-    console.log(`[main] Hyprland fullscreen check (${reason}): title=${JSON.stringify(activeWindow?.title || '')} fullscreen=${activeWindow?.fullscreen ?? 0} autoPause=${fullscreen}`)
+    const { stdout } = await execFileAsync('hyprctl', ['activeworkspace', '-j'])
+    const ws = JSON.parse(stdout)
+    const hasFullscreen = Boolean(ws?.hasfullscreen)
+    const fullscreenMode = Number(ws?.fullscreenmode || 0)
+    const fullscreen = hasFullscreen || fullscreenMode > 0
+    console.log(`[park] fullscreen check (${reason}): workspace hasfullscreen=${hasFullscreen} mode=${fullscreenMode} autoPause=${fullscreen}`)
     setFullscreenAutoPause(fullscreen, `Hyprland ${reason}`)
   } catch (err) {
-    console.warn(`[main] Hyprland fullscreen check failed (${reason}):`, err.message)
+    console.warn(`[park] Hyprland fullscreen check failed (${reason}):`, err.message)
+  } finally {
+    fullscreenReconcileInFlight = false
+    if (fullscreenReconcilePendingReason) {
+      const nextReason = fullscreenReconcilePendingReason
+      fullscreenReconcilePendingReason = null
+      scheduleFullscreenReconcile(nextReason)
+    }
   }
 }
 
@@ -975,14 +1201,31 @@ function startHyprlandFullscreenMonitor() {
     })
     hyprlandEventSocket.on('data', (chunk) => {
       for (const line of chunk.split('\n')) {
-        const event = line.split('>>', 1)[0]
-        if (event === 'fullscreen' || event === 'activewindow' || event === 'activewindowv2' || event === 'openwindow' || event === 'closewindow') {
-          scheduleFullscreenReconcile(`event:${event}`);
-          if (event === 'activewindow' || event === 'activewindowv2') {
-            reRaiseAndPinWindows(`event:${event}`);
-            positionBubbleWindow();
+        const parts = line.split('>>')
+        const event = parts[0]
+        const data = parts.slice(1).join('>>')
+        if (!event) continue
+
+        // Ignore active window events for our own windows to avoid park/unpark loops
+        if (event === 'activewindow' || event === 'activewindowv2') {
+          const isOwnWindow = data.includes(WINDOW_TITLE) ||
+            data.includes('screen-buddy-overlay') ||
+            data.includes('screen-buddy-bubbles') ||
+            data.includes('screen-buddy-settings')
+          if (isOwnWindow) {
+            console.log(`[park] ignoring own-window activewindow event (${event}: ${data || ''})`)
+            continue
           }
+          scheduleFullscreenReconcile(`event:${event}`)
+          reRaiseAndPinWindows(`event:${event}`)
+          positionBubbleWindow()
+          continue
         }
+
+        if (event === 'fullscreen' || event === 'openwindow' || event === 'closewindow' || event === 'movewindow') {
+          scheduleFullscreenReconcile(`event:${event}`)
+        }
+
         if (event === 'openwindow') {
           setTimeout(() => {
             reRaiseAndPinWindows('openwindow:150ms')
@@ -991,6 +1234,7 @@ function startHyprlandFullscreenMonitor() {
             reRaiseAndPinWindows('openwindow:700ms')
           }, 700)
         } else if (event === 'workspace' || event === 'workspacev2') {
+          scheduleFullscreenReconcile(`event:${event}`)
           reRaiseAndPinWindows(`event:${event}`)
           positionBubbleWindow()
         }
@@ -1413,6 +1657,9 @@ async function applyBubbleWindowSize(w, h) {
  */
 
 function openSettingsWindow() {
+  if (isParked) {
+    unpark('settings-open')
+  }
   if (settingsWindow) {
     settingsWindow.focus()
     return
@@ -1453,6 +1700,9 @@ function openSettingsWindow() {
   settingsWindow.on('closed', () => {
     settingsWindow = null
     reRaiseAndPinWindows('settings closed')
+    if (isParked) {
+      unpark('settings-closed')
+    }
   })
 }
 
@@ -2538,9 +2788,9 @@ function registerIpcHandlers() {
   }
 
   ipcMain.on('window:persist-position', (event, x, y) => {
-    if (effectivePauseState() || !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
+    if (isParked || effectivePauseState() || !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) {
       if (process.env.SCREEN_BUDDY_DEBUG === '1') {
-        console.log(`[catwin] persist-position ignored (paused=${effectivePauseState()} visible=${mainWindow?.isVisible?.()})`)
+        console.log(`[catwin] persist-position ignored (parked=${isParked} paused=${effectivePauseState()} visible=${mainWindow?.isVisible?.()})`)
       }
       return
     }
@@ -2607,8 +2857,10 @@ function registerIpcHandlers() {
 
     if (bubbleWindow && !bubbleWindow.isDestroyed()) {
       if (hasContent) {
-        // Ensure window is visible when there is card content
-        if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
+        // Ensure window is visible when there is card content, unless currently parked/paused
+        if (effectivePauseState() || isParked) {
+          console.log('[bubble] card content active while paused/parked — deferring display until unpark')
+        } else if (!bubbleWindow.isVisible() && bubbleWindowReady && !notificationsManager?.activeNotification) {
           if (currentWindowMode !== 'drag' && !mascotRepositionInProgress) {
             bubbleMapped = false;
             bubbleSkipLogged = false;
