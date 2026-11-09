@@ -253,6 +253,7 @@ const DEFAULT_SETTINGS = {
   chatCatAnimations: true,
   chatMultiLanguage: false,
   chatAutoHide: true,
+  chatInputTimeoutSec: 60,
   chatWindowStyle: 'bubble',
   chatWindowTransparency: 85,
   chatBlurBackground: true,
@@ -744,6 +745,16 @@ function validateSettingsUpdate(patch) {
           sanitized.chatWindowTransparency = Math.round(num)
         } else {
           debugLog('chatWindowTransparency', 'must be a number between 40 and 100')
+        }
+        break
+      }
+
+      case 'chatInputTimeoutSec': {
+        const num = Number(value)
+        if (Number.isFinite(num)) {
+          sanitized.chatInputTimeoutSec = Math.min(180, Math.max(15, Math.round(num)))
+        } else {
+          debugLog('chatInputTimeoutSec', 'must be a number between 15 and 180')
         }
         break
       }

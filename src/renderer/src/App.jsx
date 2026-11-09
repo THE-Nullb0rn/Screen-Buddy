@@ -663,6 +663,10 @@ export default function App() {
           replyDismissTimerRef.current = null
         }
       } else if (type === 'chat:reply-resume') {
+        if (chatInputTimerRef.current) {
+          clearTimeout(chatInputTimerRef.current)
+          chatInputTimerRef.current = null
+        }
         startReplyDismissTimer(replyDismissDurationRef.current)
       }
     })
@@ -826,11 +830,14 @@ export default function App() {
     }
     if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
     if (settingsRef.current?.chatAutoHide === false) return
-    const timeoutMs = hasUnsentTextRef.current ? 45000 : 15000
+    const rawTimeout = Number(settingsRef.current?.chatInputTimeoutSec)
+    const baseSec = !isNaN(rawTimeout) ? Math.min(180, Math.max(15, rawTimeout)) : 60
+    const timeoutSec = hasUnsentTextRef.current ? baseSec * 2 : baseSec
+    const timeoutMs = timeoutSec * 1000
     chatInputTimerRef.current = setTimeout(() => {
-      setChatState('idle')
+      handleChatDismiss()
     }, timeoutMs)
-  }, [])
+  }, [handleChatDismiss])
 
   const replyDismissTimerRef = useRef(null)
   const replyDismissDurationRef = useRef(12000)
@@ -858,6 +865,7 @@ export default function App() {
       startReplyDismissTimer(duration)
       return () => {
         if (replyDismissTimerRef.current) clearTimeout(replyDismissTimerRef.current)
+        if (chatInputTimerRef.current) clearTimeout(chatInputTimerRef.current)
       }
     } else if (chatState !== 'waiting') {
       if (chatWaitingTimerRef.current) {

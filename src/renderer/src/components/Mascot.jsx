@@ -4667,10 +4667,10 @@ export default function Mascot({
           className="mascot-head-hitbox"
           style={{
             position: 'absolute',
-            top: '48.9%',
-            left: '33.3%',
-            width: '54%',
-            height: '30%',
+            top: '45.4%',
+            left: '27.3%',
+            width: '66%',
+            height: '37%',
             zIndex: 10,
           }}
           onPointerEnter={handleHeadPointerEnter}

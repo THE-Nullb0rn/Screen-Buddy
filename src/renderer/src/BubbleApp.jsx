@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Droplet, Eye, Footprints, Timer, Briefcase, Utensils, Music, AlertCircle, Bell, Clock, Sparkles } from 'lucide-react'
+import { Droplet, Eye, Footprints, Timer, Briefcase, Utensils, Music, AlertCircle, Bell, Clock, Sparkles, Copy, Check } from 'lucide-react'
 import NotificationBubble from './components/NotificationBubble'
 import ChatMarkdown from './components/ChatMarkdown'
 import './components/NotificationBubble.css'
@@ -104,13 +104,24 @@ export default function BubbleApp() {
 
   
   const [inputText, setInputText] = useState('')
+  const [followUpText, setFollowUpText] = useState('')
+  const [isFollowUpFocused, setIsFollowUpFocused] = useState(false)
   const [copyStatus, setCopyStatus] = useState(null)
   const copyStatusTimerRef = useRef(null)
   const chatInputRef = useRef(null)
+  const followUpInputRef = useRef(null)
   const lastActivityReportRef = useRef(0)
 
   const adjustTextareaHeight = useCallback(() => {
     const el = chatInputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const borderOffset = el.offsetHeight - el.clientHeight
+    el.style.height = `${el.scrollHeight + borderOffset}px`
+  }, [])
+
+  const adjustFollowUpHeight = useCallback(() => {
+    const el = followUpInputRef.current
     if (!el) return
     el.style.height = 'auto'
     const borderOffset = el.offsetHeight - el.clientHeight
@@ -151,6 +162,46 @@ export default function BubbleApp() {
     }
   }, [])
 
+  useEffect(() => {
+    if (cardState?.chatState === 'reply') {
+      const isError = Boolean(cardState?.chatReply && (!cardState.chatReply.ok || cardState.chatReply.error))
+      if (!isError) {
+        const timer = setTimeout(() => {
+          if (followUpInputRef.current) {
+            followUpInputRef.current.focus()
+            adjustFollowUpHeight()
+          }
+          window.api.bubble.action('chat:ready')
+          window.api.bubble.action('chat:reply-pause')
+          handleChatActivity(false, true)
+        }, 50)
+        return () => clearTimeout(timer)
+      }
+    } else {
+      setFollowUpText('')
+      setIsFollowUpFocused(false)
+    }
+  }, [cardState?.chatState, cardState?.chatReply, adjustFollowUpHeight, handleChatActivity])
+
+  useEffect(() => {
+    if (cardState?.chatState === 'reply') {
+      adjustFollowUpHeight()
+    }
+  }, [followUpText, cardState?.chatState, adjustFollowUpHeight])
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (cardState?.chatState === 'input' || cardState?.chatState === 'reply') {
+          e.preventDefault()
+          handleChatDismiss()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [cardState?.chatState, handleChatDismiss])
+
   const handleRetry = useCallback(() => {
     window.api.bubble.action('chat:retry')
   }, [])
@@ -160,8 +211,11 @@ export default function BubbleApp() {
   }, [])
 
   const handleReplyMouseLeave = useCallback(() => {
+    if (isFollowUpFocused || Boolean(followUpText.trim())) {
+      return
+    }
     window.api.bubble.action('chat:reply-resume')
-  }, [])
+  }, [isFollowUpFocused, followUpText])
 
   const handleCopy = useCallback(async (text) => {
     let success = false
@@ -567,10 +621,19 @@ export default function BubbleApp() {
                     e.stopPropagation()
                     handleCopy(replyText)
                   }}
-                  title="Copy text"
-                  aria-label="Copy text"
+                  title={copyStatus === 'copied' ? 'Copied' : 'Copy reply'}
+                  aria-label={copyStatus === 'copied' ? 'Copied' : 'Copy reply'}
                 >
-                  {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : 'Copy'}
+                  {copyStatus === 'copied' ? (
+                    <>
+                      <Check size={12} style={{ marginRight: '3px' }} />
+                      <span>Copied</span>
+                    </>
+                  ) : copyStatus === 'failed' ? (
+                    'Copy failed'
+                  ) : (
+                    <Copy size={13} />
+                  )}
                 </button>
               )}
               <button
@@ -610,6 +673,53 @@ export default function BubbleApp() {
                 >
                   ↻ Retry
                 </button>
+              )}
+              {!isError && !chatExiting && (
+                <div
+                  className="mascot-chat-followup-wrap"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleChatActivity(Boolean(followUpText.trim()), true)
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <textarea
+                    ref={followUpInputRef}
+                    className="mascot-chat-followup-input"
+                    rows={1}
+                    placeholder="Ask a follow-up..."
+                    value={followUpText}
+                    onChange={(e) => {
+                      setFollowUpText(e.target.value)
+                      handleChatActivity(Boolean(e.target.value.trim()), true)
+                    }}
+                    onKeyDown={(e) => {
+                      handleChatActivity(Boolean(followUpText.trim()), true)
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        const trimmed = followUpText.trim()
+                        if (trimmed) {
+                          handleChatSend(trimmed)
+                          setFollowUpText('')
+                        }
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        handleChatDismiss()
+                      }
+                    }}
+                    onFocus={() => {
+                      setIsFollowUpFocused(true)
+                      window.api.bubble.action('chat:reply-pause')
+                      handleChatActivity(Boolean(followUpText.trim()), true)
+                    }}
+                    onBlur={() => {
+                      setIsFollowUpFocused(false)
+                      if (!followUpText.trim()) {
+                        window.api.bubble.action('chat:reply-resume')
+                      }
+                    }}
+                  />
+                </div>
               )}
             </div>
           </div>

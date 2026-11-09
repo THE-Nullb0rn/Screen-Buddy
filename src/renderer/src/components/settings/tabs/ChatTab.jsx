@@ -414,6 +414,22 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
           />
         </Row>
         <Row
+          icon={Clock}
+          label="Chat input auto-close"
+          hint="Seconds before idle chat input closes (15-180s)"
+        >
+          <Slider
+            value={settings.chatInputTimeoutSec ?? 60}
+            min={15}
+            max={180}
+            step={5}
+            unit="s"
+            onChange={(e) => saveSettingsPatch({ chatInputTimeoutSec: Number(e.target.value) })}
+            disabled={settings.chatAutoHide === false}
+            ariaLabel="Chat input auto-close"
+          />
+        </Row>
+        <Row
           icon={Layers}
           label="Window style"
           hint="Visual style of the chat interface"

@@ -612,14 +612,19 @@
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--sb-bubble-border);
   border-radius: 6px;
-  padding: 2px 8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
   font-size: 0.72rem;
   font-family: inherit;
   color: var(--sb-bubble-muted);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
   flex-shrink: 0;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .mascot-chat-copy-btn:hover {
@@ -660,6 +665,51 @@
 .mascot-chat-retry-btn:hover {
   background: rgba(239, 123, 143, 0.22);
   transform: scale(1.02);
+}
+
+/* ── Follow-Up Input in Reply Bubble ─────────────────────────────── */
+.mascot-chat-followup-wrap {
+  margin-top: 8px;
+  width: 100%;
+  display: flex;
+}
+
+.mascot-chat-followup-input {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--sb-bubble-text);
+  font-family: var(--font-ui, "Inter Variable", system-ui, sans-serif);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  outline: none;
+  resize: none;
+  min-height: 32px;
+  max-height: 80px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  display: block;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.mascot-chat-followup-input::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.mascot-chat-followup-input::placeholder {
+  color: var(--sb-bubble-muted);
+}
+
+.mascot-chat-followup-input:focus {
+  border-color: rgba(246, 185, 59, 0.6);
+  box-shadow: 0 0 0 1px rgba(246, 185, 59, 0.4);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 /* ── Chat Markdown Styles ────────────────────────────────────────── */
