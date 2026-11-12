@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import defaultManifest from '../assets/cat-sprite/manifest.json'
 import defaultSheetSrc from '../assets/cat-sprite/spritesheet.png'
 import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
@@ -14,6 +14,21 @@ for (const [path, loader] of Object.entries(stripModules)) {
   stripLoaders[name] = loader
 }
 
+const hpStripModules = import.meta.glob('../assets/cat-sprite/anims/headphones/*.png', { query: '?url', import: 'default' })
+const hpStripLoaders = {}
+for (const [path, loader] of Object.entries(hpStripModules)) {
+  const name = path.split('/').pop().replace(/\.png$/, '')
+  hpStripLoaders[name] = loader
+}
+
+// Log fallback animations (no headphone strip) once at startup in dev
+if (typeof window !== 'undefined' && animsManifest?.animations) {
+  const normalKeys = Object.keys(animsManifest.animations)
+  const hpKeys = new Set(Object.keys(animsManifest.headphones || {}))
+  const fallbackIds = normalKeys.filter((k) => !hpKeys.has(k)).sort()
+  console.log('[headphones] Fallback animations (no headphone strip):', fallbackIds.join(', '))
+}
+
 // ── LRU strip image cache (pinned core anims never evicted, inactive unpinned evicted) ──
 const stripCache = new Map() // url -> Image
 const stripUrlCache = new Map() // animName -> Promise<string>
@@ -21,6 +36,7 @@ const pinnedUrls = new Set()
 const activeUrls = new Set()
 
 export const CORE_ANIMATIONS = ['idle', 'walk', 'purr', 'drag', 'fall', 'sleep', 'wakeup', 'standidle', 'standup', 'sitdown']
+export const CORE_HEADPHONE_ANIMATIONS = ['idle', 'idle-old', 'walk', 'run', 'purr', 'drag', 'standidle', 'standup', 'sitdown', 'typing', 'typingfast']
 
 let preloadedOnce = false
 export function preloadCommonAnimations() {
@@ -28,7 +44,21 @@ export function preloadCommonAnimations() {
   preloadedOnce = true
   CORE_ANIMATIONS.forEach((name) => {
     try {
-      loadStripUrl(name)
+      loadStripUrl(name, false)
+        .then((url) => {
+          if (url) {
+            pinnedUrls.add(url)
+            loadStripImage(url).catch(() => {})
+          }
+        })
+        .catch(() => {})
+    } catch (_) {
+      // ignore
+    }
+  })
+  CORE_HEADPHONE_ANIMATIONS.forEach((name) => {
+    try {
+      loadStripUrl(name, true)
         .then((url) => {
           if (url) {
             pinnedUrls.add(url)
@@ -47,12 +77,14 @@ export function preloadCommonAnimations() {
   }
 }
 
-export function loadStripUrl(animName) {
-  if (stripUrlCache.has(animName)) return stripUrlCache.get(animName)
-  const loader = stripLoaders[animName]
+export function loadStripUrl(animName, useHeadphones = false) {
+  const isHp = Boolean(useHeadphones && animsManifest.headphones?.[animName])
+  const cacheKey = isHp ? `hp:${animName}` : animName
+  if (stripUrlCache.has(cacheKey)) return stripUrlCache.get(cacheKey)
+  const loader = isHp ? hpStripLoaders[animName] : stripLoaders[animName]
   if (!loader) return Promise.resolve(null)
   const p = loader().then((mod) => (typeof mod === 'string' ? mod : mod?.default || mod))
-  stripUrlCache.set(animName, p)
+  stripUrlCache.set(cacheKey, p)
   return p
 }
 
@@ -157,16 +189,12 @@ export const DISPLAY_OFFSET_X = {
 export const drawTracer = []
 const MAX_TRACER_SIZE = 40
 
-export function resolveAnimation(name, isListening = false) {
-  if (!name) return { type: 'strip', name: 'idle', config: animsManifest.animations?.idle }
+export function resolveAnimation(name, isListening = false, useHeadphones = false) {
+  if (!name) return { type: 'strip', name: 'idle', isHeadphones: false, config: animsManifest.animations?.idle }
 
   let animName = name
   if (animName === 'crouch' || animName === 'pounce') {
     animName = 'crouchpounce'
-  }
-
-  if (animName === 'idle-old' && !isListening) {
-    return { type: 'sheet', name: 'idle-old' }
   }
 
   if (isListening) {
@@ -180,10 +208,24 @@ export function resolveAnimation(name, isListening = false) {
     return { type: 'sheet', name: 'idle' }
   }
 
+  // Headphone strip lookup with clean fallback
+  if (useHeadphones && animsManifest.headphones?.[animName]) {
+    return {
+      type: 'strip',
+      name: animName,
+      isHeadphones: true,
+      config: animsManifest.headphones[animName],
+    }
+  }
+
+  if (animName === 'idle-old') {
+    return { type: 'sheet', name: 'idle-old' }
+  }
+
   // Non-listening cat: check per-animation strip
   const strip = animsManifest.animations?.[animName]
   if (strip) {
-    return { type: 'strip', name: animName, config: strip }
+    return { type: 'strip', name: animName, isHeadphones: false, config: strip }
   }
 
   // Fall back to old sheet
@@ -194,13 +236,13 @@ export function resolveAnimation(name, isListening = false) {
     return { type: 'sheet', name: animName }
   }
 
-  return { type: 'strip', name: 'idle', config: animsManifest.animations?.idle }
+  return { type: 'strip', name: 'idle', isHeadphones: false, config: animsManifest.animations?.idle }
 }
 
 export function getAssetKey(resolved, isListening = false, customSheet = null) {
   if (!resolved) return 'strip:idle'
   if (resolved.type === 'strip') {
-    return `strip:${resolved.name}`
+    return resolved.isHeadphones ? `strip:hp:${resolved.name}` : `strip:${resolved.name}`
   }
   const sheetName = isListening ? 'listening' : (customSheet ? 'custom' : (resolved.name || 'default'))
   return `sheet:${sheetName}`
@@ -216,6 +258,7 @@ export function useSpriteAnimation({
   stripConfig = null,
   loop: propLoop,
   onAnimationEnd,
+  onBoundary,
   speed = 'normal',
   fpsCap = 60,
   idlePaused = false,
@@ -251,6 +294,7 @@ export function useSpriteAnimation({
   const isAnimSwitch = currentKeyRef.current !== switchKey
   const activeFrameIndex = isAnimSwitch ? 0 : frameIndex
   const onEndRef = useRef(onAnimationEnd)
+  const onBoundaryRef = useRef(onBoundary)
   const frameIndexRef = useRef(0)
   const speedFactorRef = useRef(1)
   const fpsCapRef = useRef(fpsCap)
@@ -262,6 +306,7 @@ export function useSpriteAnimation({
   })
 
   onEndRef.current = onAnimationEnd
+  onBoundaryRef.current = onBoundary
   speedFactorRef.current = typeof speed === 'number' ? speed : (SPEED_FACTORS[speed] || 1)
   fpsCapRef.current = fpsCap
 
@@ -367,6 +412,7 @@ export function useSpriteAnimation({
               idleBlinkStateRef.current.doubleBlinkPending = Math.random() < 0.2
             }
           }
+          onBoundaryRef.current?.('loop')
         } else {
           // Mode "once": hold the last frame and notify end
           idx = tf - 1
@@ -375,6 +421,7 @@ export function useSpriteAnimation({
             setFrameIndex(idx)
           }
           onEndRef.current?.(currentAnimationRef.current)
+          onBoundaryRef.current?.('end')
           return
         }
       } else {
@@ -640,6 +687,8 @@ export default function SpriteAnimator({
   animation = 'idle',
   flipped = false,
   loop,
+  useHeadphones = false,
+  isDebug = false,
   manifest = defaultManifest,
   spritesheet,
   scale: propScale,
@@ -667,21 +716,57 @@ export default function SpriteAnimator({
     (typeof spritesheet === 'string' && spritesheet.includes('listening'))
   )
 
-  const targetResolved = resolveAnimation(animation, isListeningMode)
+  const desiredHeadphones = Boolean(useHeadphones)
+  const desiredHeadphonesRef = useRef(desiredHeadphones)
+  desiredHeadphonesRef.current = desiredHeadphones
+
+  const [activeHeadphones, setActiveHeadphones] = useState(desiredHeadphones)
+  const activeHeadphonesRef = useRef(activeHeadphones)
+  activeHeadphonesRef.current = activeHeadphones
+
+  // On animation change, immediately adopt desiredHeadphones so the new animation resolves with it
+  const prevAnimRef = useRef(animation)
+  let effectiveHeadphones = activeHeadphones
+  if (prevAnimRef.current !== animation) {
+    prevAnimRef.current = animation
+    effectiveHeadphones = desiredHeadphones
+    if (activeHeadphones !== desiredHeadphones) {
+      activeHeadphonesRef.current = desiredHeadphones
+      setActiveHeadphones(desiredHeadphones)
+    }
+  }
+
+  const handleBoundary = useCallback(() => {
+    if (activeHeadphonesRef.current !== desiredHeadphonesRef.current) {
+      activeHeadphonesRef.current = desiredHeadphonesRef.current
+      setActiveHeadphones(desiredHeadphonesRef.current)
+    }
+  }, [])
+
+  const handleAnimationEnd = useCallback((anim) => {
+    if (activeHeadphonesRef.current !== desiredHeadphonesRef.current) {
+      activeHeadphonesRef.current = desiredHeadphonesRef.current
+      setActiveHeadphones(desiredHeadphonesRef.current)
+    }
+    onAnimationEnd?.(anim)
+  }, [onAnimationEnd])
+
+  const targetResolved = resolveAnimation(animation, isListeningMode, effectiveHeadphones)
   const targetAssetKey = getAssetKey(targetResolved, isListeningMode, spritesheet)
 
   // Image references for seamless switching (no blank flash)
   const currentImgRef = useRef(null)
   const [activeAsset, setActiveAsset] = useState(() => {
-    const initialResolved = resolveAnimation(animation, isListeningMode)
+    const initialResolved = resolveAnimation(animation, isListeningMode, effectiveHeadphones)
     const initialIsStrip = initialResolved.type === 'strip'
     const initialKey = getAssetKey(initialResolved, isListeningMode, spritesheet)
     return {
       animName: initialResolved.name,
       isStrip: initialIsStrip,
       stripConfig: initialIsStrip ? initialResolved.config : null,
+      isHeadphones: Boolean(initialResolved.isHeadphones),
       image: null,
-      imageKey: initialResolved.name,
+      imageKey: initialKey,
       assetKey: initialKey,
     }
   })
@@ -689,15 +774,16 @@ export default function SpriteAnimator({
   // Load strip or old sheet
   useEffect(() => {
     let cancelled = false
-    const targetResolvedAnim = resolveAnimation(animation, isListeningMode)
+    const targetResolvedAnim = resolveAnimation(animation, isListeningMode, effectiveHeadphones)
     const targetIsStrip = targetResolvedAnim.type === 'strip'
     const targetName = targetResolvedAnim.name
     const targetConfig = targetIsStrip ? targetResolvedAnim.config : null
+    const targetIsHp = Boolean(targetResolvedAnim.isHeadphones)
     const targetKey = getAssetKey(targetResolvedAnim, isListeningMode, spritesheet)
     let registeredUrl = null
 
     if (targetIsStrip) {
-      loadStripUrl(targetName).then((url) => {
+      loadStripUrl(targetName, targetIsHp).then((url) => {
         if (cancelled || !url) return
         registeredUrl = url
         activeUrls.add(url)
@@ -708,8 +794,9 @@ export default function SpriteAnimator({
             animName: targetName,
             isStrip: true,
             stripConfig: targetConfig,
+            isHeadphones: targetIsHp,
             image: img,
-            imageKey: targetName,
+            imageKey: targetKey,
             assetKey: targetKey,
           })
         })
@@ -723,6 +810,7 @@ export default function SpriteAnimator({
           animName: targetName,
           isStrip: false,
           stripConfig: null,
+          isHeadphones: false,
           image: img,
           imageKey: sheetSrc,
           assetKey: targetKey,
@@ -739,7 +827,27 @@ export default function SpriteAnimator({
       cancelled = true
       if (registeredUrl) activeUrls.delete(registeredUrl)
     }
-  }, [animation, isListeningMode, spritesheet])
+  }, [animation, isListeningMode, spritesheet, effectiveHeadphones])
+
+  const lastLoggedRef = useRef({ anim: null, variant: null })
+  useEffect(() => {
+    const isDebugMode = Boolean(isDebug || (typeof window !== 'undefined' && window.__sbLife))
+    if (!isDebugMode) return
+    const currentAnim = activeAsset.animName
+    const currentVariant = activeAsset.isHeadphones ? 'hp' : 'normal'
+    if (lastLoggedRef.current.anim !== currentAnim || lastLoggedRef.current.variant !== currentVariant) {
+      lastLoggedRef.current = { anim: currentAnim, variant: currentVariant }
+      let reason = 'not_requested'
+      if (activeAsset.isHeadphones) {
+        reason = effectiveHeadphones ? 'active' : 'fallback'
+      } else if (isListeningMode) {
+        reason = 'listening_sheet'
+      } else if (effectiveHeadphones && !animsManifest.headphones?.[currentAnim]) {
+        reason = 'no_hp_strip'
+      }
+      console.log(`[headphones] anim=${currentAnim} variant=${currentVariant} reason=${reason}`)
+    }
+  }, [activeAsset.animName, activeAsset.isHeadphones, isDebug, isListeningMode, effectiveHeadphones])
 
   let eyeDx = 0
   let eyeDy = 0
@@ -770,7 +878,8 @@ export default function SpriteAnimator({
     manifest: isListeningMode ? listeningManifest : manifest,
     stripConfig: activeAsset.isStrip ? activeAsset.stripConfig : null,
     loop,
-    onAnimationEnd,
+    onAnimationEnd: handleAnimationEnd,
+    onBoundary: handleBoundary,
     speed: effectiveSpeed,
     fpsCap,
     idlePaused,
@@ -859,7 +968,7 @@ export default function SpriteAnimator({
 
     const shiftedCanvas = (eyeTracking && (eyeDx !== 0 || eyeDy !== 0) && (activeAsset.animName === 'idle' || activeAsset.animName === 'idle-old'))
       ? getEyeShiftedCanvas(
-          activeAsset.isStrip ? activeAsset.animName : (spritesheet || defaultSheetSrc),
+          activeAsset.isStrip ? (activeAsset.isHeadphones ? `hp:${activeAsset.animName}` : activeAsset.animName) : (spritesheet || defaultSheetSrc),
           img,
           cellWidth,
           cellHeight,

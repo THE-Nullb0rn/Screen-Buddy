@@ -281,5 +281,223 @@
       "cellWidth": 210,
       "cellHeight": 300
     }
+  },
+  "headphones": {
+    "crouchpounce": {
+      "name": "crouchpounce",
+      "frames": 8,
+      "fps": 8,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "curious": {
+      "name": "curious",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "drag": {
+      "name": "drag",
+      "frames": 8,
+      "fps": 8,
+      "mode": "loop",
+      "anchor": "top",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "drink": {
+      "name": "drink",
+      "frames": 8,
+      "fps": 3,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "eat": {
+      "name": "eat",
+      "frames": 8,
+      "fps": 3,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "gift": {
+      "name": "gift",
+      "frames": 6,
+      "fps": 4,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "groom": {
+      "name": "groom",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "idle": {
+      "name": "idle",
+      "frames": 6,
+      "fps": 2.5,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "jump": {
+      "name": "jump",
+      "frames": 8,
+      "fps": 10,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "lookaround": {
+      "name": "lookaround",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "idle-old": {
+      "name": "idle-old",
+      "frames": 2,
+      "fps": 2,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "purr": {
+      "name": "purr",
+      "frames": 8,
+      "fps": 4,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "run": {
+      "name": "run",
+      "frames": 8,
+      "fps": 14,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "sad": {
+      "name": "sad",
+      "frames": 8,
+      "fps": 3,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "standidle": {
+      "name": "standidle",
+      "frames": 6,
+      "fps": 3,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "standup": {
+      "name": "standup",
+      "frames": 6,
+      "fps": 6,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "stretch": {
+      "name": "stretch",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "tailflick": {
+      "name": "tailflick",
+      "frames": 6,
+      "fps": 6,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "talk": {
+      "name": "talk",
+      "frames": 6,
+      "fps": 8,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "typing": {
+      "name": "typing",
+      "frames": 6,
+      "fps": 8,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "typingfast": {
+      "name": "typingfast",
+      "frames": 9,
+      "fps": 12,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "walk": {
+      "name": "walk",
+      "frames": 8,
+      "fps": 12,
+      "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "yawn": {
+      "name": "yawn",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "sitdown": {
+      "name": "sitdown",
+      "frames": 6,
+      "fps": 6,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    }
   }
 }

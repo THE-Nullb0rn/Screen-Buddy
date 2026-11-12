@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import './Mascot.css'
 import SpriteAnimator, { SPEED_FACTORS } from './SpriteAnimator'
-import listeningManifest from '../assets/cat-sprite/listening-manifest.json'
-import listeningSheetSrc from '../assets/cat-sprite/cat_listening_spritesheet.png'
 import animsManifest from '../assets/cat-sprite/anims/anims.json'
 import { useMood, moodModifiers, MOOD_EMOJIS } from '../hooks/useMood'
 // Replace this file to change the meow.
@@ -227,9 +225,6 @@ function defaultPosition() {
   }
 }
 
-// Animations that have a listening-spritesheet equivalent
-const LISTENING_ANIMATIONS = ['idle', 'idle-old', 'walk', 'talk', 'eat', 'drink', 'pet', 'typing', 'typingfast', 'play']
-
 const DRAG_BUTTON_MAP = {
   left: 0,
   middle: 1,
@@ -332,6 +327,11 @@ export default function Mascot({
 
   const [debugIdlePauseOverride, setDebugIdlePauseOverride] = useState(null)
   const rawIdlePaused = debugIdlePauseOverride !== null ? debugIdlePauseOverride : Boolean(pauseAnimationIdle && isSystemIdle)
+
+  const [headphonesOverride, setHeadphonesOverride] = useState(null)
+  const headphonesOverrideRef = useRef(null)
+  headphonesOverrideRef.current = headphonesOverride
+  const effectiveHeadphones = headphonesOverride !== null ? headphonesOverride : Boolean(mediaPlaying)
   
 
   const [cursorOffset, setCursorOffset] = useState(null)
@@ -1335,8 +1335,8 @@ export default function Mascot({
       if (isDebugRef.current) console.log(`[life] chain ${chainId} abort not seated idle (pose=${poseRef.current}, posture=${postureRef.current})`)
       return false
     }
-    if (mediaPlayingRef.current) {
-      if (isDebugRef.current) console.log(`[life] chain ${chainId} abort listening (headphones)`)
+    if (mediaPlayingRef.current && (chainId === 'nap_elsewhere' || chainId === 'sleep')) {
+      if (isDebugRef.current) console.log(`[life] chain ${chainId} abort sleep chain blocked during music`)
       return false
     }
     if (isReminder || notificationVisible || chatState !== 'idle') {
@@ -2196,9 +2196,6 @@ export default function Mascot({
 
     if (mediaPlaying) {
       lastInteractRef.current = Date.now()
-      if (isChainActiveRef.current) {
-        cancelActiveLifeChainRef.current?.('music')
-      }
       if (poseRef.current === 'sleep' || pose === 'sleep' || wakingUpRef.current) {
         suppressWakeStretchRef.current = true
         wakeTo('idle', () => {
@@ -2804,7 +2801,6 @@ export default function Mascot({
       else if (oneShotPoseRef.current) blockReason = `oneShot is ${oneShotPoseRef.current}`
       else if (walkTweenRef.current) blockReason = 'walking/roaming'
       else if (draggingRef.current || dragPointerDownRef.current) blockReason = 'dragging'
-      else if (mediaPlayingRef.current) blockReason = 'media playing'
       else if (roamBlockedRef.current) blockReason = 'roam blocked'
 
       if (blockReason) {
@@ -4060,7 +4056,7 @@ export default function Mascot({
               !isChainActiveRef.current &&
               !draggingRef.current &&
               !oneShotPoseRef.current &&
-              !mediaPlayingRef.current
+              !(mediaPlayingRef.current && (id === 'nap_elsewhere' || id === 'sleep'))
             if (ready) {
               clearInterval(pollInterval)
               const started = startLifeChainRef.current?.(id, true)
@@ -4260,6 +4256,24 @@ export default function Mascot({
 
         perfIntervalRef.current = setInterval(report, 10000)
         return true
+      },
+      headphones: (val) => {
+        if (val === undefined) {
+          const currentVal = headphonesOverrideRef.current ?? 'auto'
+          console.log(`[headphones] override: current=${currentVal}`)
+          return currentVal
+        }
+        if (val === 'auto') {
+          headphonesOverrideRef.current = null
+          setHeadphonesOverride(null)
+          console.log('[headphones] override: auto (following mediaPlaying)')
+          return 'auto'
+        }
+        const b = Boolean(val)
+        headphonesOverrideRef.current = b
+        setHeadphonesOverride(b)
+        console.log(`[headphones] override: ${b}`)
+        return b
       },
     }
 
@@ -4539,9 +4553,6 @@ export default function Mascot({
     }
   }
 
-  // Determine whether to use the listening spritesheet
-  const useListening = mediaPlaying && !isReminder && !dragging && !pomodoroCelebrating && LISTENING_ANIMATIONS.includes(animationName)
-
   // Only flip the stack order if dragging (full-screen window), as mascot window
   // has a fixed 162px of empty space above the sprite that bubbles must stack into.
   const isNearTop = targetY < 120 && dragging
@@ -4686,10 +4697,10 @@ export default function Mascot({
             animation={animationName}
             flipped={flipped}
             loop={isBigTreatment || (!ONE_SHOT_ANIMATIONS.has(animationName) && animsManifest?.animations?.[animationName]?.mode !== 'once')}
+            useHeadphones={effectiveHeadphones}
+            isDebug={isDebug}
             onAnimationEnd={handleAnimationEnd}
             onShown={handleSpriteShown}
-            manifest={useListening ? listeningManifest : undefined}
-            spritesheet={useListening ? listeningSheetSrc : undefined}
             catAnimationSpeed={displayPose.startsWith('walk') || displayPose.startsWith('run') ? walkSpeedRate : catAnimationSpeed}
             eyeTracking={isEyeTrackingEligible}
             cursorOffset={cursorOffset}
