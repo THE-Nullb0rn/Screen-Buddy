@@ -364,6 +364,15 @@
       "cellWidth": 210,
       "cellHeight": 300
     },
+    "knockoff": {
+      "name": "knockoff",
+      "frames": 6,
+      "fps": 4,
+      "mode": "once",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
     "lookaround": {
       "name": "lookaround",
       "frames": 8,
@@ -450,6 +459,15 @@
       "frames": 6,
       "fps": 8,
       "mode": "loop",
+      "anchor": "ground",
+      "cellWidth": 210,
+      "cellHeight": 300
+    },
+    "toyplay": {
+      "name": "toyplay",
+      "frames": 8,
+      "fps": 5,
+      "mode": "once",
       "anchor": "ground",
       "cellWidth": 210,
       "cellHeight": 300

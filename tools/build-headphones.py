@@ -192,13 +192,143 @@ def cleanup_sparkles(arr, mask, anim_id):
     return arr, mask, removed_blobs
 
 
-def recolour_teal_to_purple(arr, sorted_cats, lbl):
+def clean_old_idle(arr, mask):
+    """
+    Cleans old_idle.png (white background):
+    (a) Inpaints enclosed near-white blob (min(r,g,b) >= 225) on the headband inside cat head area.
+    (b) Removes light fringe along cat contour: pixels with min(r,g,b) >= 200 and low saturation (< 0.12)
+        within 3 px of transparent background, iterated up to 3 times.
+    """
+    h_img, w_img, _ = arr.shape
+    r, g, b = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
+    min_rgb = np.minimum(np.minimum(r, g), b)
+
+    # Detect cats to find head region
+    lbl_cat, num_cat = label(mask)
+    sizes_cat = np.bincount(lbl_cat.ravel())
+    cat_lbls = [i for i in range(1, num_cat + 1) if sizes_cat[i] > 25000]
+
+    head_mask = np.zeros((h_img, w_img), dtype=bool)
+    y_coords = np.arange(h_img)[:, None]
+    for cl in cat_lbls:
+        ys, _ = np.where(lbl_cat == cl)
+        top = int(ys.min())
+        h = int(ys.max() - ys.min() + 1)
+        head_bottom = top + int(0.55 * h)
+        head_mask |= (lbl_cat == cl) & (y_coords <= head_bottom)
+
+    # Inpaint white headband blob
+    is_white_blob = mask & head_mask & (min_rgb >= 225)
+    lbl_w, num_w = label(is_white_blob)
+    sizes_w = np.bincount(lbl_w.ravel())
+    white_blob_mask = np.zeros_like(mask)
+    cleaned_blobs = []
+
+    for i in range(1, num_w + 1):
+        if sizes_w[i] >= 200:
+            ys, xs = np.where(lbl_w == i)
+            box_w, box_h = int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
+            white_blob_mask |= (lbl_w == i)
+            cleaned_blobs.append({
+                "type": "headband_white_blob",
+                "bbox": [int(xs.min()), int(ys.min()), box_w, box_h],
+                "size": int(sizes_w[i])
+            })
+
+    if np.any(white_blob_mask):
+        valid_cat = mask & (~white_blob_mask) & (min_rgb < 200)
+        _, indices = distance_transform_edt(~valid_cat, return_indices=True)
+        wy_idx, wx_idx = np.where(white_blob_mask)
+        for c in range(3):
+            arr[wy_idx, wx_idx, c] = arr[indices[0][wy_idx, wx_idx], indices[1][wy_idx, wx_idx], c]
+
+    # Fringe removal: up to 3 iterations
+    cur_mask = mask.copy()
+    fringe_info = []
+    for it in range(3):
+        dist = distance_transform_edt(cur_mask)
+        r_c, g_c, b_c = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
+        min_c = np.minimum(np.minimum(r_c, g_c), b_c)
+        val_c = np.maximum(np.maximum(r_c, g_c), b_c).astype(float)
+        sat_c = (val_c - min_c) / (val_c + 1e-5)
+
+        is_fringe = cur_mask & (min_c >= 200) & (sat_c < 0.12) & (dist <= 3)
+        fringe_count = np.count_nonzero(is_fringe)
+        if fringe_count == 0:
+            break
+        ys, xs = np.where(is_fringe)
+        fringe_info.append({
+            "iteration": it + 1,
+            "count": int(fringe_count),
+            "bbox": [int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)]
+        })
+        cur_mask[is_fringe] = False
+
+    return arr, cur_mask, cleaned_blobs, fringe_info
+
+
+def get_reference_purple(eat_path):
+    """
+    Measures reference purple earcup median HSV from eat.png in the cat head area:
+    head_region & hue in [250, 320] & sat >= 0.25 & val >= 0.35.
+    """
+    im = Image.open(eat_path).convert("RGBA")
+    arr = np.array(im)
+    mask = remove_background(arr, anim_name="eat")
+    lbl, num = label(mask)
+    sizes = np.bincount(lbl.ravel())
+    cat_blobs = [i for i in range(1, num + 1) if sizes[i] > 25000]
+
+    h_img, w_img, _ = arr.shape
+    head_mask = np.zeros((h_img, w_img), dtype=bool)
+    y_coords = np.arange(h_img)[:, None]
+    for b_lbl in cat_blobs:
+        ys, _ = np.where(lbl == b_lbl)
+        top = int(ys.min())
+        h = int(ys.max() - ys.min() + 1)
+        head_bottom = top + int(0.55 * h)
+        head_mask |= (lbl == b_lbl) & (y_coords <= head_bottom)
+
+    r = arr[:, :, 0].astype(float) / 255.0
+    g = arr[:, :, 1].astype(float) / 255.0
+    b = arr[:, :, 2].astype(float) / 255.0
+    maxc = np.maximum(np.maximum(r, g), b)
+    minc = np.minimum(np.minimum(r, g), b)
+    diff = maxc - minc
+    nz_diff = diff > 1e-5
+
+    hue = np.zeros_like(maxc)
+    r_is_max = (r == maxc) & nz_diff
+    g_is_max = (g == maxc) & nz_diff
+    b_is_max = (b == maxc) & nz_diff
+    hue[r_is_max] = ((g[r_is_max] - b[r_is_max]) / diff[r_is_max]) % 6.0
+    hue[g_is_max] = ((b[g_is_max] - r[g_is_max]) / diff[g_is_max]) + 2.0
+    hue[b_is_max] = ((r[b_is_max] - g[b_is_max]) / diff[b_is_max]) + 4.0
+    hue = (hue * 60.0) % 360.0
+
+    sat = np.zeros_like(maxc)
+    nz = maxc > 1e-5
+    sat[nz] = diff[nz] / maxc[nz]
+    val = maxc
+
+    purp_in_head = head_mask & (hue >= 250) & (hue <= 320) & (sat >= 0.25) & (val >= 0.35)
+    ref_h = float(np.median(hue[purp_in_head]))
+    ref_s = float(np.median(sat[purp_in_head]))
+    ref_v = float(np.median(val[purp_in_head]))
+    return ref_h, ref_s, ref_v
+
+
+def recolour_teal_to_purple(arr, sorted_cats, lbl, ref_hsv):
     """
     Measures earcup colours in the head region of each cat blob.
     Maps teal/blue-grey earcup pixels (hue 165-205 deg, sat >= 0.25, val >= 0.35)
-    to reference purple from eat.png (hue ~300 deg), preserving Saturation and Value / lightness.
+    to reference purple median HSV from eat.png:
+      hue = ref_median_hue
+      saturation = np.clip(original_sat, ref_median_sat * 0.85, ref_median_sat * 1.10)
+      value = np.clip(original_val * (ref_median_val / cur_median_val), 0.0, 1.0)
     Restricted to cat head area (y <= top + 0.55 * h) of cat blobs (never props/water bowls).
     """
+    ref_h, ref_s, ref_v = ref_hsv
     h_img, w_img, _ = arr.shape
     rgb = arr[:, :, :3].astype(float) / 255.0
     r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
@@ -237,16 +367,38 @@ def recolour_teal_to_purple(arr, sorted_cats, lbl):
     teal_ys, teal_xs = np.where(teal_in_head)
     recoloured_count = len(teal_ys)
 
-    h_target = 300.0 / 360.0  # reference purple from eat.png earcups
+    if recoloured_count == 0:
+        return arr, 0, None
+
+    cur_med_v = float(np.median(val[teal_in_head]))
+    val_scale = ref_v / cur_med_v if cur_med_v > 1e-5 else 1.0
+
+    s_min = ref_s * 0.85
+    s_max = ref_s * 1.10
+    h_target = ref_h / 360.0
+
+    new_hues = []
+    new_sats = []
+    new_vals = []
+
     for y, x in zip(teal_ys, teal_xs):
-        s_val = sat[y, x]
-        v_val = val[y, x]
+        s_val = float(np.clip(sat[y, x], s_min, s_max))
+        v_val = float(np.clip(val[y, x] * val_scale, 0.0, 1.0))
         r_new, g_new, b_new = colorsys.hsv_to_rgb(h_target, s_val, v_val)
         arr[y, x, 0] = int(round(r_new * 255))
         arr[y, x, 1] = int(round(g_new * 255))
         arr[y, x, 2] = int(round(b_new * 255))
+        new_hues.append(ref_h)
+        new_sats.append(s_val)
+        new_vals.append(v_val)
 
-    return arr, recoloured_count
+    recoloured_median_hsv = [
+        float(np.median(new_hues)),
+        float(np.median(new_sats)),
+        float(np.median(new_vals))
+    ]
+
+    return arr, recoloured_count, recoloured_median_hsv
 
 
 def main():
@@ -306,6 +458,11 @@ def main():
     installed = []
     not_installed = []
 
+    # Measure reference purple earcup HSV from eat.png
+    eat_source_path = os.path.join(SRC_DIR, "eat.png")
+    ref_hsv = get_reference_purple(eat_source_path)
+    print(f"Measured reference purple from eat.png: Hue={ref_hsv[0]:.2f} deg, Sat={ref_hsv[1]:.4f}, Val={ref_hsv[2]:.4f}")
+
     for fname, anim_id, img_path in files_to_process:
         expected_frames = 2 if anim_id == "idle-old" else anims_manifest["animations"][anim_id]["frames"]
 
@@ -324,7 +481,13 @@ def main():
             border_lbls = border_lbls[border_lbls > 0]
             bg_mask = np.isin(lbl, border_lbls)
             mask = ~bg_mask
-            removed_sparkles = []
+            arr, mask, old_idle_blobs, old_idle_fringes = clean_old_idle(arr, mask)
+            removed_sparkles = old_idle_blobs + old_idle_fringes
+            print(f"old_idle cleanup: removed {len(old_idle_blobs)} headband blob(s), {len(old_idle_fringes)} fringe iteration(s)")
+            for b in old_idle_blobs:
+                print(f"  Headband blob: bbox={b['bbox']}, size={b['size']} px")
+            for f in old_idle_fringes:
+                print(f"  Fringe iter {f['iteration']}: count={f['count']} px, bbox={f['bbox']}")
         else:
             anim_key = anim_id
             if anim_key == "strech":
@@ -406,7 +569,11 @@ def main():
         row_top_ys = [min(c["top"] for c in r) for r in rows]
 
         # Step 4: Recolour teal earcups to purple in head area of cat blobs
-        arr, recoloured_count = recolour_teal_to_purple(arr, sorted_cats, lbl)
+        arr, recoloured_count, recoloured_median_hsv = recolour_teal_to_purple(arr, sorted_cats, lbl, ref_hsv)
+        if recoloured_count > 0:
+            print(f"{anim_id}: recoloured {recoloured_count} teal earcup pixels to purple (median HSV: H={recoloured_median_hsv[0]:.2f}, S={recoloured_median_hsv[1]:.4f}, V={recoloured_median_hsv[2]:.4f})")
+        else:
+            print(f"{anim_id}: 0 teal earcup pixels recoloured")
 
         # Merge props per row
         full_frame_masks = {idx: (lbl == c["lbl"]) for idx, c in enumerate(sorted_cats)}
@@ -435,77 +602,124 @@ def main():
         cat_heights = [c["h"] for c in sorted_cats]
         hp_med_h = float(np.median(cat_heights))
         orig_med_h, orig_med_bottom, orig_med_cx = get_orig_metrics(anim_id, expected_frames)
-        scale = orig_med_h / hp_med_h
+        computed_scale = orig_med_h / hp_med_h
 
         anchor_type = "top" if anim_id == "drag" else ("center" if anim_id == "fall" else "ground")
         target_ground_y = 291.0 if anchor_type == "ground" else orig_med_bottom
 
-        # Check clipping
-        clipped = False
-        overflows = []
-        frame_placement_info = []
+        def test_placement_with_scale(s):
+            overflow_list = []
+            info_list = []
+            for idx, c in enumerate(sorted_cats):
+                f_mask = full_frame_masks[idx]
+                f_ys, f_xs = np.where(f_mask)
+                min_y, max_y = int(f_ys.min()), int(f_ys.max())
+                min_x, max_x = int(f_xs.min()), int(f_xs.max())
 
-        for idx, c in enumerate(sorted_cats):
-            f_mask = full_frame_masks[idx]
-            f_ys, f_xs = np.where(f_mask)
-            min_y, max_y = int(f_ys.min()), int(f_ys.max())
-            min_x, max_x = int(f_xs.min()), int(f_xs.max())
+                scaled_w = max(1, int(round((max_x - min_x + 1) * s)))
+                scaled_h = max(1, int(round((max_y - min_y + 1) * s)))
 
-            scaled_w = max(1, int(round((max_x - min_x + 1) * scale)))
-            scaled_h = max(1, int(round((max_y - min_y + 1) * scale)))
+                body_rel_cx = (c["bbox_cx"] - min_x) * s
+                target_x = 105.0 - body_rel_cx
+                dest_x0 = int(round(target_x))
+                dest_x1 = dest_x0 + scaled_w - 1
 
-            body_rel_cx = (c["bbox_cx"] - min_x) * scale
-            target_x = 105.0 - body_rel_cx
-            dest_x0 = int(round(target_x))
-            dest_x1 = dest_x0 + scaled_w - 1
+                r_idx = cat_to_row_idx[idx]
+                if anchor_type == "top":
+                    row_top = row_top_ys[r_idx]
+                    target_y = 8.0 + (min_y - row_top) * s
+                elif anchor_type == "center":
+                    row_cy = (row_top_ys[r_idx] + row_ground_ys[r_idx]) / 2.0
+                    target_y = 150.0 + (min_y - row_cy) * s
+                else:
+                    row_ground = row_ground_ys[r_idx]
+                    target_y = target_ground_y + (min_y - row_ground) * s
 
-            r_idx = cat_to_row_idx[idx]
-            if anchor_type == "top":
-                row_top = row_top_ys[r_idx]
-                target_y = 8.0 + (min_y - row_top) * scale
-            elif anchor_type == "center":
-                row_cy = (row_top_ys[r_idx] + row_ground_ys[r_idx]) / 2.0
-                target_y = 150.0 + (min_y - row_cy) * scale
-            else:
-                row_ground = row_ground_ys[r_idx]
-                target_y = target_ground_y + (min_y - row_ground) * scale
+                dest_y0 = int(round(target_y))
+                dest_y1 = dest_y0 + scaled_h - 1
 
-            dest_y0 = int(round(target_y))
-            dest_y1 = dest_y0 + scaled_h - 1
+                # Fallback (a): Horizontal shift within cell if scaled_w <= 208
+                shift_x = 0
+                if scaled_w <= 208:
+                    if dest_x0 < 1:
+                        shift_x = 1 - dest_x0
+                    elif dest_x1 > 208:
+                        shift_x = 208 - dest_x1
 
-            if dest_x0 < 1 or dest_x1 > 208 or dest_y0 < 1 or dest_y1 > 298:
-                clipped = True
-                overflow_details = {
+                dest_x0_s = dest_x0 + shift_x
+                dest_x1_s = dest_x1 + shift_x
+
+                if dest_x0_s < 1 or dest_x1_s > 208 or dest_y0 < 1 or dest_y1 > 298:
+                    overflow_list.append({
+                        "frame": idx,
+                        "bbox": [dest_x0_s, dest_y0, scaled_w, scaled_h],
+                        "overflow_left": max(0, 1 - dest_x0_s),
+                        "overflow_right": max(0, dest_x1_s - 208),
+                        "overflow_top": max(0, 1 - dest_y0),
+                        "overflow_bottom": max(0, dest_y1 - 298)
+                    })
+
+                info_list.append({
                     "frame": idx,
-                    "bbox": [dest_x0, dest_y0, scaled_w, scaled_h],
-                    "overflow_left": max(0, 1 - dest_x0),
-                    "overflow_right": max(0, dest_x1 - 208),
-                    "overflow_top": max(0, 1 - dest_y0),
-                    "overflow_bottom": max(0, dest_y1 - 298)
-                }
-                overflows.append(overflow_details)
+                    "min_x": min_x, "max_x": max_x,
+                    "min_y": min_y, "max_y": max_y,
+                    "dest_x0": dest_x0_s, "dest_y0": dest_y0,
+                    "scaled_w": scaled_w, "scaled_h": scaled_h,
+                    "shift_x": shift_x,
+                    "mask": f_mask[min_y:max_y+1, min_x:max_x+1]
+                })
 
-            frame_placement_info.append({
-                "min_x": min_x, "max_x": max_x,
-                "min_y": min_y, "max_y": max_y,
-                "dest_x0": dest_x0, "dest_y0": dest_y0,
-                "scaled_w": scaled_w, "scaled_h": scaled_h,
-                "mask": f_mask[min_y:max_y+1, min_x:max_x+1]
-            })
+            return overflow_list, info_list
 
-        if clipped:
+        overflows, frame_placement_info = test_placement_with_scale(computed_scale)
+        scale = computed_scale
+        scale_reduction_applied = False
+
+        if len(overflows) > 0:
+            # Fallback (b): reduce uniform scale by minimum needed, capped at computed_scale * 0.97
+            min_allowed_scale = computed_scale * 0.97
+            # Search for highest scale in [min_allowed_scale, computed_scale]
+            best_s = None
+            best_info = None
+            for cand_s in np.linspace(computed_scale, min_allowed_scale, 301):
+                c_overflows, c_info = test_placement_with_scale(cand_s)
+                if len(c_overflows) == 0:
+                    best_s = cand_s
+                    best_info = c_info
+                    break
+
+            if best_s is not None:
+                scale = best_s
+                frame_placement_info = best_info
+                overflows = []
+                scale_reduction_applied = True
+                print(f"{anim_id}: Fallback (b) scale reduction: {computed_scale:.4f} -> {scale:.4f} ({(1.0 - scale/computed_scale)*100:.2f}% reduction)")
+
+        shifts_applied = [
+            {"frame": f["frame"], "shift_x": f["shift_x"]}
+            for f in frame_placement_info if f["shift_x"] != 0
+        ]
+        if shifts_applied:
+            print(f"{anim_id}: Fallback (a) shifts applied: {shifts_applied}")
+
+        if len(overflows) > 0:
             not_installed.append({
                 "file": fname,
                 "anim_id": anim_id,
                 "expected": expected_frames,
                 "detected": len(cat_blobs),
                 "scale": scale,
+                "computed_scale": computed_scale,
                 "baseline_y": target_ground_y,
                 "reason": f"Clipping overflow ({len(overflows)} frame(s) overflow 210x300 cell)",
                 "cat_blobs": cat_blobs,
                 "clipping_overflows": overflows,
                 "removed_sparkles": removed_sparkles,
-                "recoloured_pixels": recoloured_count
+                "recoloured_pixels": recoloured_count,
+                "recoloured_median_hsv": recoloured_median_hsv,
+                "reference_median_hsv": list(ref_hsv),
+                "shifts_applied": shifts_applied,
+                "scale_reduction_applied": scale_reduction_applied
             })
             continue
 
@@ -583,10 +797,15 @@ def main():
             "expected": expected_frames,
             "detected": len(cat_blobs),
             "scale": scale,
+            "computed_scale": computed_scale,
             "baseline_y": target_ground_y,
             "status": "INSTALLED",
             "removed_sparkles": removed_sparkles,
             "recoloured_pixels": recoloured_count,
+            "recoloured_median_hsv": recoloured_median_hsv,
+            "reference_median_hsv": list(ref_hsv),
+            "shifts_applied": shifts_applied,
+            "scale_reduction_applied": scale_reduction_applied,
             "last_frame_props_count": last_frame_prop_count
         })
 
