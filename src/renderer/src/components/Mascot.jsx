@@ -748,6 +748,8 @@ export default function Mascot({
     chaseFlippedRef.current = null
     isChasingRef.current = false
   }, [])
+  const cancelIdleAndOneShotRef = useRef(cancelIdleAndOneShot)
+  cancelIdleAndOneShotRef.current = cancelIdleAndOneShot
 
   // ── Helper: play a one-shot animation (yawn, pounce, wakeup, crouchpounce, etc.) ──
   const playOneShot = useCallback((animName, onComplete) => {
@@ -4274,6 +4276,27 @@ export default function Mascot({
         setHeadphonesOverride(b)
         console.log(`[headphones] override: ${b}`)
         return b
+      },
+      anim: (name) => {
+        if (!animsManifest?.animations?.[name]) {
+          console.warn(`[life] anim: unknown animation '${name}'`)
+          return false
+        }
+        console.log(`[life] anim ${name} start`)
+        cancelActiveLifeChainRef.current?.('debug_anim')
+        cancelIdleAndOneShotRef.current?.()
+        if (poseRef.current === 'typing' || poseRef.current === 'typingfast' || postureRef.current !== 'sit' || poseRef.current === 'sleep') {
+          poseRef.current = 'idle'
+          setPose('idle')
+          postureRef.current = 'sit'
+        }
+        playOnceAnimationRef.current?.(null, name, () => {
+          poseRef.current = 'idle'
+          setPose('idle')
+          postureRef.current = 'sit'
+          console.log(`[life] anim ${name} end`)
+        })
+        return true
       },
     }
 
