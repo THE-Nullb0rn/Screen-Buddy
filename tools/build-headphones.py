@@ -15,7 +15,7 @@ import argparse
 import colorsys
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy.ndimage import label, distance_transform_edt
+from scipy.ndimage import label, distance_transform_edt, binary_opening, binary_dilation
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC_DIR = "/home/itachi_06/Projects/Cat/NewFramesHeadphones"
@@ -43,7 +43,7 @@ FILE_TO_ANIM = {
     "jump.png": "jump",
     "knockoff.png": "knockoff",
     "lookaround.png": "lookaround",
-    "old_idle.png": "idle-old",
+    "old_idle_final.png": "idle-old",
     "proud.png": "proud",
     "purr.png": "purr",
     "run.png": "run",
@@ -192,79 +192,6 @@ def cleanup_sparkles(arr, mask, anim_id):
     return arr, mask, removed_blobs
 
 
-def clean_old_idle(arr, mask):
-    """
-    Cleans old_idle.png (white background):
-    (a) Inpaints enclosed near-white blob (min(r,g,b) >= 225) on the headband inside cat head area.
-    (b) Removes light fringe along cat contour: pixels with min(r,g,b) >= 200 and low saturation (< 0.12)
-        within 3 px of transparent background, iterated up to 3 times.
-    """
-    h_img, w_img, _ = arr.shape
-    r, g, b = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
-    min_rgb = np.minimum(np.minimum(r, g), b)
-
-    # Detect cats to find head region
-    lbl_cat, num_cat = label(mask)
-    sizes_cat = np.bincount(lbl_cat.ravel())
-    cat_lbls = [i for i in range(1, num_cat + 1) if sizes_cat[i] > 25000]
-
-    head_mask = np.zeros((h_img, w_img), dtype=bool)
-    y_coords = np.arange(h_img)[:, None]
-    for cl in cat_lbls:
-        ys, _ = np.where(lbl_cat == cl)
-        top = int(ys.min())
-        h = int(ys.max() - ys.min() + 1)
-        head_bottom = top + int(0.55 * h)
-        head_mask |= (lbl_cat == cl) & (y_coords <= head_bottom)
-
-    # Inpaint white headband blob
-    is_white_blob = mask & head_mask & (min_rgb >= 225)
-    lbl_w, num_w = label(is_white_blob)
-    sizes_w = np.bincount(lbl_w.ravel())
-    white_blob_mask = np.zeros_like(mask)
-    cleaned_blobs = []
-
-    for i in range(1, num_w + 1):
-        if sizes_w[i] >= 200:
-            ys, xs = np.where(lbl_w == i)
-            box_w, box_h = int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
-            white_blob_mask |= (lbl_w == i)
-            cleaned_blobs.append({
-                "type": "headband_white_blob",
-                "bbox": [int(xs.min()), int(ys.min()), box_w, box_h],
-                "size": int(sizes_w[i])
-            })
-
-    if np.any(white_blob_mask):
-        valid_cat = mask & (~white_blob_mask) & (min_rgb < 200)
-        _, indices = distance_transform_edt(~valid_cat, return_indices=True)
-        wy_idx, wx_idx = np.where(white_blob_mask)
-        for c in range(3):
-            arr[wy_idx, wx_idx, c] = arr[indices[0][wy_idx, wx_idx], indices[1][wy_idx, wx_idx], c]
-
-    # Fringe removal: up to 3 iterations
-    cur_mask = mask.copy()
-    fringe_info = []
-    for it in range(3):
-        dist = distance_transform_edt(cur_mask)
-        r_c, g_c, b_c = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
-        min_c = np.minimum(np.minimum(r_c, g_c), b_c)
-        val_c = np.maximum(np.maximum(r_c, g_c), b_c).astype(float)
-        sat_c = (val_c - min_c) / (val_c + 1e-5)
-
-        is_fringe = cur_mask & (min_c >= 200) & (sat_c < 0.12) & (dist <= 3)
-        fringe_count = np.count_nonzero(is_fringe)
-        if fringe_count == 0:
-            break
-        ys, xs = np.where(is_fringe)
-        fringe_info.append({
-            "iteration": it + 1,
-            "count": int(fringe_count),
-            "bbox": [int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)]
-        })
-        cur_mask[is_fringe] = False
-
-    return arr, cur_mask, cleaned_blobs, fringe_info
 
 
 def get_reference_purple(eat_path):
@@ -422,9 +349,12 @@ def main():
     if args.remake:
         src_dir = os.path.join(SRC_DIR, "remake")
         is_partial = True
-        all_remake_files = sorted([f for f in os.listdir(src_dir) if f.endswith("_1.png")])
+        all_remake_files = sorted([f for f in os.listdir(src_dir) if f.endswith("_1.png") or f == "old_idle_final.png"])
         for fname in all_remake_files:
-            aid = fname.replace("_1.png", "")
+            if fname == "old_idle_final.png":
+                aid = "idle-old"
+            else:
+                aid = fname.replace("_1.png", "")
             if target_ids and aid not in target_ids:
                 continue
             files_to_process.append((fname, aid, os.path.join(src_dir, fname)))
@@ -441,13 +371,18 @@ def main():
             files_to_process.append((fname, aid, os.path.join(src_dir, fname)))
     else:
         # Full build: all 26 animations
-        # For REMAKE_IDS, remake/*_1.png overrides main folder
+        # For REMAKE_IDS, remake/*_1.png overrides main folder; idle-old uses remake/old_idle_final.png
         is_partial = bool(args.ids)
         remake_dir = os.path.join(SRC_DIR, "remake")
         for fname, aid in sorted(FILE_TO_ANIM.items()):
             if target_ids and aid not in target_ids:
                 continue
-            if aid in REMAKE_IDS:
+            if aid == "idle-old":
+                rpath = os.path.join(remake_dir, "old_idle_final.png")
+                if os.path.exists(rpath):
+                    files_to_process.append(("old_idle_final.png", aid, rpath))
+                    continue
+            elif aid in REMAKE_IDS:
                 rname = f"{aid}_1.png"
                 rpath = os.path.join(remake_dir, rname)
                 if os.path.exists(rpath):
@@ -471,29 +406,16 @@ def main():
         h_img, w_img, _ = arr.shape
 
         # Step 1: Remove background
-        if fname == "old_idle.png":
-            r, g, b = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
-            near_white = (r > 220) & (g > 220) & (b > 220)
-            border_mask = np.zeros(near_white.shape, dtype=bool)
-            border_mask[0, :] = border_mask[-1, :] = border_mask[:, 0] = border_mask[:, -1] = True
-            lbl, num = label(near_white)
-            border_lbls = np.unique(lbl[border_mask])
-            border_lbls = border_lbls[border_lbls > 0]
-            bg_mask = np.isin(lbl, border_lbls)
-            mask = ~bg_mask
-            arr, mask, old_idle_blobs, old_idle_fringes = clean_old_idle(arr, mask)
-            removed_sparkles = old_idle_blobs + old_idle_fringes
-            print(f"old_idle cleanup: removed {len(old_idle_blobs)} headband blob(s), {len(old_idle_fringes)} fringe iteration(s)")
-            for b in old_idle_blobs:
-                print(f"  Headband blob: bbox={b['bbox']}, size={b['size']} px")
-            for f in old_idle_fringes:
-                print(f"  Fringe iter {f['iteration']}: count={f['count']} px, bbox={f['bbox']}")
-        else:
-            anim_key = anim_id
-            if anim_key == "strech":
-                anim_key = "stretch"
-            mask = remove_background(arr, anim_name=anim_key)
-            arr, mask, removed_sparkles = cleanup_sparkles(arr, mask, anim_id)
+        anim_key = anim_id
+        if anim_key == "strech":
+            anim_key = "stretch"
+        if anim_id == "idle-old":
+            bg_corner = tuple(arr[0, 0][:3])
+            print(f"{anim_id}: detected background colour RGB={bg_corner}")
+        mask = remove_background(arr, anim_name=anim_key)
+        arr, mask, removed_sparkles = cleanup_sparkles(arr, mask, anim_id)
+        if anim_id == "idle-old":
+            print(f"{anim_id}: removed sparkle blobs={len(removed_sparkles)}")
 
         # Step 2: Detect cats & props from cleaned mask
         lbl, num = label(mask)
@@ -511,9 +433,13 @@ def main():
                 })
 
         cat_blobs = [b for b in all_blobs_info if b["is_cat"]]
+        if anim_id == "idle-old":
+            print(f"{anim_id}: number of cat blobs found={len(cat_blobs)} (expected {expected_frames})")
 
         # Step 3: Frame count validation
         if len(cat_blobs) != expected_frames:
+            if anim_id == "idle-old":
+                print(f"{anim_id}: frame count mismatch ({len(cat_blobs)} detected vs {expected_frames} expected) - keeping previous idle-old.png")
             not_installed.append({
                 "file": fname,
                 "anim_id": anim_id,
@@ -598,11 +524,17 @@ def main():
             full_frame_masks[best_idx] |= (lbl == p_lbl)
             cat_props_map[best_idx].append(int(p_lbl))
 
+        if anim_id == "idle-old":
+            for f_i in range(len(sorted_cats)):
+                print(f"{anim_id}: frame {f_i} note blobs count={len(cat_props_map[f_i])}")
+
         # Scale factor
         cat_heights = [c["h"] for c in sorted_cats]
         hp_med_h = float(np.median(cat_heights))
         orig_med_h, orig_med_bottom, orig_med_cx = get_orig_metrics(anim_id, expected_frames)
         computed_scale = orig_med_h / hp_med_h
+        if anim_id == "idle-old":
+            print(f"{anim_id}: scale={computed_scale:.4f}")
 
         anchor_type = "top" if anim_id == "drag" else ("center" if anim_id == "fall" else "ground")
         target_ground_y = 291.0 if anchor_type == "ground" else orig_med_bottom
@@ -702,7 +634,20 @@ def main():
         if shifts_applied:
             print(f"{anim_id}: Fallback (a) shifts applied: {shifts_applied}")
 
+        if anim_id == "idle-old":
+            for p in frame_placement_info:
+                f_idx = p["frame"]
+                x0 = p["dest_x0"]
+                y0 = p["dest_y0"]
+                w_s = p["scaled_w"]
+                h_s = p["scaled_h"]
+                x1 = x0 + w_s - 1
+                y1 = y0 + h_s - 1
+                print(f"{anim_id}: frame {f_idx} destination bbox=[{x0}, {y0}, {w_s}, {h_s}], margins: left={x0}, right={209-x1}, top={y0}, bottom={299-y1}")
+
         if len(overflows) > 0:
+            if anim_id == "idle-old":
+                print(f"{anim_id}: margin validation failed ({len(overflows)} frame(s) overflow) - keeping previous idle-old.png")
             not_installed.append({
                 "file": fname,
                 "anim_id": anim_id,
@@ -739,6 +684,7 @@ def main():
             scaled_arr[scaled_arr[:, :, 3] >= 128, 3] = 255
             scaled_arr[scaled_arr[:, :, 3] == 0] = [0, 0, 0, 0]
 
+
             cell_x0 = idx * 210 + pinfo["dest_x0"]
             cell_y0 = pinfo["dest_y0"]
             sw = pinfo["scaled_w"]
@@ -753,6 +699,83 @@ def main():
             assert not np.any(c_crop[299, :, 3] > 0), f"{anim_id} frame {idx} touches y=299"
             assert not np.any(c_crop[:, 0, 3] > 0), f"{anim_id} frame {idx} touches x=0"
             assert not np.any(c_crop[:, 209, 3] > 0), f"{anim_id} frame {idx} touches x=209"
+
+        if anim_id == "idle-old":
+            # Verification for idle-old (Gemini sheet pipeline)
+            print("Verification for idle-old:")
+            for f_idx in range(expected_frames):
+                frame = strip_canvas[:, f_idx*210:(f_idx+1)*210]
+                alpha = frame[:, :, 3] > 0
+                r_f = frame[:, :, 0].astype(int)
+                g_f = frame[:, :, 1].astype(int)
+                b_f = frame[:, :, 2].astype(int)
+
+                # Count opaque pixels near magenta bg colour (~216,42,216)
+                near_bg = alpha & (np.abs(r_f - 216) < 50) & (g_f < 80) & (np.abs(b_f - 216) < 50)
+                near_bg_count = int(np.count_nonzero(near_bg))
+
+                # Connected components
+                lbl_f, num_f = label(alpha)
+                sizes_f = np.bincount(lbl_f.ravel())
+                cats_f = sum(1 for i in range(1, num_f + 1) if sizes_f[i] > 500)
+                notes_f = sum(1 for i in range(1, num_f + 1) if 5 < sizes_f[i] <= 500)
+
+                # Black/white fringe check: pixels adjacent to transparent with
+                # min(r,g,b) >= 200 or max(r,g,b) <= 8
+                min_rgb_f = np.minimum(np.minimum(r_f, g_f), b_f)
+                max_rgb_f = np.maximum(np.maximum(r_f, g_f), b_f)
+                dist_f = distance_transform_edt(alpha)
+                edge_px = alpha & (dist_f <= 1.5)
+                white_fringe = edge_px & (min_rgb_f >= 200)
+                black_fringe = edge_px & (max_rgb_f <= 8)
+                wf_count = int(np.count_nonzero(white_fringe))
+                bf_count = int(np.count_nonzero(black_fringe))
+
+                print(f"  Frame {f_idx}: near-bg pixels={near_bg_count} (MUST BE 0), "
+                      f"components: {cats_f} cat+{notes_f} notes, "
+                      f"white_fringe={wf_count}, black_fringe={bf_count}")
+
+            # Generate 4x nearest-neighbour zoomed preview on light and dark backgrounds
+            strip_pil = Image.fromarray(strip_canvas)
+            zoom_w, zoom_h = expected_frames * 210 * 4, 300 * 4
+            zoom_strip = strip_pil.resize((zoom_w, zoom_h), resample=Image.Resampling.NEAREST)
+
+            for bg_name, bg_color in [("light", (245, 245, 245, 255)), ("dark", (24, 24, 28, 255))]:
+                zoom_bg = Image.new("RGBA", (zoom_w, zoom_h), bg_color)
+                zoom_bg.alpha_composite(zoom_strip, (0, 0))
+                p = os.path.join(PREVIEW_DIR, f"idle-old_final_{bg_name}.png")
+                zoom_bg.save(p, format="PNG")
+                print(f"idle-old 4x {bg_name} preview saved to: {p}")
+
+            # Generate side-by-side: idle-old frames next to 6 idle frames, 3x nearest, light bg
+            idle_new_path = os.path.join(OUTPUT_DIR, "idle.png")
+            if os.path.exists(idle_new_path):
+                idle_new_im = Image.open(idle_new_path).convert("RGBA")
+                idle_new_frames = min(6, idle_new_im.width // 210)
+                total_cmp_frames = expected_frames + idle_new_frames
+                cmp_w = total_cmp_frames * 210 * 3
+                cmp_h = 300 * 3
+                cmp_bg = Image.new("RGBA", (cmp_w, cmp_h), (245, 245, 245, 255))
+
+                for fi in range(expected_frames):
+                    f_crop = strip_pil.crop((fi * 210, 0, (fi + 1) * 210, 300))
+                    f_zoom = f_crop.resize((210 * 3, 300 * 3), resample=Image.Resampling.NEAREST)
+                    cmp_bg.alpha_composite(f_zoom, (fi * 210 * 3, 0))
+
+                for fi in range(idle_new_frames):
+                    f_crop = idle_new_im.crop((fi * 210, 0, (fi + 1) * 210, 300))
+                    f_zoom = f_crop.resize((210 * 3, 300 * 3), resample=Image.Resampling.NEAREST)
+                    cmp_bg.alpha_composite(f_zoom, ((expected_frames + fi) * 210 * 3, 0))
+
+                draw_cmp = ImageDraw.Draw(cmp_bg)
+                sep_x = expected_frames * 210 * 3
+                draw_cmp.line([(sep_x, 0), (sep_x, cmp_h)], fill=(120, 120, 120, 255), width=2)
+                draw_cmp.text((10, 10), "idle-old", fill=(60, 60, 60, 255))
+                draw_cmp.text((sep_x + 10, 10), "idle (new)", fill=(60, 60, 60, 255))
+
+                cmp_path = os.path.join(PREVIEW_DIR, "idle-old_vs_idle.png")
+                cmp_bg.save(cmp_path, format="PNG")
+                print(f"idle-old vs idle comparison saved to: {cmp_path}")
 
         out_strip_path = os.path.join(OUTPUT_DIR, f"{anim_id}.png")
         out_im = Image.fromarray(strip_canvas)
@@ -816,7 +839,7 @@ def main():
         for f in os.listdir(OUTPUT_DIR):
             if f.endswith(".png"):
                 aid = f.replace(".png", "")
-                if aid not in installed_anim_ids and aid != "sitdown":
+                if aid not in installed_anim_ids and aid != "sitdown" and aid != "idle-old":
                     os.remove(os.path.join(OUTPUT_DIR, f))
                     print(f"Removed uninstalled strip: {f}")
         hp_manifest = {}
