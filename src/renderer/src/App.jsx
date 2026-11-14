@@ -445,11 +445,6 @@ export default function App() {
       triggerReminder(data?.type)
     })
 
-    // TEMP: remove before release
-    const offTestWater = window.api.on('tray:test-water', () => {
-      triggerReminder('water')
-    })
-
     const offTrigger = window.api.on('reminder:trigger', (data) => {
       triggerReminder(data?.type)
     })
@@ -476,7 +471,6 @@ export default function App() {
 
     return () => {
       offTest()
-      offTestWater()
       offTrigger()
       offStartPomodoro()
       offStartStopwatch()

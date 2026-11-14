@@ -131,16 +131,6 @@ export function useHunger({
     return () => clearInterval(tick)
   }, [])
 
-  // Listen for tray test hunger event
-  useEffect(() => {
-    const offTestHunger = window.api?.on?.('tray:test-hunger', () => {
-      setHungerState('ACTIVE')
-    })
-    return () => {
-      offTestHunger?.()
-    }
-  }, [])
-
   // Calculate hungerLevel: 0 (just fed) to 1 (hungry)
   let hungerLevel = 0
   if (hungerEnabled) {

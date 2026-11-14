@@ -168,9 +168,6 @@ contextBridge.exposeInMainWorld('api', {
       'notification:close',
       'chat:dismiss',
       'bubble:card-state',
-      'tray:test-hunger',
-      // TEMP: remove before release
-      'tray:test-water',
       'bubble:action',
       'chat:focus-input',
       'mascot:cursor-offset',
