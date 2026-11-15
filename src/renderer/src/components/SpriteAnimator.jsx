@@ -42,7 +42,7 @@ let preloadedOnce = false
 export function preloadCommonAnimations() {
   if (preloadedOnce) return
   preloadedOnce = true
-  CORE_ANIMATIONS.forEach((name) => {
+  ;['idle', 'walk'].forEach((name) => {
     try {
       loadStripUrl(name, false)
         .then((url) => {
@@ -56,12 +56,17 @@ export function preloadCommonAnimations() {
       // ignore
     }
   })
-  CORE_HEADPHONE_ANIMATIONS.forEach((name) => {
+}
+
+let hpPreloadedOnce = false
+export function preloadHeadphoneAnimations() {
+  if (hpPreloadedOnce) return
+  hpPreloadedOnce = true
+  ;['idle', 'walk'].forEach((name) => {
     try {
       loadStripUrl(name, true)
         .then((url) => {
           if (url) {
-            pinnedUrls.add(url)
             loadStripImage(url).catch(() => {})
           }
         })
@@ -70,11 +75,6 @@ export function preloadCommonAnimations() {
       // ignore
     }
   })
-  try {
-    getOldSheetImage(defaultSheetSrc, () => {})
-  } catch (_) {
-    // ignore
-  }
 }
 
 export function loadStripUrl(animName, useHeadphones = false) {
@@ -483,6 +483,15 @@ export function useSpriteAnimation({
 }
 
 const eyeShiftCache = new Map()
+const MAX_EYE_SHIFT_CACHE = 24
+
+function setEyeShiftCache(key, val) {
+  if (eyeShiftCache.size >= MAX_EYE_SHIFT_CACHE) {
+    const oldestKey = eyeShiftCache.keys().next().value
+    eyeShiftCache.delete(oldestKey)
+  }
+  eyeShiftCache.set(key, val)
+}
 
 function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isStrip = false) {
   if (dx === 0 && dy === 0) return null
@@ -516,7 +525,7 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
     const shiftX = Math.max(-1, Math.min(1, dx))
     const shiftY = Math.max(-1, Math.min(1, dy))
     if (shiftX === 0 && shiftY === 0) {
-      eyeShiftCache.set(cacheKey, null)
+      setEyeShiftCache(cacheKey, null)
       return null
     }
 
@@ -546,7 +555,7 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
 
     // Skip frames with fewer than 6 green pixels (closed eyes)
     if (greens.length < 6) {
-      eyeShiftCache.set(cacheKey, null)
+      setEyeShiftCache(cacheKey, null)
       return null
     }
 
@@ -588,7 +597,7 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
     }
 
     if (pupilPixels.length === 0) {
-      eyeShiftCache.set(cacheKey, null)
+      setEyeShiftCache(cacheKey, null)
       return null
     }
 
@@ -615,7 +624,7 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
     }
 
     ctx.putImageData(imgData, 0, 0)
-    eyeShiftCache.set(cacheKey, offscreen)
+    setEyeShiftCache(cacheKey, offscreen)
     return offscreen
   } else {
     // Old logic for old spritesheet
@@ -651,7 +660,7 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
   }
 
   if (eyePixels.length === 0) {
-    eyeShiftCache.set(cacheKey, null)
+    setEyeShiftCache(cacheKey, null)
     return null
   }
 
@@ -676,7 +685,7 @@ function getEyeShiftedCanvas(imageSrc, img, cellW, cellH, col, row, dx, dy, isSt
   }
 
   ctx.putImageData(imgData, 0, 0)
-  eyeShiftCache.set(cacheKey, offscreen)
+  setEyeShiftCache(cacheKey, offscreen)
   return offscreen
 }
 
@@ -783,6 +792,9 @@ export default function SpriteAnimator({
     let registeredUrl = null
 
     if (targetIsStrip) {
+      if (targetIsHp && !hpPreloadedOnce) {
+        preloadHeadphoneAnimations()
+      }
       loadStripUrl(targetName, targetIsHp).then((url) => {
         if (cancelled || !url) return
         registeredUrl = url
@@ -1051,5 +1063,36 @@ try {
   preloadCommonAnimations()
 } catch (_) {
   // ignore
+}
+
+if (typeof window !== 'undefined') {
+  window.__sbGetSpriteCacheStats = () => {
+    let bytes = 0
+    let count = 0
+    for (const [, img] of stripCache.entries()) {
+      count++
+      const w = img?.naturalWidth || 0
+      const h = img?.naturalHeight || 0
+      bytes += w * h * 4
+    }
+    for (const [, img] of sheetCache.entries()) {
+      count++
+      const w = img?.naturalWidth || 0
+      const h = img?.naturalHeight || 0
+      bytes += w * h * 4
+    }
+    let eyeShiftCanvasBytes = 0
+    for (const [, cvs] of eyeShiftCache.entries()) {
+      if (cvs && cvs.width && cvs.height) {
+        eyeShiftCanvasBytes += cvs.width * cvs.height * 4
+      }
+    }
+    return {
+      imageCount: count,
+      totalBytes: bytes + eyeShiftCanvasBytes,
+      eyeShiftCanvases: eyeShiftCache.size,
+      eyeShiftCanvasBytes,
+    }
+  }
 }
 

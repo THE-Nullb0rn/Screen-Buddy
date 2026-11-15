@@ -12,6 +12,13 @@
 
 'use strict'
 
+function ignoreEpipe(err) {
+  if (err?.code === 'EPIPE') return
+  throw err
+}
+process.stdout.on('error', ignoreEpipe)
+process.stderr.on('error', ignoreEpipe)
+
 const {
   app,
   BrowserWindow,
@@ -60,7 +67,9 @@ if (!gotLock) {
 // Hyprland's Wayland compositor. Safe to set on X11 (ignored gracefully).
 // GlobalShortcutsPortal is needed by Electron 32 for Wayland portal-backed
 // shortcuts. Hyprland's SIGUSR1 bind remains available when the portal declines.
-app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,GlobalShortcutsPortal')
+// Saves two Chromium service processes, ~130 MB RSS, tested on Hyprland/Wayland with click-through, sound and tray working.
+app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,GlobalShortcutsPortal,NetworkServiceInProcess2')
+app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess')
 
 // Platform selector — default: native Wayland.
 // ── XWayland diagnostic test ──────────────────────────────────────────────
@@ -361,7 +370,61 @@ app.whenReady().then(async () => {
   if (!app.isPackaged) {
     startDevCpuLogging()
   }
+
+  // ── Dev-gated memory monitoring ──────────────────────────────────────────
+  setTimeout(() => logAppMetrics('30s-after-ready'), 30000)
+  let memTimerCount = 0
+  const memTimer = setInterval(() => {
+    memTimerCount++
+    logAppMetrics(`${memTimerCount * 2}min`)
+    if (memTimerCount >= 6) {
+      clearInterval(memTimer)
+    }
+  }, 120000)
+  if (memTimer.unref) memTimer.unref()
 })
+
+function logAppMetrics(context = '') {
+  if (process.env.SCREEN_BUDDY_DEBUG !== '1' && !settings?.developerMode) return
+  try {
+    const metrics = app.getAppMetrics()
+    const memUsage = process.memoryUsage()
+    const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    const kbToMb = (kb) => (kb / 1024).toFixed(1) + ' MB'
+
+    let overlayPid = null
+    let bubblesPid = null
+    let settingsPid = null
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      try { overlayPid = mainWindow.webContents.getOSProcessId() } catch (err) { void err }
+    }
+    if (bubbleWindow && !bubbleWindow.isDestroyed() && !bubbleWindow.webContents.isDestroyed()) {
+      try { bubblesPid = bubbleWindow.webContents.getOSProcessId() } catch (err) { void err }
+    }
+    if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+      try { settingsPid = settingsWindow.webContents.getOSProcessId() } catch (err) { void err }
+    }
+
+    const tag = context ? `:${context}` : ''
+    console.log(`[mem${tag}] Main process memory: heapUsed=${toMb(memUsage.heapUsed)}, external=${toMb(memUsage.external)}, arrayBuffers=${toMb(memUsage.arrayBuffers)}, rss=${toMb(memUsage.rss)}`)
+
+    for (const m of metrics) {
+      let role = m.type
+      if (m.type === 'Tab') {
+        if (overlayPid && m.pid === overlayPid) role = 'Renderer:Overlay'
+        else if (bubblesPid && m.pid === bubblesPid) role = 'Renderer:Bubbles'
+        else if (settingsPid && m.pid === settingsPid) role = 'Renderer:Settings'
+        else role = 'Renderer:Tab'
+      }
+      const nameStr = m.name ? ` (${m.name})` : ''
+      const ws = kbToMb(m.memory.workingSetSize)
+      const pb = m.memory.privateBytes ? ` priv=${kbToMb(m.memory.privateBytes)}` : ''
+      console.log(`[mem${tag}]   PID ${m.pid} | ${role}${nameStr} | workingSet=${ws}${pb}`)
+    }
+  } catch (err) {
+    console.warn('[mem] getAppMetrics logging failed:', err.message)
+  }
+}
 
 let devCpuInterval = null
 
@@ -1730,7 +1793,10 @@ function openSettingsWindow() {
     if (isParked) {
       unpark('settings-closed')
     }
+    setTimeout(() => logAppMetrics('settings-closed-10s'), 10000)
   })
+
+  setTimeout(() => logAppMetrics('settings-opened-10s'), 10000)
 }
 
 function createOverlayWindow() {

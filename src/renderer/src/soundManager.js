@@ -84,15 +84,22 @@ export function playSound(clipName, { settings, paused, isAsleep }) {
     if (CAT_VOICE_CLIPS.has(clipName)) {
       currentVoiceAudio = audio
       audio.onended = () => {
+        audio.src = ''
         if (currentVoiceAudio === audio) {
           currentVoiceAudio = null
         }
+      }
+    } else {
+      audio.onended = () => {
+        audio.src = ''
       }
     }
 
     const playPromise = audio.play()
     if (playPromise !== undefined && typeof playPromise.catch === 'function') {
-      playPromise.catch(() => {})
+      playPromise.catch(() => {
+        audio.src = ''
+      })
     }
   } catch (_err) {
     // Never block, never throw, never retry

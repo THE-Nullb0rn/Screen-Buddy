@@ -4298,6 +4298,64 @@ export default function Mascot({
         })
         return true
       },
+      mem: () => {
+        const perfMem = window.performance?.memory
+        const mb = (bytes) => (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+        const result = {
+          performanceMemory: perfMem
+            ? {
+                jsHeapSizeLimit: mb(perfMem.jsHeapSizeLimit),
+                totalJSHeapSize: mb(perfMem.totalJSHeapSize),
+                usedJSHeapSize: mb(perfMem.usedJSHeapSize),
+              }
+            : 'not available',
+          elements: {},
+        }
+
+        const images = Array.from(document.querySelectorAll('img'))
+        const canvases = Array.from(document.querySelectorAll('canvas'))
+        const domAudios = Array.from(document.querySelectorAll('audio'))
+
+        let imgBytes = 0
+        images.forEach((img) => {
+          const w = img.naturalWidth || img.width || 0
+          const h = img.naturalHeight || img.height || 0
+          imgBytes += w * h * 4
+        })
+
+        let canvasBytes = 0
+        canvases.forEach((c) => {
+          canvasBytes += (c.width || 0) * (c.height || 0) * 4
+        })
+
+        let spriteCacheBytes = 0
+        let spriteImgCount = 0
+        let eyeShiftCanvases = 0
+        let eyeShiftBytes = 0
+        if (typeof window !== 'undefined' && window.__sbGetSpriteCacheStats) {
+          const stats = window.__sbGetSpriteCacheStats()
+          spriteCacheBytes = stats.totalBytes || 0
+          spriteImgCount = stats.imageCount || 0
+          eyeShiftCanvases = stats.eyeShiftCanvases || 0
+          eyeShiftBytes = stats.eyeShiftCanvasBytes || 0
+        }
+
+        let audioCount = domAudios.length
+        if (meowAudioRef.current) audioCount++
+
+        const totalDecodedBytes = imgBytes + canvasBytes + spriteCacheBytes
+
+        result.elements = {
+          htmlImages: { count: images.length, approxDecoded: mb(imgBytes) },
+          cachedSpriteImages: { count: spriteImgCount, approxDecoded: mb(spriteCacheBytes - eyeShiftBytes) },
+          canvases: { count: canvases.length + eyeShiftCanvases, approxDecoded: mb(canvasBytes + eyeShiftBytes) },
+          audioElements: { count: audioCount },
+          totalDecodedSize: mb(totalDecodedBytes),
+        }
+
+        console.log('[life] memory report:', result)
+        return result
+      },
     }
 
     return () => {

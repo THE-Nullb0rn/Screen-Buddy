@@ -108,8 +108,11 @@ function spawnPlayerctl() {
 
     // Process complete lines
     const lines = buffer.split('\n')
-    // Keep the last incomplete line in the buffer
+    // Keep the last incomplete line in the buffer (capped to 4KB to prevent unbounded growth)
     buffer = lines.pop() || ''
+    if (buffer.length > 4096) {
+      buffer = ''
+    }
 
     for (const line of lines) {
       const state = parseLine(line)
