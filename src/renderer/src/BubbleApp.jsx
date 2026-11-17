@@ -132,6 +132,8 @@ export default function BubbleApp() {
 
   useEffect(() => {
     if (cardState?.chatState === 'input') {
+      // Preload ChatMarkdown chunk while user is typing so reply renders instantly without layout jump
+      import('./components/ChatMarkdown')
       if (chatInputRef.current) {
         chatInputRef.current.focus()
         adjustTextareaHeight()
