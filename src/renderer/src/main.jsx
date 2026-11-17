@@ -6,7 +6,6 @@
 import React, { Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import './index.css'
-import './styles/theme.css'
 
 const App = React.lazy(() => import('./App'))
 const SettingsApp = React.lazy(() => import('./SettingsApp'))

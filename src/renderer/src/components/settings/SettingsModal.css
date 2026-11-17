@@ -6,6 +6,9 @@
  * - Responsive grid, smooth micro-interactions, custom thin scrollbars
  */
 
+@import '@fontsource/caveat/latin-500.css';
+@import '@fontsource/caveat/latin-700.css';
+
 /* ── Container / Window Shell ────────────────────────────────────────────── */
 .settings-window {
   width: 100vw;

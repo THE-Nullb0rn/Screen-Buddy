@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Droplet, Eye, Footprints, Timer, Briefcase, Utensils, Music, AlertCircle, Bell, Clock, Sparkles, Copy, Check } from 'lucide-react'
 import NotificationBubble from './components/NotificationBubble'
-import ChatMarkdown from './components/ChatMarkdown'
+import './styles/theme.css'
+
+const ChatMarkdown = React.lazy(() => import('./components/ChatMarkdown'))
 import './components/NotificationBubble.css'
 import './components/BubbleCards.css'
 
@@ -660,7 +662,9 @@ export default function BubbleApp() {
                     <span>{errorMessage}</span>
                   </div>
                 ) : (
-                  <ChatMarkdown text={replyText} />
+                  <React.Suspense fallback={<div className="mascot-chat-markdown">{replyText}</div>}>
+                    <ChatMarkdown text={replyText} />
+                  </React.Suspense>
                 )}
               </div>
               {isError && (

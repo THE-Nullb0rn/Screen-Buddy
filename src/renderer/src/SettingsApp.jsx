@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import SettingsModal from './components/settings/SettingsModal'
+import './styles/theme.css'
 
 export default function SettingsApp() {
   const [settings, setSettings] = useState(null)

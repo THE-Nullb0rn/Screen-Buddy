@@ -6,8 +6,6 @@
  */
 
 @import '@fontsource-variable/inter/index.css';
-@import '@fontsource/caveat/latin-500.css';
-@import '@fontsource/caveat/latin-700.css';
 
 :root {
   --bg-app: #14111b;
