@@ -177,6 +177,12 @@ function start(cb) {
   callback = cb
   stopped = false
   lastState = { playing: false, artist: '', title: '' }
+  if (process.platform !== 'linux') {
+    if (typeof callback === 'function') {
+      callback({ ...lastState })
+    }
+    return
+  }
   spawnPlayerctl()
 }
 

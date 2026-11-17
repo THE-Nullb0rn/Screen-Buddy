@@ -2,15 +2,49 @@
 
 A little desktop companion that lives on your screen and nudges you to take care of yourself while you work — drink water, fix your posture, rest your eyes, stretch — without ever getting in your way.
 
-Built native for **Linux / Wayland / Hyprland**. No Windows baggage.
+---
 
-> Status: 🚧 early build — architecture and feature list in progress.
+## Installation
+
+Prebuilt installers and packages are available on the [GitHub Releases](https://github.com/THE-Nullb0rn/Screen-Buddy/releases) page.
+
+### Windows
+1. Download `Screen-Buddy-Setup-<version>.exe`.
+2. Run the installer (per-user install, no administrator privileges required).
+3. **SmartScreen notice**: As the installer is currently unsigned, Windows Defender SmartScreen may display a warning. Click **More info** → **Run anyway**.
+4. The companion will start automatically after installation with desktop and start-menu shortcuts.
+
+### Linux
+
+- **AppImage**:
+  ```bash
+  chmod +x Screen-Buddy-<version>-x86_64.AppImage
+  ./Screen-Buddy-<version>-x86_64.AppImage
+  ```
+  *Note*: Distributions without FUSE2 (like Fedora or recent Ubuntu) may require installing FUSE2 compatibility libraries (e.g. `sudo dnf install fuse-libs` or `sudo apt install libfuse2`), or launching with `--appimage-extract-and-run`.
+
+- **RPM (Fedora / RHEL / openSUSE)**:
+  ```bash
+  sudo dnf install ./Screen-Buddy-<version>-x86_64.rpm
+  ```
+
+- **DEB (Ubuntu / Debian / Mint)**:
+  ```bash
+  sudo apt install ./Screen-Buddy-<version>-amd64.deb
+  ```
+
+---
+
+## Platform Support
+
+- **Linux (Hyprland / Wayland)**: Full experience, including pinned always-on-top overlay, z-order locking, fullscreen detection, follower speech bubbles, playerctl media monitoring, and keyboard/typing detection.
+- **Linux (GNOME / KDE / X11) & Windows**: The companion runs with core features (animated mascot, hydration and health reminders, Gemini AI chat, sound, tray controls). Desktop integration features like compositor-level pin/z-order and typing detection run with a reduced feature set while platform parity is actively in progress.
 
 ---
 
 ## Why
 
-Most "hydration reminder" apps are Windows-only, bloated, or just an annoying popup. screen-buddy is meant to be:
+Most "hydration reminder" apps are bloated or just an annoying popup. screen-buddy is meant to be:
 
 - **Actually yours** — original mascot, not borrowed IP
 - **Native to a tiling WM workflow** — respects Hyprland, doesn't fight your window rules
@@ -30,14 +64,6 @@ Most "hydration reminder" apps are Windows-only, bloated, or just an annoying po
 - 📊 Daily stats & streaks
 
 *(Feature list will get locked in as we build — this is the working draft.)*
-
-## Stack
-
-TBD — targeting something that plays nice with Electron-on-Wayland or a lighter native alternative. Decision pending after evaluating tray/animation behavior on Hyprland.
-
-## Platform
-
-Built and tested on Fedora + Hyprland. Not targeting Windows/macOS.
 
 ## Hyprland Setup
 

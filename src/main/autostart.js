@@ -58,12 +58,17 @@ X-GNOME-Autostart-enabled=true
  * if it does not already exist.
  */
 function setAutostart() {
+  if (process.platform !== 'linux') {
+    return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
+  }
   try {
     fs.mkdirSync(AUTOSTART_DIR, { recursive: true })
     fs.writeFileSync(DESKTOP_FILE, buildDesktopEntry(), 'utf-8')
     console.log('[autostart] .desktop file written to', DESKTOP_FILE)
+    return { success: true, supported: true }
   } catch (err) {
     console.error('[autostart] Failed to write .desktop file:', err)
+    return { success: false, supported: true, error: err.message }
   }
 }
 
@@ -71,13 +76,18 @@ function setAutostart() {
  * Remove the autostart .desktop file if it exists.
  */
 function removeAutostart() {
+  if (process.platform !== 'linux') {
+    return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
+  }
   try {
     if (fs.existsSync(DESKTOP_FILE)) {
       fs.unlinkSync(DESKTOP_FILE)
       console.log('[autostart] .desktop file removed from', DESKTOP_FILE)
     }
+    return { success: true, supported: true }
   } catch (err) {
     console.error('[autostart] Failed to remove .desktop file:', err)
+    return { success: false, supported: true, error: err.message }
   }
 }
 
@@ -87,6 +97,7 @@ function removeAutostart() {
  * @returns {boolean}
  */
 function isAutostartEnabled() {
+  if (process.platform !== 'linux') return false
   return fs.existsSync(DESKTOP_FILE)
 }
 

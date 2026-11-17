@@ -3,4 +3,5 @@ dist-electron
 node_modules
 .DS_Store
 *.local
+release/
 __pycache__/

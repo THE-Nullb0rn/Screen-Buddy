@@ -14,13 +14,22 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 
-// ─── XDG config path ─────────────────────────────────────────────────────────
-// Honour XDG_CONFIG_HOME if set, fall back to ~/.config
-const XDG_CONFIG_HOME =
-  process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+let SETTINGS_DIR
+let SETTINGS_FILE
 
-const SETTINGS_DIR = path.join(XDG_CONFIG_HOME, 'screen-buddy')
-const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
+if (process.platform === 'win32') {
+  const { app } = require('electron')
+  SETTINGS_DIR = app.getPath('userData')
+  SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
+} else {
+  // ─── XDG config path ─────────────────────────────────────────────────────────
+  // Honour XDG_CONFIG_HOME if set, fall back to ~/.config
+  const XDG_CONFIG_HOME =
+    process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+
+  SETTINGS_DIR = path.join(XDG_CONFIG_HOME, 'screen-buddy')
+  SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
+}
 
 const CLICK_ACTIONS = ['none', 'react', 'chat', 'settings', 'pause']
 const DRAG_BUTTONS = ['left', 'right', 'middle']

@@ -35,8 +35,18 @@ const {
 const path = require('path')
 const net = require('net')
 const fs = require('fs')
+const os = require('os')
 const util = require('util')
 const { execFile: execFileCallback, spawn } = require('child_process')
+
+// Ensure app name and userData stay canonical across platforms.
+// On Linux, userData MUST remain ~/.config/screen-buddy regardless of productName.
+app.setName('screen-buddy')
+if (process.platform === 'linux') {
+  const xdgConfigHome =
+    process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+  app.setPath('userData', path.join(xdgConfigHome, 'screen-buddy'))
+}
 
 const execFileAsync = util.promisify(execFileCallback)
 
@@ -62,32 +72,55 @@ if (!gotLock) {
   })
 }
 
-// ─── Wayland / Ozone flags ───────────────────────────────────────────────────
-// Must be set before app.ready fires. Required for proper rendering under
-// Hyprland's Wayland compositor. Safe to set on X11 (ignored gracefully).
-// GlobalShortcutsPortal is needed by Electron 32 for Wayland portal-backed
-// shortcuts. Hyprland's SIGUSR1 bind remains available when the portal declines.
-// Saves two Chromium service processes, ~130 MB RSS, tested on Hyprland/Wayland with click-through, sound and tray working.
-app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,GlobalShortcutsPortal,NetworkServiceInProcess2')
-app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess')
+// ─── Chromium / Wayland / Ozone flags ─────────────────────────────────────────
+// Must be set before app.ready fires.
+// Cross-platform switches (in-process network service, AudioServiceOutOfProcess disable)
+// remain merged into single comma-separated enable-features / disable-features lists.
+const enableFeatures = ['NetworkServiceInProcess2']
+const disableFeatures = ['AudioServiceOutOfProcess']
 
-// Platform selector — default: native Wayland.
-// ── XWayland diagnostic test ──────────────────────────────────────────────
-// To force XWayland (e.g. to isolate Wayland input-region bugs), launch with:
-//   SCREEN_BUDDY_OZONE=x11 npm run dev
-// Revert by launching normally (no prefix). Do NOT commit x11 as the default.
-// ─────────────────────────────────────────────────────────────────────────────
-const ozoneOverride = process.env.SCREEN_BUDDY_OZONE  // 'x11' | 'wayland' | undefined
-if (ozoneOverride === 'x11') {
-  console.log('[main] ⚠️  XWayland diagnostic mode: ozone-platform=x11')
-  app.commandLine.appendSwitch('ozone-platform', 'x11')
-} else {
-  // Default: native Wayland (for Hyprland / proper transparency)
-  app.commandLine.appendSwitch('ozone-platform', 'wayland')
+if (process.platform === 'linux') {
+  // Required for proper rendering and portal shortcuts under Linux/Wayland compositors.
+  enableFeatures.unshift('UseOzonePlatform', 'GlobalShortcutsPortal')
+  app.commandLine.appendSwitch('in-process-gpu')
+
+  // Platform selector:
+  // 1. SCREEN_BUDDY_OZONE overrides ('x11' | 'wayland').
+  // 2. Otherwise default to 'wayland' if WAYLAND_DISPLAY, HYPRLAND_INSTANCE_SIGNATURE,
+  //    or XDG_SESSION_TYPE === 'wayland' is detected.
+  // 3. Fall back to 'x11' when session is X11 (XDG_SESSION_TYPE === 'x11' or no WAYLAND_DISPLAY).
+  const ozoneOverride = process.env.SCREEN_BUDDY_OZONE // 'x11' | 'wayland' | undefined
+  let ozonePlatform = 'wayland'
+  if (ozoneOverride === 'x11' || ozoneOverride === 'wayland') {
+    ozonePlatform = ozoneOverride
+    if (ozoneOverride === 'x11') {
+      console.log('[main] ⚠️  XWayland diagnostic mode: ozone-platform=x11')
+    }
+  } else {
+    const isWayland =
+      process.env.XDG_SESSION_TYPE === 'wayland' ||
+      Boolean(process.env.WAYLAND_DISPLAY) ||
+      Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
+    const isX11 =
+      process.env.XDG_SESSION_TYPE === 'x11' ||
+      (!process.env.WAYLAND_DISPLAY && !process.env.HYPRLAND_INSTANCE_SIGNATURE)
+
+    if (isWayland) {
+      ozonePlatform = 'wayland'
+    } else if (isX11) {
+      ozonePlatform = 'x11'
+    } else {
+      ozonePlatform = 'wayland'
+    }
+  }
+  app.commandLine.appendSwitch('ozone-platform', ozonePlatform)
+
+  // Allow transparent windows on Wayland
+  app.commandLine.appendSwitch('enable-transparent-visuals')
 }
 
-// Allow transparent windows on Wayland
-app.commandLine.appendSwitch('enable-transparent-visuals')
+app.commandLine.appendSwitch('enable-features', enableFeatures.join(','))
+app.commandLine.appendSwitch('disable-features', disableFeatures.join(','))
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 let mainWindow = null
@@ -335,10 +368,12 @@ app.whenReady().then(async () => {
   })
   registerIpcHandlers()
   registerPowerMonitor()
-  installHyprlandHotkeyFallback()
-  installChatHotkeyFallback()
-  installSettingsHotkeyFallback()
-  installCallHotkeyFallback()
+  if (process.platform === 'linux') {
+    installHyprlandHotkeyFallback()
+    installChatHotkeyFallback()
+    installSettingsHotkeyFallback()
+    installCallHotkeyFallback()
+  }
   registerGlobalPauseShortcut()
   registerGlobalCallShortcut()
   startHyprlandFullscreenMonitor()
@@ -367,21 +402,20 @@ app.whenReady().then(async () => {
     openSettingsWindow()
   }
 
-  if (!app.isPackaged) {
+  const isDevDebug = !app.isPackaged && (process.env.SCREEN_BUDDY_DEBUG === '1' || Boolean(settings?.developerMode))
+  if (isDevDebug) {
     startDevCpuLogging()
+    setTimeout(() => logAppMetrics('30s-after-ready'), 30000)
+    let memTimerCount = 0
+    const memTimer = setInterval(() => {
+      memTimerCount++
+      logAppMetrics(`${memTimerCount * 2}min`)
+      if (memTimerCount >= 6) {
+        clearInterval(memTimer)
+      }
+    }, 120000)
+    if (memTimer.unref) memTimer.unref()
   }
-
-  // ── Dev-gated memory monitoring ──────────────────────────────────────────
-  setTimeout(() => logAppMetrics('30s-after-ready'), 30000)
-  let memTimerCount = 0
-  const memTimer = setInterval(() => {
-    memTimerCount++
-    logAppMetrics(`${memTimerCount * 2}min`)
-    if (memTimerCount >= 6) {
-      clearInterval(memTimer)
-    }
-  }, 120000)
-  if (memTimer.unref) memTimer.unref()
 })
 
 function logAppMetrics(context = '') {
@@ -529,11 +563,15 @@ app.on('will-quit', () => {
   }
   globalShortcut.unregisterAll()
   stopHyprlandFullscreenMonitor()
-  removeHyprlandHotkeyFallback()
-  removeChatHotkeyFallback()
-  stopEyeTrackingPolling?.()
-  removeSettingsHotkeyFallback()
-  removeCallHotkeyFallback()
+  if (process.platform === 'linux') {
+    removeHyprlandHotkeyFallback()
+    removeChatHotkeyFallback()
+    stopEyeTrackingPolling?.()
+    removeSettingsHotkeyFallback()
+    removeCallHotkeyFallback()
+  } else {
+    stopEyeTrackingPolling?.()
+  }
   if (latestMoodState) {
     saveMoodStateToDisk(latestMoodState)
   }
@@ -843,6 +881,7 @@ function registerGlobalPauseShortcut() {
 }
 
 function installHyprlandHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.writeFileSync(HOTKEY_CONTROL_FILE, '', { mode: 0o600 })
     fs.watchFile(HOTKEY_CONTROL_FILE, { interval: 250 }, (current, previous) => {
@@ -857,6 +896,7 @@ function installHyprlandHotkeyFallback() {
 }
 
 function removeHyprlandHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.unwatchFile(HOTKEY_CONTROL_FILE)
     if (fs.existsSync(HOTKEY_CONTROL_FILE)) fs.unlinkSync(HOTKEY_CONTROL_FILE)
@@ -868,6 +908,7 @@ function removeHyprlandHotkeyFallback() {
 // ─── Chat hotkey (SUPER+C via Hyprland control file) ─────────────────────────
 
 function installChatHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.writeFileSync(CHAT_HOTKEY_CONTROL_FILE, '', { mode: 0o600 })
     fs.watchFile(CHAT_HOTKEY_CONTROL_FILE, { interval: 250 }, (current, previous) => {
@@ -899,6 +940,7 @@ function installChatHotkeyFallback() {
 }
 
 function removeChatHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.unwatchFile(CHAT_HOTKEY_CONTROL_FILE)
     if (fs.existsSync(CHAT_HOTKEY_CONTROL_FILE)) fs.unlinkSync(CHAT_HOTKEY_CONTROL_FILE)
@@ -910,6 +952,7 @@ function removeChatHotkeyFallback() {
 // ─── Settings hotkey (Hyprland control file) ────────────────────────────────
 
 function installSettingsHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.writeFileSync(SETTINGS_CONTROL_FILE, '', { mode: 0o600 })
     fs.watchFile(SETTINGS_CONTROL_FILE, { interval: 250 }, (current, previous) => {
@@ -924,6 +967,7 @@ function installSettingsHotkeyFallback() {
 }
 
 function removeSettingsHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.unwatchFile(SETTINGS_CONTROL_FILE)
     if (fs.existsSync(SETTINGS_CONTROL_FILE)) fs.unlinkSync(SETTINGS_CONTROL_FILE)
@@ -974,6 +1018,7 @@ async function triggerCallCat() {
 }
 
 function installCallHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.writeFileSync(CALL_HOTKEY_CONTROL_FILE, '', { mode: 0o600 })
     fs.watchFile(CALL_HOTKEY_CONTROL_FILE, { interval: 250 }, (current, previous) => {
@@ -987,6 +1032,7 @@ function installCallHotkeyFallback() {
 }
 
 function removeCallHotkeyFallback() {
+  if (process.platform !== 'linux') return
   try {
     fs.unwatchFile(CALL_HOTKEY_CONTROL_FILE)
     if (fs.existsSync(CALL_HOTKEY_CONTROL_FILE)) fs.unlinkSync(CALL_HOTKEY_CONTROL_FILE)
@@ -2192,21 +2238,32 @@ let trayRetryTimeout = null
 let trayRetryCount = 0
 const MAX_TRAY_RETRIES = 24
 
+let cachedTrayIcon = null
+
 function getTrayIcon() {
-  const iconPath = path.join(app.getAppPath(), 'assets/tray-icon.png')
-  if (fs.existsSync(iconPath)) {
-    const icon = nativeImage.createFromPath(iconPath)
-    if (!icon.isEmpty()) {
-      return icon
-    }
-    console.warn('[tray] icon file at %s is empty, falling back to placeholder', iconPath)
-  } else {
-    console.warn('[tray] icon file missing at %s, falling back to placeholder', iconPath)
+  if (cachedTrayIcon && !cachedTrayIcon.isEmpty()) {
+    return cachedTrayIcon
   }
-  return nativeImage.createFromDataURL(
+  const possiblePaths = [
+    path.join(app.getAppPath(), 'assets/tray-icon.png'),
+    path.join(process.resourcesPath, 'assets/tray-icon.png'),
+  ]
+  for (const iconPath of possiblePaths) {
+    if (fs.existsSync(iconPath)) {
+      const icon = nativeImage.createFromPath(iconPath)
+      if (!icon.isEmpty()) {
+        cachedTrayIcon = icon
+        return cachedTrayIcon
+      }
+      console.warn('[tray] icon file at %s is empty, falling back to placeholder', iconPath)
+    }
+  }
+  console.warn('[tray] icon file missing, falling back to placeholder')
+  cachedTrayIcon = nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACklEQVQ' +
     'I12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=='
   )
+  return cachedTrayIcon
 }
 
 /**
@@ -3538,20 +3595,32 @@ function registerIpcHandlers() {
   ipcMain.handle('app:get-info', () => {
     let license = null
     try {
-      const licensePath = path.join(app.getAppPath(), 'LICENSE')
-      if (fs.existsSync(licensePath)) {
-        const raw = fs.readFileSync(licensePath, 'utf8')
-        const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-        if (lines.length > 0 && lines[0].length <= 40) {
-          license = lines[0]
+      const licensePaths = [
+        path.join(app.getAppPath(), 'LICENSE'),
+        path.join(process.resourcesPath, 'LICENSE'),
+      ]
+      for (const licensePath of licensePaths) {
+        if (fs.existsSync(licensePath)) {
+          const raw = fs.readFileSync(licensePath, 'utf8')
+          const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+          if (lines.length > 0 && lines[0].length <= 40) {
+            license = lines[0]
+            break
+          }
         }
       }
       if (!license) {
-        const pkgPath = path.join(app.getAppPath(), 'package.json')
-        if (fs.existsSync(pkgPath)) {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-          if (pkg.license && typeof pkg.license === 'string') {
-            license = /license/i.test(pkg.license) ? pkg.license : `${pkg.license} License`
+        const pkgPaths = [
+          path.join(app.getAppPath(), 'package.json'),
+          path.join(process.resourcesPath, 'package.json'),
+        ]
+        for (const pkgPath of pkgPaths) {
+          if (fs.existsSync(pkgPath)) {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+            if (pkg.license && typeof pkg.license === 'string') {
+              license = /license/i.test(pkg.license) ? pkg.license : `${pkg.license} License`
+              break
+            }
           }
         }
       }
