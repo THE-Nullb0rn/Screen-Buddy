@@ -58,6 +58,22 @@ const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
 const { watchTrayHost } = require('./trayHost')
 const { checkForUpdates } = require('./updater')
+const {
+  NORMAL_WIN_W,
+  NORMAL_WIN_H,
+  NORMAL_CAT_CX,
+  NORMAL_CAT_CY,
+  TREATMENT_WIN_W,
+  TREATMENT_WIN_H,
+  TREATMENT_CAT_CX,
+  TREATMENT_CAT_CY,
+  getDisplayForPoint,
+  getDisplayCatGeometry,
+  getDefaultMascotPosition,
+  clampWindowPosition,
+  clampCatCenterPosition,
+  computeBubblePosition,
+} = require('./displayGeometry')
 
 // Electron single-instance guard — prevent duplicate processes.
 const gotLock = app.requestSingleInstanceLock()
@@ -281,25 +297,6 @@ function syncDeveloperMode(devMode) {
 // the window if the workAreaSize is slightly smaller than the renderer's full 1080 display.
 const BOTTOM_OVERHANG_PX = 100
 
-const NORMAL_WIN_W = 160
-const NORMAL_WIN_H = 128
-const NORMAL_CAT_CX = 80
-// NORMAL_CAT_CY = window height − CSS bottom inset (8, must match Mascot.css) − sprite half-height (90).
-// Mascot.jsx has a copy that must change with this. The 8 must match Mascot.css `bottom: 8px`.
-const NORMAL_BOTTOM_INSET_PX = 8
-const NORMAL_SPRITE_H = 180
-const NORMAL_CAT_CY = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - NORMAL_SPRITE_H / 2 // 128 - 8 - 90 = 30
-
-// Top of visible idle art inside the 126x180 sprite box (measured from sprite-box top).
-// In normal mode, sprite box extends above the window; this calculates the visible art top inside window.
-const NORMAL_ART_TOP_IN_BOX = 89
-const NORMAL_VISIBLE_TOP_IN_WIN = NORMAL_WIN_H - NORMAL_BOTTOM_INSET_PX - NORMAL_SPRITE_H + NORMAL_ART_TOP_IN_BOX // 128 - 8 - 180 + 89 = 29
-
-const TREATMENT_WIN_W = 350
-const TREATMENT_WIN_H = 380
-const TREATMENT_CAT_CX = 175
-const TREATMENT_CAT_CY = 192
-
 // Bubble window size confirmation poll — same timeout as the cat window.
 const BUBBLE_SIZE_POLL_TIMEOUT_MS = 1000
 const BUBBLE_SIZE_POLL_INTERVAL_MS = 20
@@ -377,6 +374,22 @@ app.whenReady().then(async () => {
   registerGlobalPauseShortcut()
   registerGlobalCallShortcut()
   startHyprlandFullscreenMonitor()
+
+  // Monitor display changes (resolution, scaling, connect/disconnect)
+  const handleDisplayChange = (eventType) => {
+    logDisplayMetrics(eventType)
+    restoreMascotPositionOnResume(eventType)
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      const displays = electronScreen.getAllDisplays()
+      const targetX = lastKnownCatWinX !== null ? lastKnownCatWinX : 0
+      const targetY = lastKnownCatWinY !== null ? lastKnownCatWinY : 0
+      const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
+      mainWindow.webContents.send('display:changed', getDisplayCatGeometry(catDisplay))
+    }
+  }
+  electronScreen.on('display-added', () => handleDisplayChange('display-added'))
+  electronScreen.on('display-removed', () => handleDisplayChange('display-removed'))
+  electronScreen.on('display-metrics-changed', () => handleDisplayChange('display-metrics-changed'))
 
   // Apply saved autostart preference on launch
   if (settings.autostart) {
@@ -1441,6 +1454,10 @@ async function getBubbleWindow() {
     },
   });
 
+  if (process.platform === 'win32') {
+    bubbleWindow.setAlwaysOnTop(true, 'screen-saver');
+  }
+
   if (process.env.VITE_DEV_SERVER_URL) {
     bubbleWindow.loadURL(process.env.VITE_DEV_SERVER_URL + '/#bubbles');
   } else {
@@ -1513,11 +1530,11 @@ let lastBubbleFollowTime = 0;
 let bubbleFollowTrailingTimer = null;
 
 function isBubbleFollowActive() {
-  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return false;
   const hasCard = Boolean(lastCardState && lastCardState.hasContent);
   const hasNotif = Boolean(notificationsManager?.activeNotification);
+  const isHypr = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE);
   return Boolean(
-    bubbleMapped &&
+    (isHypr ? bubbleMapped : true) &&
     bubbleWindow &&
     !bubbleWindow.isDestroyed() &&
     bubbleWindow.isVisible() &&
@@ -1582,9 +1599,9 @@ function onCatMoveQueueDrained() {
 
 async function positionBubbleWindow() {
   if (!bubbleWindow || !bubbleWindowReady) return;
-  if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) return;
 
-  if (!bubbleMapped) {
+  const isHypr = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE);
+  if (isHypr && !bubbleMapped) {
     if (!bubbleSkipLogged) {
       console.log('[bubble] skipped (not mapped)');
       bubbleSkipLogged = true;
@@ -1628,49 +1645,23 @@ async function positionBubbleWindow() {
       return;
     }
 
+    const displays = electronScreen.getAllDisplays();
+    const catCenterEstimateX = catX + (currentWindowMode === 'treatment' ? TREATMENT_CAT_CX : NORMAL_CAT_CX);
+    const catCenterEstimateY = catY + (currentWindowMode === 'treatment' ? TREATMENT_CAT_CY : NORMAL_CAT_CY);
+    const catDisplay = getDisplayForPoint(displays, catCenterEstimateX, catCenterEstimateY) || electronScreen.getPrimaryDisplay();
 
-
-    const cx = currentWindowMode === 'treatment' ? TREATMENT_CAT_CX : NORMAL_CAT_CX;
-    const cy = currentWindowMode === 'treatment' ? TREATMENT_CAT_CY : NORMAL_CAT_CY;
-    
-    // In treatment mode, the sprite is scaled by 2 (126x180 -> 252x360).
-    // The visual height is 360, but the origin is center bottom.
-    // So the top is cy - 180, and the bottom is cy + 180.
-    const halfHeight = currentWindowMode === 'treatment' ? 180 : 90;
-    
-    const spriteTop = catY + cy - halfHeight;
-    const spriteBottom = catY + cy + halfHeight;
-    
-    const { width, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize;
     const bw = currentBubbleW;
     const bh = currentBubbleH;
 
-    // In normal mode, anchor to the visible idle art top inside the window.
-    // In treatment mode, anchor to the treatment sprite box top.
-    const anchorTop = currentWindowMode === 'treatment'
-      ? spriteTop
-      : catY + NORMAL_VISIBLE_TOP_IN_WIN;
-
-    // Position bubble above the sprite; fall back to below if it would go off-screen.
-    let targetY = anchorTop - 8 - bh;
-    if (targetY < 0) {
-      targetY = Math.min(spriteBottom + 8, screenH - bh);
-    }
-
-    // Horizontal center aligned with the mascot sprite center.
-    let targetX = catX + cx - Math.round(bw / 2);
-    targetX = Math.max(0, Math.min(targetX, width - bw));
-    
-    targetX = Math.round(targetX);
-    targetY = Math.round(targetY);
+    const computed = computeBubblePosition(catDisplay, catX, catY, bw, bh, currentWindowMode);
+    let targetX = computed.x;
+    let targetY = computed.y;
 
     if (lastBubbleX === targetX && lastBubbleY === targetY) {
       return; // Skip if position hasn't changed
     }
 
     console.log(`[bubble-pos] will move: catWin=(${catX},${catY}) target=(${targetX},${targetY}) lastBubble=(${lastBubbleX},${lastBubbleY}) mode=${currentWindowMode} drag=${mascotRepositionInProgress}`);
-    
-    const titleMatch = 'title:^(screen-buddy-bubbles)$';
     
     if (myGen !== bubblePositionGeneration) {
       console.log('[bubble] aborting before move (generation mismatch)');
@@ -1681,16 +1672,25 @@ async function positionBubbleWindow() {
       return;
     }
 
-    await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${targetX} ${targetY},${titleMatch}`]);
-    console.log(`[bubble] positioned at ${targetX},${targetY} (catWin=${lastKnownCatWinX},${lastKnownCatWinY} mode=${currentWindowMode} drag=${mascotRepositionInProgress} gen=${myGen}/${bubblePositionGeneration})`);
-    
-    if (myGen !== bubblePositionGeneration) {
-      console.log('[bubble] aborting before alterzorder (generation mismatch)');
-      return;
-    }
+    if (isHypr) {
+      const titleMatch = 'title:^(screen-buddy-bubbles)$';
+      await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${targetX} ${targetY},${titleMatch}`]);
+      console.log(`[bubble] positioned at ${targetX},${targetY} (catWin=${lastKnownCatWinX},${lastKnownCatWinY} mode=${currentWindowMode} drag=${mascotRepositionInProgress} gen=${myGen}/${bubblePositionGeneration})`);
+      
+      if (myGen !== bubblePositionGeneration) {
+        console.log('[bubble] aborting before alterzorder (generation mismatch)');
+        return;
+      }
 
-    await execFileAsync('hyprctl', ['dispatch', 'alterzorder', `top,${titleMatch}`]);
-    console.log('[bubble] alterzorder done');
+      await execFileAsync('hyprctl', ['dispatch', 'alterzorder', `top,${titleMatch}`]);
+      console.log('[bubble] alterzorder done');
+    } else {
+      setWindowBoundsSafely(bubbleWindow, { x: targetX, y: targetY, width: bw, height: bh }, 'bubbleWindow');
+      if (process.platform === 'win32') {
+        bubbleWindow.setAlwaysOnTop(true, 'screen-saver');
+      }
+      console.log(`[bubble] positioned at ${targetX},${targetY} (catWin=${catX},${catY} platform=${process.platform})`);
+    }
     
     if (myGen === bubblePositionGeneration) {
       lastBubbleX = targetX;
@@ -1873,6 +1873,10 @@ function createOverlayWindow() {
     },
   })
 
+  if (process.platform === 'win32') {
+    mainWindow.setAlwaysOnTop(true, 'screen-saver')
+  }
+
   // No longer rely on setIgnoreMouseEvents. Window is physically small.
   mainWindow.once('ready-to-show', () => {
     console.log('[main] ready-to-show fired. Small window mode.')
@@ -2004,16 +2008,66 @@ function createOverlayWindow() {
   })
 }
 
+function setWindowBoundsSafely(win, bounds, tag = 'window') {
+  if (!win || win.isDestroyed()) return
+  const requested = {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height),
+  }
+  try {
+    win.setBounds(requested)
+    const actual = win.getBounds()
+    if (
+      actual.width !== requested.width ||
+      actual.height !== requested.height ||
+      actual.x !== requested.x ||
+      actual.y !== requested.y
+    ) {
+      console.log(`[display] ${tag} bounds drift detected (req=${requested.width}x${requested.height}@${requested.x},${requested.y} actual=${actual.width}x${actual.height}@${actual.x},${actual.y}), correcting`)
+      win.setBounds(requested)
+    }
+  } catch (err) {
+    console.warn(`[display] ${tag} setBounds error:`, err.message)
+  }
+}
+
 function getSavedMascotPosition() {
+  const displays = electronScreen.getAllDisplays()
+  const primary = electronScreen.getPrimaryDisplay()
   const saved = settings?.mascotPosition
-  const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
-  const maxX = Math.max(0, width - NORMAL_WIN_W)
-  const maxY = Math.max(0, height - NORMAL_WIN_H + BOTTOM_OVERHANG_PX)
-  const x = Number.isFinite(saved?.x) ? Math.round(saved.x) : 0
-  const y = Number.isFinite(saved?.y) ? Math.round(saved.y) : 0
-  return {
-    x: Math.max(0, Math.min(x, maxX)),
-    y: Math.max(0, Math.min(y, maxY)),
+
+  // If no position saved or invalid, use default (bottom-right standing on floor of primary display)
+  if (!saved || !Number.isFinite(saved.x) || !Number.isFinite(saved.y)) {
+    const def = getDefaultMascotPosition(primary)
+    logDisplayMetrics('startup-default', def.x, def.y)
+    return { x: def.x, y: def.y }
+  }
+
+  const rawX = Math.round(saved.x)
+  const rawY = Math.round(saved.y)
+
+  // Validate and clamp saved position to nearest/containing connected display
+  const clamped = clampWindowPosition(displays, rawX, rawY, NORMAL_WIN_W, NORMAL_WIN_H)
+  if (clamped.x !== rawX || clamped.y !== rawY) {
+    console.log(`[display] saved mascot position (${rawX}, ${rawY}) outside workArea, corrected to (${clamped.x}, ${clamped.y}) on display ${clamped.display?.id}`)
+  }
+
+  logDisplayMetrics('startup-clamped', clamped.x, clamped.y)
+  return { x: clamped.x, y: clamped.y }
+}
+
+function logDisplayMetrics(reason, currentWinX, currentWinY) {
+  const displays = electronScreen.getAllDisplays()
+  const currentX = currentWinX != null ? currentWinX : (lastKnownCatWinX || 0)
+  const currentY = currentWinY != null ? currentWinY : (lastKnownCatWinY || 0)
+  const targetDisplay = getDisplayForPoint(displays, currentX + NORMAL_WIN_W / 2, currentY + NORMAL_WIN_H / 2) || electronScreen.getPrimaryDisplay()
+
+  for (const d of displays) {
+    const dGeom = getDisplayCatGeometry(d)
+    const isCurrent = d.id === targetDisplay.id
+    console.log(`[display] [${reason}] platform=${process.platform} display=${d.id} scaleFactor=${d.scaleFactor} bounds=${d.bounds.width}x${d.bounds.height}@${d.bounds.x},${d.bounds.y} workArea=${d.workArea.width}x${d.workArea.height}@${d.workArea.x},${d.workArea.y} floorY=${dGeom.floorY} floorWinY=${dGeom.floorWinY} catHere=${isCurrent}`)
   }
 }
 
@@ -2030,19 +2084,23 @@ async function restoreMascotPositionOnResume(reason = 'resume') {
   if (restorePositionInFlight) return
   restorePositionInFlight = true
   try {
-    const saved = getSavedMascotPosition()
-    const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : saved.x
-    const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : saved.y
+    const displays = electronScreen.getAllDisplays()
+    const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : (settings?.mascotPosition?.x || 0)
+    const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : (settings?.mascotPosition?.y || 0)
 
-    const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
-    const clampedX = Math.max(0, Math.min(targetX, width - currentWinW))
-    const clampedY = Math.max(0, Math.min(targetY, height - currentWinH + BOTTOM_OVERHANG_PX))
+    const clamped = clampWindowPosition(displays, targetX, targetY, currentWinW, currentWinH)
+    const clampedX = clamped.x
+    const clampedY = clamped.y
 
     lastKnownCatWinX = clampedX
     lastKnownCatWinY = clampedY
 
     try {
-      mainWindow.setPosition(clampedX, clampedY)
+      if (process.platform === 'win32') {
+        setWindowBoundsSafely(mainWindow, { x: clampedX, y: clampedY, width: currentWinW, height: currentWinH }, 'mainWindow')
+      } else {
+        mainWindow.setPosition(clampedX, clampedY)
+      }
     } catch {
       // ignore
     }
@@ -2732,9 +2790,11 @@ function registerIpcHandlers() {
       } catch (err) {
         console.error('[main] hyprctl drag move error:', err)
       }
+      return waitForHyprlandSize(width, height, 'window:mode drag-start')
     }
 
-    return waitForHyprlandSize(width, height, 'window:mode drag-start')
+    setWindowBoundsSafely(mainWindow, { x: 0, y: 0, width, height }, 'mainWindow-drag')
+    return { applied: true, compositorSize: [width, height], attempts: 1, elapsedMs: 0 }
   }
 
   async function applyMascotWindowSize(tag) {
@@ -2755,9 +2815,20 @@ function registerIpcHandlers() {
       `getBounds after=${JSON.stringify(boundsAfter)} ` +
       `(Electron size is not used to gate the renderer)`
     )
-    await resizeHyprlandWindow(currentWinW, currentWinH, `window:mode mascot ${tag}`)
-    return waitForHyprlandSize(currentWinW, currentWinH, `window:mode mascot ${tag}`)
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      await resizeHyprlandWindow(currentWinW, currentWinH, `window:mode mascot ${tag}`)
+      return waitForHyprlandSize(currentWinW, currentWinH, `window:mode mascot ${tag}`)
+    }
+    return { applied: true, compositorSize: [currentWinW, currentWinH], attempts: 1, elapsedMs: 0 }
   }
+
+  ipcMain.handle('display:get-geometry', () => {
+    const displays = electronScreen.getAllDisplays()
+    const targetX = lastKnownCatWinX !== null ? lastKnownCatWinX : 0
+    const targetY = lastKnownCatWinY !== null ? lastKnownCatWinY : 0
+    const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
+    return getDisplayCatGeometry(catDisplay)
+  })
 
   ipcMain.on('window:move', (event, x, y) => {
     lastCatBoundsRefreshTime = 0
@@ -2774,25 +2845,33 @@ function registerIpcHandlers() {
 
     // Incoming x,y = desired cat center on the physical screen.
     // Convert to window top-left and clamp so the logical window stays on-screen.
-    // We use the tracked currentWinW/H because mainWindow.getSize() is asynchronous
-    // on Wayland and will return stale fullscreen bounds immediately after a drag release.
-    const { width: screenW, height: screenH } = require('electron').screen.getPrimaryDisplay().workAreaSize
+    const displays = electronScreen.getAllDisplays()
+    const isHypr = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
 
-    let wx = Math.round(x - NORMAL_CAT_CX)
-    let wy = Math.round(y - NORMAL_CAT_CY)
-    wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-    const limitY = screenH - currentWinH
-    wy = Math.max(0, Math.min(wy, limitY))
+    let wx
+    let wy
 
-    // 1. Standard Electron setPosition (fallback / X11)
-    mainWindow?.setPosition(wx, wy)
-    // 2. Hyprland — queue latest position, flushed by the timer
-    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+    if (isHypr) {
+      const { width: screenW, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize
+      wx = Math.round(x - NORMAL_CAT_CX)
+      wy = Math.round(y - NORMAL_CAT_CY)
+      wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+      const limitY = screenH - currentWinH
+      wy = Math.max(0, Math.min(wy, limitY))
+      mainWindow?.setPosition(wx, wy)
       _movePending = { x: wx, y: wy }
       if (!_moveTimer) {
         _moveTimer = setInterval(flushMove, 33) // ~30 fps
         flushMove() // fire immediately for the first move
       }
+    } else {
+      const clamped = clampCatCenterPosition(displays, x, y, currentWinW, currentWinH, NORMAL_CAT_CX, NORMAL_CAT_CY)
+      wx = clamped.winX
+      wy = clamped.winY
+      setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-move')
+      lastKnownCatWinX = wx
+      lastKnownCatWinY = wy
+      onCatWindowMoved()
     }
   })
 
@@ -2827,7 +2906,11 @@ function registerIpcHandlers() {
         lastBubbleY = null
       }
       // Temporarily expand to full work area so pointer events stay inside
-      const { width, height } = screen.getPrimaryDisplay().workAreaSize
+      const displays = screen.getAllDisplays()
+      const currentX = lastKnownCatWinX !== null ? lastKnownCatWinX : 0
+      const currentY = lastKnownCatWinY !== null ? lastKnownCatWinY : 0
+      const catDisplay = getDisplayForPoint(displays, currentX + NORMAL_CAT_CX, currentY + NORMAL_CAT_CY) || screen.getPrimaryDisplay()
+      const { width, height } = catDisplay.workAreaSize
       currentWinW = width
       currentWinH = height
       const verify = await applyDragWindowSize(width, height)
@@ -2883,14 +2966,16 @@ function registerIpcHandlers() {
       let verify = { applied: false, compositorSize: null, attempts: 0, elapsedMs: 0 }
       try {
         if (catX !== undefined && catY !== undefined) {
-          const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize
-          let wx = Math.round(catX - cx)
-          let wy = Math.round(catY - cy)
-          wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-          wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
-
-          mainWindow?.setPosition(wx, wy)
+          const displays = screen.getAllDisplays()
+          let wx
+          let wy
           if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+            const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize
+            wx = Math.round(catX - cx)
+            wy = Math.round(catY - cy)
+            wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+            wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
+            mainWindow?.setPosition(wx, wy)
             _movePending = null
             try {
               await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${wx} ${wy},${HYPR_TITLE_MATCH}`])
@@ -2899,6 +2984,13 @@ function registerIpcHandlers() {
             } catch (err) {
               console.error('[main] hyprctl mascot move error:', err)
             }
+          } else {
+            const clamped = clampCatCenterPosition(displays, catX, catY, currentWinW, currentWinH, cx, cy)
+            wx = clamped.winX
+            wy = clamped.winY
+            setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-mode-mascot')
+            lastKnownCatWinX = wx
+            lastKnownCatWinY = wy
           }
 
           verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'drag-end')
@@ -2947,11 +3039,20 @@ function registerIpcHandlers() {
     if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
       return
     }
-    const { width: screenW, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize
-    let wx = Math.round(x - NORMAL_CAT_CX)
-    let wy = Math.round(y - NORMAL_CAT_CY)
-    wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-    wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
+    const displays = electronScreen.getAllDisplays()
+    let wx
+    let wy
+    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      const { width: screenW, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize
+      wx = Math.round(x - NORMAL_CAT_CX)
+      wy = Math.round(y - NORMAL_CAT_CY)
+      wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+      wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
+    } else {
+      const clamped = clampCatCenterPosition(displays, x, y, currentWinW, currentWinH, NORMAL_CAT_CX, NORMAL_CAT_CY)
+      wx = clamped.winX
+      wy = clamped.winY
+    }
     console.log(`[catwin] persist-position raw=(${x},${y}) win=(${wx},${wy}) mode=${currentWindowMode}`)
     lastKnownCatWinX = wx
     lastKnownCatWinY = wy

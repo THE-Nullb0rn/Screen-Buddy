@@ -465,6 +465,32 @@ export default function Mascot({
 
   const targetDragButton = DRAG_BUTTON_MAP[dragButton] ?? 2
 
+  const [displayGeometry, setDisplayGeometry] = useState(null)
+  const displayGeometryRef = useRef(null)
+  displayGeometryRef.current = displayGeometry
+
+  useEffect(() => {
+    let active = true
+    if (window.api?.getDisplayGeometry) {
+      window.api.getDisplayGeometry().then((geom) => {
+        if (active && geom) {
+          setDisplayGeometry(geom)
+        }
+      }).catch((err) => {
+        console.warn('[Mascot] getDisplayGeometry failed:', err?.message)
+      })
+    }
+    const unsub = window.api?.on?.('display:changed', (geom) => {
+      if (active && geom) {
+        setDisplayGeometry(geom)
+      }
+    })
+    return () => {
+      active = false
+      unsub?.()
+    }
+  }, [])
+
   useEffect(() => {
     clearTimeout(leftClickTimerRef.current)
     clearTimeout(rightClickTimerRef.current)
@@ -570,12 +596,11 @@ export default function Mascot({
 
   const clampToViewport = useCallback(
     (nx, ny) => {
-      const screenW = window.screen.availWidth || window.screen.width || 1920
-      const screenH = window.screen.availHeight || window.screen.height || 1080
-      const minX = NORMAL_CAT_CX
-      const maxX = Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
-      const minY = NORMAL_CAT_CY
-      const maxY = Math.max(minY, screenH - (SPRITE_HEIGHT / 2) - FLOOR_GAP_PX + FOOT_PAD_PX)
+      const geom = displayGeometryRef.current
+      const minX = geom?.minCatX ?? NORMAL_CAT_CX
+      const maxX = geom?.maxCatX ?? Math.max(minX, (window.screen.availWidth || window.screen.width || 1920) - 160 + NORMAL_CAT_CX)
+      const minY = geom?.minCatY ?? NORMAL_CAT_CY
+      const maxY = geom?.floorY ?? Math.max(minY, (window.screen.availHeight || window.screen.height || 1080) - (SPRITE_HEIGHT / 2) - FLOOR_GAP_PX + FOOT_PAD_PX)
       return {
         x: clamp(nx, minX, maxX),
         y: clamp(ny, minY, maxY),
@@ -1078,10 +1103,11 @@ export default function Mascot({
     if (token && chainTokenRef.current !== token) return
     if (gen && gen !== roamGenRef.current) return
 
-    const screenW = window.screen.availWidth || window.screen.width || 1920
+    const geom = displayGeometryRef.current
+    const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
     const catW = measure().width
-    const minX = edgeMargin
-    const maxX = Math.max(minX, screenW - catW - edgeMargin)
+    const minX = geom ? geom.minCatX : edgeMargin
+    const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - catW - edgeMargin)
     const currentX = posRef.current.x
 
     let targetX
@@ -1609,12 +1635,12 @@ export default function Mascot({
       })
     } else if (chainId === 'nap_elsewhere') {
       advanceStep(1, () => {
-        if (isDebugRef.current) console.log('[life] chain nap_elsewhere step 1 standup')
         ensureStandingRef.current?.(token, () => {
+          const geom = displayGeometryRef.current
           const catW = measure().width
-          const screenW = window.screen.availWidth || window.screen.width || 1920
-          const minX = 40
-          const maxX = Math.max(minX, screenW - catW - 40)
+          const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+          const minX = geom ? geom.minCatX : 40
+          const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - catW - 40)
           const currentX = posRef.current.x
           let napTargetX
 
@@ -2411,10 +2437,13 @@ export default function Mascot({
           savedPosRef.current = { x: posRef.current.x, y: posRef.current.y }
         }
         setWalkMs(0)
-        const screenW = window.screen.availWidth || window.screen.width || 1920
-        const screenH = window.screen.availHeight || window.screen.height || 1080
-        const cX = Math.round(screenW / 2)
-        const cY = Math.round(screenH / 2)
+        const geom = displayGeometryRef.current
+        const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+        const screenH = geom?.workArea?.height ?? (window.screen.availHeight || window.screen.height || 1080)
+        const waX = geom?.workArea?.x ?? 0
+        const waY = geom?.workArea?.y ?? 0
+        const cX = Math.round(waX + screenW / 2)
+        const cY = Math.round(waY + screenH / 2)
         if (window.api?.setWindowMode) {
           window.api.setWindowMode('treatment', cX, cY).then(() => {
             setTreatmentWindowReady(true)
@@ -2581,17 +2610,18 @@ export default function Mascot({
       }
 
       // ── Normal walk ──
+      const geom = displayGeometryRef.current
       const { width } = measure()
-      const minX = MARGIN
-      const screenW = window.screen.availWidth || window.screen.width || 1920
-      const maxX = Math.max(minX, screenW - width - MARGIN)
+      const minX = geom ? geom.minCatX : MARGIN
+      const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+      const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - width - MARGIN)
       const currentX = posRef.current.x
       let dir
       let targetX
       let realDist
 
       // Edge walk roll: 15% chance to intentionally pick an edge-zone destination
-      const trueRightEdge = Math.max(NORMAL_CAT_CX, screenW - 160 + NORMAL_CAT_CX)
+      const trueRightEdge = geom ? geom.maxCatX : Math.max(NORMAL_CAT_CX, screenW - 160 + NORMAL_CAT_CX)
       if (Math.random() < KNOCKOFF_EDGE_WALK_CHANCE && currentX < trueRightEdge - 50) {
         targetX = trueRightEdge
         dir = 'right'
@@ -2854,8 +2884,9 @@ export default function Mascot({
       }
 
       // Knockoff trigger (b): idle-life roll while already in edge zone
-      const currentScreenW = window.screen.availWidth || window.screen.width || 1920
-      const trueRightEdge = Math.max(NORMAL_CAT_CX, currentScreenW - 160 + NORMAL_CAT_CX)
+      const geom = displayGeometryRef.current
+      const currentScreenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+      const trueRightEdge = geom ? geom.maxCatX : Math.max(NORMAL_CAT_CX, currentScreenW - 160 + NORMAL_CAT_CX)
       const inEdgeZone = posRef.current.x >= trueRightEdge - KNOCKOFF_EDGE_DIST_PX
       const canKnockoff = now - lastKnockoffRef.current >= KNOCKOFF_COOLDOWN_MS
       if (inEdgeZone && canKnockoff && Math.random() < KNOCKOFF_IDLE_CHANCE) {
@@ -3069,10 +3100,11 @@ export default function Mascot({
     chaseFlippedRef.current = facing === 'left'
 
     // Lock target position before mouse moves
+    const geom = displayGeometryRef.current
     const { width } = measure()
-    const minX = MARGIN
-    const screenW = window.screen.availWidth || window.screen.width || 1920
-    const maxX = Math.max(minX, screenW - width - MARGIN)
+    const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+    const minX = geom ? geom.minCatX : MARGIN
+    const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - width - MARGIN)
     const lockedStartX = posRef.current.x
     const lockedTargetX = clamp(posRef.current.x + offset.x - Math.sign(offset.x) * 40, minX, maxX)
 
@@ -3224,9 +3256,10 @@ export default function Mascot({
     })
 
     const proceedCallWalk = (destX) => {
-      const screenW = window.screen.availWidth || window.screen.width || 1920
-      const minX = NORMAL_CAT_CX
-      const maxX = Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
+      const geom = displayGeometryRef.current
+      const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+      const minX = geom ? geom.minCatX : NORMAL_CAT_CX
+      const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
       const targetX = clamp(typeof destX === 'number' ? destX : posRef.current.x, minX, maxX)
 
       const dist = Math.abs(targetX - posRef.current.x)
@@ -4599,10 +4632,12 @@ export default function Mascot({
   }, [isEyeTrackingEligible])
 
   // ── Coordinates and Transitions for Center-Screen MovementBreak ───────────
-  const screenW = window.screen.availWidth || window.screen.width || 1920
-  const screenH = window.screen.availHeight || window.screen.height || 1080
-  const centerX = Math.round(screenW / 2)
-  const centerY = Math.round(screenH / 2)
+  const screenW = displayGeometry?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
+  const screenH = displayGeometry?.workArea?.height ?? (window.screen.availHeight || window.screen.height || 1080)
+  const waX = displayGeometry?.workArea?.x ?? 0
+  const waY = displayGeometry?.workArea?.y ?? 0
+  const centerX = Math.round(waX + screenW / 2)
+  const centerY = Math.round(waY + screenH / 2)
 
   let targetX = x
   let targetY = y

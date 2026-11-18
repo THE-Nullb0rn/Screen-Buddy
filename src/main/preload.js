@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('api', {
   updates: { check: () => safeInvoke('updates:check') },
   getMainPerfStats: () => safeInvoke('perf:get-stats'),
   getCursorOffset: () => safeInvoke('mascot:get-cursor-offset'),
+  getDisplayGeometry: () => safeInvoke('display:get-geometry'),
   getIpcStats: () => ({
     received: { ...ipcReceiveCounts },
     sent: { ...ipcSendCounts },
@@ -172,6 +173,7 @@ contextBridge.exposeInMainWorld('api', {
       'chat:focus-input',
       'mascot:cursor-offset',
       'mascot:call',
+      'display:changed',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)
