@@ -381,8 +381,8 @@ app.whenReady().then(async () => {
     restoreMascotPositionOnResume(eventType)
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
       const displays = electronScreen.getAllDisplays()
-      const targetX = lastKnownCatWinX !== null ? lastKnownCatWinX : 0
-      const targetY = lastKnownCatWinY !== null ? lastKnownCatWinY : 0
+      const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : 0
+      const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : 0
       const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
       mainWindow.webContents.send('display:changed', getDisplayCatGeometry(catDisplay))
     }
@@ -1654,8 +1654,13 @@ async function positionBubbleWindow() {
     const bh = currentBubbleH;
 
     const computed = computeBubblePosition(catDisplay, catX, catY, bw, bh, currentWindowMode);
-    let targetX = computed.x;
-    let targetY = computed.y;
+    let targetX = Math.round(computed.x);
+    let targetY = Math.round(computed.y);
+
+    if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+      console.warn(`[display] invalid bubble position coordinates: targetX=${targetX} targetY=${targetY}`);
+      return;
+    }
 
     if (lastBubbleX === targetX && lastBubbleY === targetY) {
       return; // Skip if position hasn't changed
@@ -1697,7 +1702,7 @@ async function positionBubbleWindow() {
       lastBubbleY = targetY;
     }
   } catch (err) {
-    console.error('[bubble] hyprctl position error:', err.message);
+    console.error('[bubble] position error:', err.message);
   } finally {
     bubblePositionInFlight = false;
     if (bubblePositionPending) {
@@ -2010,6 +2015,16 @@ function createOverlayWindow() {
 
 function setWindowBoundsSafely(win, bounds, tag = 'window') {
   if (!win || win.isDestroyed()) return
+  if (
+    !bounds ||
+    !Number.isFinite(bounds.x) ||
+    !Number.isFinite(bounds.y) ||
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height)
+  ) {
+    console.warn(`[display] invalid bounds in setWindowBoundsSafely (${tag}):`, bounds)
+    return
+  }
   const requested = {
     x: Math.round(bounds.x),
     y: Math.round(bounds.y),
@@ -2593,9 +2608,17 @@ function registerIpcHandlers() {
     _movePending = null
     _moveInFlight = true
 
+    const roundX = Math.round(x)
+    const roundY = Math.round(y)
+    if (!Number.isFinite(roundX) || !Number.isFinite(roundY)) {
+      console.warn(`[display] invalid flushMove coordinates: x=${x} y=${y}`)
+      _moveInFlight = false
+      return
+    }
+
     const cmdArgs = [
       'dispatch', 'movewindowpixel',
-      `exact ${Math.round(x)} ${Math.round(y)},${HYPR_TITLE_MATCH}`
+      `exact ${roundX} ${roundY},${HYPR_TITLE_MATCH}`
     ]
     if (process.env.SCREEN_BUDDY_DEBUG === '1') {
       console.log(
@@ -2824,8 +2847,8 @@ function registerIpcHandlers() {
 
   ipcMain.handle('display:get-geometry', () => {
     const displays = electronScreen.getAllDisplays()
-    const targetX = lastKnownCatWinX !== null ? lastKnownCatWinX : 0
-    const targetY = lastKnownCatWinY !== null ? lastKnownCatWinY : 0
+    const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : 0
+    const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : 0
     const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
     return getDisplayCatGeometry(catDisplay)
   })
@@ -2843,35 +2866,58 @@ function registerIpcHandlers() {
     }
     if (currentWindowMode === 'drag' || mascotRepositionInProgress) return
 
-    // Incoming x,y = desired cat center on the physical screen.
-    // Convert to window top-left and clamp so the logical window stays on-screen.
-    const displays = electronScreen.getAllDisplays()
-    const isHypr = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn(`[display] invalid window:move coordinates: x=${x} y=${y}`)
+      return
+    }
 
-    let wx
-    let wy
+    try {
+      // Incoming x,y = desired cat center on the physical screen.
+      // Convert to window top-left and clamp so the logical window stays on-screen.
+      const displays = electronScreen.getAllDisplays()
+      const isHypr = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
 
-    if (isHypr) {
-      const { width: screenW, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize
-      wx = Math.round(x - NORMAL_CAT_CX)
-      wy = Math.round(y - NORMAL_CAT_CY)
-      wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-      const limitY = screenH - currentWinH
-      wy = Math.max(0, Math.min(wy, limitY))
-      mainWindow?.setPosition(wx, wy)
-      _movePending = { x: wx, y: wy }
-      if (!_moveTimer) {
-        _moveTimer = setInterval(flushMove, 33) // ~30 fps
-        flushMove() // fire immediately for the first move
+      let wx
+      let wy
+
+      if (isHypr) {
+        const { width: screenW, height: screenH } = electronScreen.getPrimaryDisplay().workAreaSize
+        wx = Math.round(x - NORMAL_CAT_CX)
+        wy = Math.round(y - NORMAL_CAT_CY)
+        wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+        const limitY = screenH - currentWinH
+        wy = Math.max(0, Math.min(wy, limitY))
+        if (Number.isFinite(wx) && Number.isFinite(wy)) {
+          const finalWx = Math.round(wx)
+          const finalWy = Math.round(wy)
+          try {
+            mainWindow?.setPosition(finalWx, finalWy)
+          } catch (posErr) {
+            console.warn('[display] mainWindow.setPosition error on Hyprland:', posErr.message)
+          }
+          _movePending = { x: finalWx, y: finalWy }
+          if (!_moveTimer) {
+            _moveTimer = setInterval(flushMove, 33) // ~30 fps
+            flushMove() // fire immediately for the first move
+          }
+        } else {
+          console.warn(`[display] invalid computed wx/wy on Hyprland: wx=${wx} wy=${wy}`)
+        }
+      } else {
+        const clamped = clampCatCenterPosition(displays, x, y, currentWinW, currentWinH, NORMAL_CAT_CX, NORMAL_CAT_CY)
+        wx = clamped.winX
+        wy = clamped.winY
+        if (Number.isFinite(wx) && Number.isFinite(wy)) {
+          setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-move')
+          lastKnownCatWinX = wx
+          lastKnownCatWinY = wy
+          onCatWindowMoved()
+        } else {
+          console.warn(`[display] invalid clamped window position: wx=${wx} wy=${wy}`)
+        }
       }
-    } else {
-      const clamped = clampCatCenterPosition(displays, x, y, currentWinW, currentWinH, NORMAL_CAT_CX, NORMAL_CAT_CY)
-      wx = clamped.winX
-      wy = clamped.winY
-      setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-move')
-      lastKnownCatWinX = wx
-      lastKnownCatWinY = wy
-      onCatWindowMoved()
+    } catch (err) {
+      console.warn(`[display] window:move error: ${err.message}`)
     }
   })
 
@@ -2925,12 +2971,18 @@ function registerIpcHandlers() {
         currentWindowMode = 'mascot'
         currentWinW = NORMAL_WIN_W
         currentWinH = NORMAL_WIN_H
-        if (lastKnownCatWinX !== null && lastKnownCatWinY !== null) {
-          mainWindow?.setPosition(lastKnownCatWinX, lastKnownCatWinY)
+        if (lastKnownCatWinX !== null && lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinX) && Number.isFinite(lastKnownCatWinY)) {
+          const recX = Math.round(lastKnownCatWinX)
+          const recY = Math.round(lastKnownCatWinY)
+          try {
+            mainWindow?.setPosition(recX, recY)
+          } catch (posErr) {
+            console.warn('[display] mainWindow.setPosition error in drag recovery:', posErr.message)
+          }
           if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
             _movePending = null
             try {
-              await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${lastKnownCatWinX} ${lastKnownCatWinY},${HYPR_TITLE_MATCH}`])
+              await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${recX} ${recY},${HYPR_TITLE_MATCH}`])
             } catch (err) {
               console.error('[main] hyprctl drag-recovery move error:', err)
             }
@@ -2966,38 +3018,52 @@ function registerIpcHandlers() {
       let verify = { applied: false, compositorSize: null, attempts: 0, elapsedMs: 0 }
       try {
         if (catX !== undefined && catY !== undefined) {
-          const displays = screen.getAllDisplays()
-          let wx
-          let wy
-          if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
-            const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize
-            wx = Math.round(catX - cx)
-            wy = Math.round(catY - cy)
-            wx = Math.max(0, Math.min(wx, screenW - currentWinW))
-            wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
-            mainWindow?.setPosition(wx, wy)
-            _movePending = null
-            try {
-              await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${wx} ${wy},${HYPR_TITLE_MATCH}`])
-              lastKnownCatWinX = wx
-              lastKnownCatWinY = wy
-            } catch (err) {
-              console.error('[main] hyprctl mascot move error:', err)
-            }
+          if (!Number.isFinite(catX) || !Number.isFinite(catY)) {
+            console.warn(`[display] invalid cat coordinates in window:mode: catX=${catX} catY=${catY}`)
           } else {
-            const clamped = clampCatCenterPosition(displays, catX, catY, currentWinW, currentWinH, cx, cy)
-            wx = clamped.winX
-            wy = clamped.winY
-            setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-mode-mascot')
-            lastKnownCatWinX = wx
-            lastKnownCatWinY = wy
-          }
+            const displays = screen.getAllDisplays()
+            let wx
+            let wy
+            if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+              const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize
+              wx = Math.round(catX - cx)
+              wy = Math.round(catY - cy)
+              wx = Math.max(0, Math.min(wx, screenW - currentWinW))
+              wy = Math.max(0, Math.min(wy, screenH - currentWinH + BOTTOM_OVERHANG_PX))
+              if (Number.isFinite(wx) && Number.isFinite(wy)) {
+                const finalWx = Math.round(wx)
+                const finalWy = Math.round(wy)
+                try {
+                  mainWindow?.setPosition(finalWx, finalWy)
+                } catch (posErr) {
+                  console.warn('[display] mainWindow.setPosition error in window:mode:', posErr.message)
+                }
+                _movePending = null
+                try {
+                  await execFileAsync('hyprctl', ['dispatch', 'movewindowpixel', `exact ${finalWx} ${finalWy},${HYPR_TITLE_MATCH}`])
+                  lastKnownCatWinX = finalWx
+                  lastKnownCatWinY = finalWy
+                } catch (err) {
+                  console.error('[main] hyprctl mascot move error:', err)
+                }
+              }
+            } else {
+              const clamped = clampCatCenterPosition(displays, catX, catY, currentWinW, currentWinH, cx, cy)
+              wx = clamped.winX
+              wy = clamped.winY
+              if (Number.isFinite(wx) && Number.isFinite(wy)) {
+                setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-mode-mascot')
+                lastKnownCatWinX = wx
+                lastKnownCatWinY = wy
+              }
+            }
 
-          verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'drag-end')
-          if (!isTreatment) {
-            persistMascotPosition(wx, wy)
+            verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'drag-end')
+            if (!isTreatment && Number.isFinite(wx) && Number.isFinite(wy)) {
+              persistMascotPosition(wx, wy)
+            }
+            console.log(`[main] window:mode -> ${mode} at window (${wx}, ${wy}) from cat center (${catX}, ${catY}) electronTitle="${mainWindow?.getTitle?.()}" hyprMatch=${HYPR_TITLE_MATCH} applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)}`)
           }
-          console.log(`[main] window:mode -> ${mode} at window (${wx}, ${wy}) from cat center (${catX}, ${catY}) electronTitle="${mainWindow?.getTitle?.()}" hyprMatch=${HYPR_TITLE_MATCH} applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)}`)
         } else {
           verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'no-coords')
         }
@@ -3053,11 +3119,15 @@ function registerIpcHandlers() {
       wx = clamped.winX
       wy = clamped.winY
     }
-    console.log(`[catwin] persist-position raw=(${x},${y}) win=(${wx},${wy}) mode=${currentWindowMode}`)
-    lastKnownCatWinX = wx
-    lastKnownCatWinY = wy
-    persistMascotPosition(wx, wy)
-    positionBubbleWindow()
+    if (Number.isFinite(wx) && Number.isFinite(wy)) {
+      console.log(`[catwin] persist-position raw=(${x},${y}) win=(${wx},${wy}) mode=${currentWindowMode}`)
+      lastKnownCatWinX = wx
+      lastKnownCatWinY = wy
+      persistMascotPosition(wx, wy)
+      positionBubbleWindow()
+    } else {
+      console.warn(`[display] invalid coordinates in window:persist-position: wx=${wx} wy=${wy}`)
+    }
   })
 
   // Mouse hit-testing & activity tracking

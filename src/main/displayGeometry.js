@@ -89,6 +89,9 @@ function getDisplayCatGeometry(display) {
       maxX: 1840,
       minY: 30,
       maxY: 971,
+      minCatX: 80,
+      maxCatX: 1840,
+      minCatY: 30,
       minWinX: 0,
       maxWinX: 1760,
       floorWinY: 941,
@@ -125,6 +128,9 @@ function getDisplayCatGeometry(display) {
     maxX,
     minY,
     maxY,
+    minCatX: minX,
+    maxCatX: maxX,
+    minCatY: minY,
     minWinX,
     maxWinX,
     floorWinY,
@@ -164,12 +170,14 @@ function getDefaultMascotPosition(primaryDisplay) {
  * @returns {{ x: number, y: number, display: object }}
  */
 function clampWindowPosition(displays, x, y, winW = NORMAL_WIN_W, winH = NORMAL_WIN_H) {
+  const safeX = Number.isFinite(x) ? x : 0
+  const safeY = Number.isFinite(y) ? y : 0
   if (!Array.isArray(displays) || displays.length === 0) {
-    return { x: Math.round(x || 0), y: Math.round(y || 0), display: null }
+    return { x: Math.round(safeX), y: Math.round(safeY), display: null }
   }
 
   // Determine which display contains or is closest to this window position
-  const targetDisplay = getDisplayForPoint(displays, x + winW / 2, y + winH / 2) || displays[0]
+  const targetDisplay = getDisplayForPoint(displays, safeX + winW / 2, safeY + winH / 2) || displays[0]
   const wa = targetDisplay.workArea || targetDisplay.bounds
 
   const minX = wa.x
@@ -177,8 +185,8 @@ function clampWindowPosition(displays, x, y, winW = NORMAL_WIN_W, winH = NORMAL_
   const minY = wa.y
   const maxY = Math.max(minY, wa.y + wa.height - winH)
 
-  const clampedX = Math.round(Math.max(minX, Math.min(x, maxX)))
-  const clampedY = Math.round(Math.max(minY, Math.min(y, maxY)))
+  const clampedX = Math.round(Math.max(minX, Math.min(safeX, maxX)))
+  const clampedY = Math.round(Math.max(minY, Math.min(safeY, maxY)))
 
   return {
     x: clampedX,
@@ -193,18 +201,58 @@ function clampWindowPosition(displays, x, y, winW = NORMAL_WIN_W, winH = NORMAL_
  * @param {Array<object>} displays
  * @param {number} catX
  * @param {number} catY
- * @returns {{ x: number, y: number, display: object, geometry: object }}
+ * @param {number} [winW=NORMAL_WIN_W]
+ * @param {number} [winH=NORMAL_WIN_H]
+ * @param {number} [catCx=NORMAL_CAT_CX]
+ * @param {number} [catCy=NORMAL_CAT_CY]
+ * @returns {{ x: number, y: number, winX: number, winY: number, display: object, geometry: object }}
  */
-function clampCatCenterPosition(displays, catX, catY) {
-  const targetDisplay = getDisplayForPoint(displays, catX, catY) || (displays && displays[0])
+function clampCatCenterPosition(
+  displays,
+  catX,
+  catY,
+  winW = NORMAL_WIN_W,
+  winH = NORMAL_WIN_H,
+  catCx = NORMAL_CAT_CX,
+  catCy = NORMAL_CAT_CY
+) {
+  const safeCatX = Number.isFinite(catX) ? catX : catCx
+  const safeCatY = Number.isFinite(catY) ? catY : catCy
+  const targetDisplay = getDisplayForPoint(displays, safeCatX, safeCatY) || (displays && displays[0])
   const geom = getDisplayCatGeometry(targetDisplay)
+  const wa = (targetDisplay && (targetDisplay.workArea || targetDisplay.bounds)) || { x: 0, y: 0, width: 1920, height: 1080 }
 
-  const clampedX = Math.round(Math.max(geom.minX, Math.min(catX, geom.maxX)))
-  const clampedY = Math.round(Math.max(geom.minY, Math.min(catY, geom.maxY)))
+  let minCatX
+  let maxCatX
+  let minCatY
+  let maxCatY
+
+  if (winW === NORMAL_WIN_W && winH === NORMAL_WIN_H && catCx === NORMAL_CAT_CX && catCy === NORMAL_CAT_CY) {
+    minCatX = geom.minX
+    maxCatX = geom.maxX
+    minCatY = geom.minY
+    maxCatY = geom.maxY
+  } else {
+    const minWinX = Math.round(wa.x)
+    const maxWinX = Math.max(minWinX, Math.round(wa.x + wa.width - winW))
+    const minWinY = Math.round(wa.y)
+    const maxWinY = Math.max(minWinY, Math.round(wa.y + wa.height - winH))
+    minCatX = Math.round(minWinX + catCx)
+    maxCatX = Math.max(minCatX, Math.round(maxWinX + catCx))
+    minCatY = Math.round(minWinY + catCy)
+    maxCatY = Math.max(minCatY, Math.round(maxWinY + catCy))
+  }
+
+  const clampedX = Math.round(Math.max(minCatX, Math.min(safeCatX, maxCatX)))
+  const clampedY = Math.round(Math.max(minCatY, Math.min(safeCatY, maxCatY)))
+  const winX = Math.round(clampedX - catCx)
+  const winY = Math.round(clampedY - catCy)
 
   return {
     x: clampedX,
     y: clampedY,
+    winX,
+    winY,
     display: targetDisplay,
     geometry: geom,
   }
@@ -225,25 +273,30 @@ function clampCatCenterPosition(displays, catX, catY) {
 function computeBubblePosition(display, catWinX, catWinY, bubbleW, bubbleH, mode = 'mascot') {
   const wa = display?.workArea || display?.bounds || { x: 0, y: 0, width: 1920, height: 1080 }
 
+  const safeCatWinX = Number.isFinite(catWinX) ? catWinX : wa.x
+  const safeCatWinY = Number.isFinite(catWinY) ? catWinY : wa.y
+  const safeBubbleW = Number.isFinite(bubbleW) ? Math.max(1, bubbleW) : 320
+  const safeBubbleH = Number.isFinite(bubbleH) ? Math.max(1, bubbleH) : 200
+
   const isTreatment = mode === 'treatment'
   const cx = isTreatment ? TREATMENT_CAT_CX : NORMAL_CAT_CX
   const cy = isTreatment ? TREATMENT_CAT_CY : NORMAL_CAT_CY
   const halfHeight = isTreatment ? 180 : 90
 
-  const spriteTop = catWinY + cy - halfHeight
-  const spriteBottom = catWinY + cy + halfHeight
+  const spriteTop = safeCatWinY + cy - halfHeight
+  const spriteBottom = safeCatWinY + cy + halfHeight
 
-  const anchorTop = isTreatment ? spriteTop : catWinY + NORMAL_VISIBLE_TOP_IN_WIN
+  const anchorTop = isTreatment ? spriteTop : safeCatWinY + NORMAL_VISIBLE_TOP_IN_WIN
 
   // Position bubble above sprite; fall back below if it goes outside work area top
-  let targetY = anchorTop - 8 - bubbleH
+  let targetY = anchorTop - 8 - safeBubbleH
   if (targetY < wa.y) {
-    targetY = Math.min(spriteBottom + 8, wa.y + wa.height - bubbleH)
+    targetY = Math.min(spriteBottom + 8, wa.y + wa.height - safeBubbleH)
   }
 
   // Horizontally center aligned with mascot center
-  let targetX = catWinX + cx - Math.round(bubbleW / 2)
-  targetX = Math.max(wa.x, Math.min(targetX, wa.x + wa.width - bubbleW))
+  let targetX = safeCatWinX + cx - Math.round(safeBubbleW / 2)
+  targetX = Math.max(wa.x, Math.min(targetX, wa.x + wa.width - safeBubbleW))
 
   return {
     x: Math.round(targetX),

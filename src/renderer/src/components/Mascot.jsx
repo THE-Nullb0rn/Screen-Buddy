@@ -3247,19 +3247,19 @@ export default function Mascot({
         poseRef.current = 'idle'
         setPose('idle')
         playOneShot('wakeup', () => {
-          proceedCallWalk(payload?.x)
+          proceedCallWalk(payload?.cursorX ?? payload?.x)
         })
       } else {
         cancelIdleAndOneShot()
-        proceedCallWalk(payload?.x)
+        proceedCallWalk(payload?.cursorX ?? payload?.x)
       }
     })
 
     const proceedCallWalk = (destX) => {
       const geom = displayGeometryRef.current
       const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-      const minX = geom ? geom.minCatX : NORMAL_CAT_CX
-      const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
+      const minX = geom ? (geom.minCatX ?? geom.minX ?? NORMAL_CAT_CX) : NORMAL_CAT_CX
+      const maxX = geom ? (geom.maxCatX ?? geom.maxX ?? Math.max(minX, screenW - 160 + NORMAL_CAT_CX)) : Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
       const targetX = clamp(typeof destX === 'number' ? destX : posRef.current.x, minX, maxX)
 
       const dist = Math.abs(targetX - posRef.current.x)
@@ -4678,16 +4678,21 @@ export default function Mascot({
   // transform, so we skip Hyprland window movement.
   useEffect(() => {
     if (window.api?.moveWindow && !draggingRef.current) {
-      // Prevent stale/redundant moveWindow IPCs if we already sent this position
-      // (e.g. via setWindowMode('mascot', x, y) on drag release)
-      if (lastSentMoveRef.current.x === targetX && lastSentMoveRef.current.y === targetY) {
+      const rx = Math.round(targetX)
+      const ry = Math.round(targetY)
+      if (!Number.isFinite(rx) || !Number.isFinite(ry)) {
         return
       }
-      lastSentMoveRef.current = { x: targetX, y: targetY }
-      if (DEBUG_MOVE_WINDOW) {
-        console.log(`[Renderer] calling moveWindow(${targetX}, ${targetY}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
+      // Prevent stale/redundant moveWindow IPCs if we already sent this position
+      // (e.g. via setWindowMode('mascot', x, y) on drag release)
+      if (lastSentMoveRef.current.x === rx && lastSentMoveRef.current.y === ry) {
+        return
       }
-      window.api.moveWindow(targetX, targetY)
+      lastSentMoveRef.current = { x: rx, y: ry }
+      if (DEBUG_MOVE_WINDOW) {
+        console.log(`[Renderer] calling moveWindow(${rx}, ${ry}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
+      }
+      window.api.moveWindow(rx, ry)
     }
   }, [targetX, targetY])
 
