@@ -38,23 +38,8 @@ jobs:
         run: npm ci
 
       - name: Verify lint baseline
-        run: |
-          npx eslint src --ext .js,.jsx || node -e '
-            const cp = require("child_process");
-            try {
-              const out = cp.execSync("npx eslint src --ext .js,.jsx -f json", { encoding: "utf8" });
-              process.exit(0);
-            } catch (err) {
-              const report = JSON.parse(err.stdout || "[]");
-              const errors = report.reduce((sum, f) => sum + f.errorCount, 0);
-              const warnings = report.reduce((sum, f) => sum + f.warningCount, 0);
-              console.log(`Lint check: ${errors} errors, ${warnings} warnings (baseline: 7 errors, 2 warnings)`);
-              if (errors > 7 || warnings > 2) {
-                console.error("New lint errors or warnings detected above baseline!");
-                process.exit(1);
-              }
-            }
-          '
+        shell: bash
+        run: node scripts/lint-baseline.js
 
       - name: Vite build
         run: npm run build
