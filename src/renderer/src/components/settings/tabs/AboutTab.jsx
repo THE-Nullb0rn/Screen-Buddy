@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Row, Button } from '../ui'
+import { Card, MasonryGrid, Row, Button } from '../ui'
 import {
   Cat,
   RefreshCw,
@@ -152,6 +152,7 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
         )}
       </Card>
 
+      <MasonryGrid>
       <Card
         title="App information"
         subtitle="General information about Screen Buddy."
@@ -262,6 +263,7 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
           </Button>
         </Row>
       </Card>
+      </MasonryGrid>
     </>
   )
 }

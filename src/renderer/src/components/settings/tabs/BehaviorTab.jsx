@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Card, Row, Toggle, Select, Button } from '../ui'
+import { Card, MasonryGrid, Row, Toggle, Select, Button } from '../ui'
 import {
   Keyboard,
   MousePointer,
@@ -50,10 +50,8 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
 
   const actionOptions = [
     { value: 'none', label: 'Do nothing' },
-    { value: 'react', label: 'Happy reaction' },
     { value: 'chat', label: 'Open chat' },
     { value: 'settings', label: 'Open settings' },
-    { value: 'pause', label: 'Toggle pause' },
   ]
 
   const hungerRateOptions = [
@@ -74,7 +72,7 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
   ]
 
   return (
-    <>
+    <MasonryGrid>
       <Card
         title="Activity Reactions"
         subtitle="Choose what wakes up Screen Buddy and how it reacts."
@@ -254,32 +252,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         </Row>
 
         <Row
-          icon={MousePointer}
-          label="Left click"
-          hint="When you click the left button"
-        >
-          <Select
-            value={settings.leftClickAction || 'react'}
-            onChange={(e) => saveSettingsPatch({ leftClickAction: e.target.value })}
-            options={actionOptions}
-            ariaLabel="Left click action"
-          />
-        </Row>
-
-        <Row
-          icon={MousePointer}
-          label="Right click"
-          hint="When you click the right button"
-        >
-          <Select
-            value={settings.rightClickAction || 'none'}
-            onChange={(e) => saveSettingsPatch({ rightClickAction: e.target.value })}
-            options={actionOptions}
-            ariaLabel="Right click action"
-          />
-        </Row>
-
-        <Row
           icon={Mouse}
           label="Left double click"
           hint="When you double-click the left button"
@@ -373,6 +345,6 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           />
         </Row>
       </Card>
-    </>
+    </MasonryGrid>
   )
 }

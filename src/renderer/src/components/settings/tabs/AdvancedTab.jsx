@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Row, Toggle, Button } from '../ui'
+import { Card, MasonryGrid, Row, Toggle, Button } from '../ui'
 import {
   RefreshCw,
   Zap,
@@ -114,7 +114,7 @@ export default function AdvancedTab({
   const fpsOptions = [30, 60]
 
   return (
-    <>
+    <MasonryGrid>
       <Card
         title="Updates"
         subtitle="Check for updates and manage update settings."
@@ -423,6 +423,6 @@ export default function AdvancedTab({
           </div>
         )}
       </Card>
-    </>
+    </MasonryGrid>
   )
 }

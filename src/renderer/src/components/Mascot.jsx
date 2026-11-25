@@ -306,11 +306,8 @@ export default function Mascot({
   clickToInteract = true,
   dragBehavior = true,
   dragButton = 'right',
-  leftClickAction = 'react',
-  rightClickAction = 'none',
   doubleClickAction = 'chat',
   rightDoubleClickAction = 'settings',
-  onTogglePause,
   notificationVisible = false,
   // Coordinates are the global cat centre; App converts the persisted
   // BrowserWindow top-left position before passing this value.
@@ -582,7 +579,7 @@ export default function Mascot({
     clearTimeout(rightClickTimerRef.current)
     leftClickTimerRef.current = null
     rightClickTimerRef.current = null
-  }, [clickToInteract, dragBehavior, dragButton, leftClickAction, rightClickAction, doubleClickAction, rightDoubleClickAction])
+  }, [clickToInteract, dragBehavior, dragButton, doubleClickAction, rightDoubleClickAction])
 
   const triggerAccent = useCallback((cls) => {
     clearTimeout(accentTimerRef.current)
@@ -2109,35 +2106,37 @@ export default function Mascot({
     }
   }, [hungerState, onFeed, performCareAction])
 
-  const executeAction = useCallback((action) => {
+  const handleBuiltInLeftClick = useCallback(() => {
+    lastInteractRef.current = Date.now()
+    if (poseRef.current === 'sleep') {
+      const rollAnnoyed = Math.random() < 0.50
+      if (rollAnnoyed) {
+        suppressWakeStretchRef.current = true
+        wakeTo('idle', () => {
+          suppressWakeStretchRef.current = false
+          setRoamEpoch((n) => n + 1)
+          performReactionRef.current?.('annoyed', 'wake_click')
+        })
+      } else {
+        wakeTo('idle', () => {
+          setRoamEpoch((n) => n + 1)
+        })
+      }
+      onWakeUpClick?.()
+    } else if (hungerState === 'ACTIVE') {
+      handleFeedTrigger()
+    } else {
+      triggerAccentRef.current('is-stretch')
+      onLeftClickReact?.()
+      if (Math.random() < 0.40) {
+        playMeowRef.current?.('click')
+      }
+    }
+  }, [hungerState, handleFeedTrigger, wakeTo, onWakeUpClick, onLeftClickReact])
+
+  const executeDoubleClickAction = useCallback((action) => {
     lastInteractRef.current = Date.now()
     switch (action) {
-      case 'react':
-        if (poseRef.current === 'sleep') {
-          const rollAnnoyed = Math.random() < 0.50
-          if (rollAnnoyed) {
-            suppressWakeStretchRef.current = true
-            wakeTo('idle', () => {
-              suppressWakeStretchRef.current = false
-              setRoamEpoch((n) => n + 1)
-              performReactionRef.current?.('annoyed', 'wake_click')
-            })
-          } else {
-            wakeTo('idle', () => {
-              setRoamEpoch((n) => n + 1)
-            })
-          }
-          onWakeUpClick?.()
-        } else if (hungerState === 'ACTIVE') {
-          handleFeedTrigger()
-        } else {
-          triggerAccentRef.current('is-stretch')
-          onLeftClickReact?.()
-          if (Math.random() < 0.40) {
-            playMeowRef.current?.('click')
-          }
-        }
-        break
       case 'chat':
         console.log('[chat] mascot double-click action triggered')
         if (onChatOpen) onChatOpen()
@@ -2145,14 +2144,11 @@ export default function Mascot({
       case 'settings':
         if (window.api?.openSettings) window.api.openSettings()
         break
-      case 'pause':
-        if (onTogglePause) onTogglePause()
-        break
       case 'none':
       default:
         break
     }
-  }, [hungerState, handleFeedTrigger, onChatOpen, onTogglePause, wakeTo, onWakeUpClick, onLeftClickReact])
+  }, [onChatOpen])
 
   const prevFeedSignalRef = useRef(feedSignal)
   useEffect(() => {
@@ -3300,25 +3296,44 @@ export default function Mascot({
       chaseStartTimeoutRef.current = null
       const startTime = performance.now()
       const duration = 400
+      const leapDist = Math.abs(lockedTargetX - lockedStartX)
       const easeOut = (t) => 1 - Math.pow(1 - t, 3)
+      let chaseRafCount = 0
+      let chaseIpcMs = 0
+      let chaseIpcCount = 0
 
       const step = (tNow) => {
         if (draggingRef.current || dragPointerDownRef.current) {
           chaseRafRef.current = null
           return
         }
+        chaseRafCount += 1
         const elapsed = tNow - startTime
         const t = Math.min(1, elapsed / duration)
         const eased = easeOut(t)
         const currentX = lockedStartX + (lockedTargetX - lockedStartX) * eased
         posRef.current = { x: currentX, y: posRef.current.y }
         setX(currentX)
+        const ipcStart = performance.now()
         window.api?.moveWindow?.(Math.round(currentX), Math.round(posRef.current.y))
+        chaseIpcMs += performance.now() - ipcStart
+        chaseIpcCount += 1
 
         if (t < 1) {
           chaseRafRef.current = requestAnimationFrame(step)
         } else {
           chaseRafRef.current = null
+          const actualMs = Math.max(1, Math.round(tNow - startTime))
+          const avgPxS = leapDist / (actualMs / 1000)
+          const strideL = getStrideForAnimRef.current?.('walk') ?? WALK_PX_PER_CYCLE
+          const cycles = strideL > 0 ? (leapDist / strideL) : 0
+          const rafHz = chaseRafCount / (actualMs / 1000)
+          const avgMoveIpcMs = chaseIpcCount > 0 ? (chaseIpcMs / chaseIpcCount) : 0
+          console.log(
+            `[walk] kind=chase dist=${Math.round(leapDist)} planned=${duration} actual=${actualMs} ` +
+            `avgPxS=${avgPxS.toFixed(1)} cycles=${cycles.toFixed(2)} L=${Math.round(strideL)} ` +
+            `rafHz=${rafHz.toFixed(1)} avgMoveIpcMs=${avgMoveIpcMs.toFixed(3)}`
+          )
           window.api?.persistPosition?.(Math.round(lockedTargetX), Math.round(posRef.current.y))
         }
       }
@@ -3971,7 +3986,7 @@ export default function Mascot({
         leftClickTimerRef.current = null
         lastLeftClickRef.current = { time: 0, x: 0, y: 0 }
         if (doubleClickAction !== 'none') {
-          executeAction(doubleClickAction)
+          executeDoubleClickAction(doubleClickAction)
         }
       } else {
         lastLeftClickRef.current = { time: now, x: eventX, y: eventY }
@@ -3979,12 +3994,12 @@ export default function Mascot({
           clearTimeout(leftClickTimerRef.current)
           leftClickTimerRef.current = setTimeout(() => {
             leftClickTimerRef.current = null
-            executeAction(leftClickAction)
+            handleBuiltInLeftClick()
           }, CLICK_MAX_DURATION)
         } else {
           clearTimeout(leftClickTimerRef.current)
           leftClickTimerRef.current = null
-          executeAction(leftClickAction)
+          handleBuiltInLeftClick()
         }
       }
     } else if (b === 2) {
@@ -3998,21 +4013,13 @@ export default function Mascot({
         rightClickTimerRef.current = null
         lastRightClickRef.current = { time: 0, x: 0, y: 0 }
         if (rightDoubleClickAction !== 'none') {
-          executeAction(rightDoubleClickAction)
+          executeDoubleClickAction(rightDoubleClickAction)
         }
       } else {
         lastRightClickRef.current = { time: now, x: eventX, y: eventY }
-        if (rightDoubleClickAction !== 'none') {
-          clearTimeout(rightClickTimerRef.current)
-          rightClickTimerRef.current = setTimeout(() => {
-            rightClickTimerRef.current = null
-            executeAction(rightClickAction)
-          }, CLICK_MAX_DURATION)
-        } else {
-          clearTimeout(rightClickTimerRef.current)
-          rightClickTimerRef.current = null
-          executeAction(rightClickAction)
-        }
+        clearTimeout(rightClickTimerRef.current)
+        rightClickTimerRef.current = null
+        // Plain single right click intentionally does nothing (drag button only)
       }
     }
   }

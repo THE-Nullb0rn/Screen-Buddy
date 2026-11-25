@@ -285,7 +285,6 @@ const HYPR_TITLE_MATCH = `title:^(${WINDOW_TITLE})$`
 const HOTKEY_ACCELERATOR = 'Control+Alt+P'
 const HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-toggle')
 const CHAT_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-chat')
-const SETTINGS_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-settings')
 const CALL_HOTKEY_CONTROL_FILE = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'screen-buddy-call')
 
 const initialDebugEnv = process.env.SCREEN_BUDDY_DEBUG === '1'
@@ -373,7 +372,6 @@ app.whenReady().then(async () => {
   if (process.platform === 'linux') {
     installHyprlandHotkeyFallback()
     installChatHotkeyFallback()
-    installSettingsHotkeyFallback()
     installCallHotkeyFallback()
     registerGlobalPauseShortcut()
     registerGlobalCallShortcut()
@@ -600,7 +598,6 @@ app.on('will-quit', () => {
     removeHyprlandHotkeyFallback()
     removeChatHotkeyFallback()
     stopEyeTrackingPolling?.()
-    removeSettingsHotkeyFallback()
     removeCallHotkeyFallback()
   } else {
     stopEyeTrackingPolling?.()
@@ -983,33 +980,6 @@ function removeChatHotkeyFallback() {
   }
 }
 
-// ─── Settings hotkey (Hyprland control file) ────────────────────────────────
-
-function installSettingsHotkeyFallback() {
-  if (process.platform !== 'linux') return
-  try {
-    fs.writeFileSync(SETTINGS_CONTROL_FILE, '', { mode: 0o600 })
-    fs.watchFile(SETTINGS_CONTROL_FILE, { interval: 250 }, (current, previous) => {
-      if (current.mtimeMs === previous.mtimeMs) return
-      console.log('[main] Settings control file triggered; opening settings window')
-      openSettingsWindow()
-    })
-    console.log(`[main] Settings fallback ready; control file: ${SETTINGS_CONTROL_FILE}`)
-  } catch (err) {
-    console.error('[main] Could not create settings control file:', err)
-  }
-}
-
-function removeSettingsHotkeyFallback() {
-  if (process.platform !== 'linux') return
-  try {
-    fs.unwatchFile(SETTINGS_CONTROL_FILE)
-    if (fs.existsSync(SETTINGS_CONTROL_FILE)) fs.unlinkSync(SETTINGS_CONTROL_FILE)
-  } catch (err) {
-    console.warn('[main] Could not remove settings control file:', err.message)
-  }
-}
-
 // ─── Call cat hotkey (CTRL+ALT+C via Hyprland control file / globalShortcut) ─
 
 async function triggerCallCat() {
@@ -1127,7 +1097,6 @@ function registerWindowsHotkeys() {
     { key: 'shortcutCallCat', label: 'Call cat', handler: () => triggerCallCat() },
     { key: 'shortcutTogglePause', label: 'Toggle pause', handler: () => toggleManualPause('globalShortcut') },
     { key: 'shortcutChat', label: 'Open AI chat', handler: () => triggerChatOpen('hotkey') },
-    { key: 'shortcutSettings', label: 'Open settings', handler: () => openSettingsWindow() },
   ]
   const nextStatus = {}
   for (const spec of specs) {
@@ -2042,6 +2011,63 @@ function openSettingsWindow(initialTab = null) {
     )
   }
 
+  const logSettingsWinEvent = (evt) => {
+    if (process.env.SCREEN_BUDDY_DEBUG !== '1' || !settingsWindow || settingsWindow.isDestroyed()) return
+    const b = settingsWindow.getBounds()
+    const n = settingsWindow.getNormalBounds()
+    const d = electronScreen.getDisplayMatching(b)
+    const wa = d?.workArea || d?.bounds
+    console.log(
+      `[settings-win] event=${evt} bounds=${JSON.stringify(b)} normal=${JSON.stringify(n)} ` +
+      `max=${settingsWindow.isMaximized()} wa=${JSON.stringify(wa)}`
+    )
+  }
+
+  let isClampingBounds = false
+  const ensureSettingsTitleBarVisible = (reason, clampFull = false) => {
+    if (isClampingBounds || !settingsWindow || settingsWindow.isDestroyed()) return
+    if (settingsWindow.isMaximized() || settingsWindow.isFullScreen()) return
+    const cur = settingsWindow.getBounds()
+    const allDisplays = electronScreen.getAllDisplays()
+    const match = allDisplays.length > 0
+      ? (getDisplayForPoint(allDisplays, cur.x + cur.width / 2, cur.y + cur.height / 2) || electronScreen.getDisplayMatching(cur) || electronScreen.getPrimaryDisplay())
+      : electronScreen.getPrimaryDisplay()
+    const wa = match.workArea || match.bounds
+    if (clampFull) {
+      const clamped = clampSettingsBoundsToDisplays(allDisplays, cur, match)
+      if (cur.x !== clamped.x || cur.y !== clamped.y || cur.width !== clamped.width || cur.height !== clamped.height) {
+        isClampingBounds = true
+        try {
+          settingsWindow.setBounds({ x: clamped.x, y: clamped.y, width: clamped.width, height: clamped.height })
+        } finally {
+          isClampingBounds = false
+        }
+        if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+          console.log(`[settings-win] clamped (${reason}) ${JSON.stringify(cur)} -> ${JSON.stringify(clamped)}`)
+        }
+      }
+      return
+    }
+    const clampedW = Math.min(cur.width, wa.width)
+    const clampedH = Math.min(cur.height, wa.height)
+    const maxY = Math.max(wa.y, wa.y + wa.height - clampedH)
+    const clampedY = Math.max(wa.y, Math.min(cur.y, maxY))
+    const minVisibleX = wa.x - clampedW + 80
+    const maxVisibleX = wa.x + wa.width - 80
+    const clampedX = Math.max(minVisibleX, Math.min(cur.x, maxVisibleX))
+    if (cur.x !== clampedX || cur.y !== clampedY || cur.width !== clampedW || cur.height !== clampedH) {
+      isClampingBounds = true
+      try {
+        settingsWindow.setBounds({ x: Math.round(clampedX), y: Math.round(clampedY), width: Math.round(clampedW), height: Math.round(clampedH) })
+      } finally {
+        isClampingBounds = false
+      }
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        console.log(`[settings-win] clamped (${reason}) ${JSON.stringify(cur)} -> ${JSON.stringify({ x: clampedX, y: clampedY, width: clampedW, height: clampedH })}`)
+      }
+    }
+  }
+
   let boundsSaveTimer = null
   const persistSettingsWindowBounds = () => {
     if (!settingsWindow || settingsWindow.isDestroyed()) return
@@ -2070,21 +2096,34 @@ function openSettingsWindow(initialTab = null) {
       saveSettings(settings)
     }
   }
-  const scheduleBoundsSave = () => {
+  const scheduleBoundsSave = (evtName) => {
+    logSettingsWinEvent(evtName)
     if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
     boundsSaveTimer = setTimeout(() => {
       boundsSaveTimer = null
+      ensureSettingsTitleBarVisible(evtName, false)
       persistSettingsWindowBounds()
-    }, 250)
+    }, 200)
   }
 
-  settingsWindow.on('resize', scheduleBoundsSave)
-  settingsWindow.on('move', scheduleBoundsSave)
+  settingsWindow.on('resize', () => scheduleBoundsSave('resize'))
+  settingsWindow.on('move', () => scheduleBoundsSave('move'))
+  settingsWindow.on('resized', () => {
+    logSettingsWinEvent('resized')
+    ensureSettingsTitleBarVisible('resized', false)
+    persistSettingsWindowBounds()
+  })
+  settingsWindow.on('moved', () => {
+    logSettingsWinEvent('moved')
+    ensureSettingsTitleBarVisible('moved', false)
+    persistSettingsWindowBounds()
+  })
   settingsWindow.on('maximize', () => {
     if (boundsSaveTimer) {
       clearTimeout(boundsSaveTimer)
       boundsSaveTimer = null
     }
+    logSettingsWinEvent('maximize')
     persistSettingsWindowBounds()
   })
   settingsWindow.on('unmaximize', () => {
@@ -2092,19 +2131,12 @@ function openSettingsWindow(initialTab = null) {
       clearTimeout(boundsSaveTimer)
       boundsSaveTimer = null
     }
-    if (!settingsWindow || settingsWindow.isDestroyed()) return
-    const cur = settingsWindow.getBounds()
-    const allDisplays = electronScreen.getAllDisplays()
-    const clamped = clampSettingsBoundsToDisplays(allDisplays, cur, electronScreen.getPrimaryDisplay())
-    if (
-      cur.x !== clamped.x ||
-      cur.y !== clamped.y ||
-      cur.width !== clamped.width ||
-      cur.height !== clamped.height
-    ) {
-      settingsWindow.setBounds({ x: clamped.x, y: clamped.y, width: clamped.width, height: clamped.height })
-    }
+    logSettingsWinEvent('unmaximize')
+    ensureSettingsTitleBarVisible('unmaximize', true)
     persistSettingsWindowBounds()
+  })
+  settingsWindow.on('show', () => {
+    ensureSettingsTitleBarVisible('show', false)
   })
   settingsWindow.on('close', () => {
     if (boundsSaveTimer) {
@@ -2195,6 +2227,12 @@ function createOverlayWindow() {
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.log('[main] RENDERER CRASHED:', details);
   });
+
+  mainWindow.webContents.on('console-message', (_event, _level, message) => {
+    if (typeof message === 'string' && message.startsWith('[walk]')) {
+      console.log(message)
+    }
+  })
 
   mainWindow.webContents.on('did-finish-load', () => {
     // Prevent the renderer <title> from changing the Hyprland-visible title.
@@ -2903,7 +2941,7 @@ function registerIpcHandlers() {
     notificationsManager?.applySettings()
 
     if (process.platform === 'win32') {
-      const shortcutKeys = ['shortcutCallCat', 'shortcutTogglePause', 'shortcutChat', 'shortcutSettings']
+      const shortcutKeys = ['shortcutCallCat', 'shortcutTogglePause', 'shortcutChat']
       if (shortcutKeys.some((k) => changedKeys.includes(k))) {
         registerWindowsHotkeys()
       }

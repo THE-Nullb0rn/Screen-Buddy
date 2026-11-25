@@ -24,7 +24,7 @@ body {
   background: transparent !important;
   width: 100%;
   height: 100%;
-  overflow: hidden; /* Overlay must not scroll */
+  overflow: clip; /* Prevent any programmatic/focus document scroll */
 
   /* System-UI font stack — no network requests */
   font-family:
@@ -45,6 +45,7 @@ body {
 #root {
   width: 100%;
   height: 100%;
+  overflow: clip;
   /* Pointer events are off by default on the whole overlay.
      Individual interactive components turn them on via the main process IPC.
      Set this so React rendered elements don't accidentally capture events. */

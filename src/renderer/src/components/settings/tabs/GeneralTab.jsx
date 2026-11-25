@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card, Row, Toggle, Slider } from '../ui'
+import { Card, MasonryGrid, Row, Toggle, Slider } from '../ui'
 import { Power, Pause, RefreshCw, Volume2, Volume, MessageSquare } from 'lucide-react'
 
 export default function GeneralTab({ settings, saveSettingsPatch }) {
@@ -11,7 +11,7 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
   }
 
   return (
-    <>
+    <MasonryGrid>
       <Card title="App" icon={Power}>
         <Row
           icon={Power}
@@ -87,6 +87,6 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
           />
         </Row>
       </Card>
-    </>
+    </MasonryGrid>
   )
 }

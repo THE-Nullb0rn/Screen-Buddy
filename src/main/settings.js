@@ -31,7 +31,7 @@ if (process.platform === 'win32') {
   SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
 }
 
-const CLICK_ACTIONS = ['none', 'react', 'chat', 'settings', 'pause']
+const CLICK_ACTIONS = ['none', 'chat', 'settings']
 const DRAG_BUTTONS = ['left', 'right', 'middle']
 
 const ALLOWED_REMINDER_ICONS = [
@@ -292,16 +292,13 @@ const DEFAULT_SETTINGS = {
   clickToInteract: true,
   dragBehavior: true,
   dragButton: 'right',
-  leftClickAction: 'react',
-  rightClickAction: 'none',
   doubleClickAction: 'chat',
   rightDoubleClickAction: 'settings',
   pettingEffects: true,
   catRemarks: true,
-  shortcutCallCat: 'Ctrl+Alt+C',
+  shortcutCallCat: process.platform === 'win32' ? 'Ctrl+Alt+Shift+C' : 'Ctrl+Alt+C',
   shortcutTogglePause: 'Ctrl+Alt+P',
-  shortcutChat: process.platform === 'win32' ? 'Ctrl+Alt+Shift+C' : 'Ctrl+Super+C',
-  shortcutSettings: process.platform === 'win32' ? 'Ctrl+Alt+Shift+S' : 'Super+Shift+S',
+  shortcutChat: process.platform === 'win32' ? 'Ctrl+Alt+C' : 'Ctrl+Super+C',
   hungerEnabled: false,
   hungerRate: 'normal',
   hungerNotify: true,
@@ -393,22 +390,35 @@ function loadSettings() {
       }
     }
 
-    // Migration for interaction actions: only drop values that are invalid for the new enums
+    // Migration for simplified interaction actions & swapped Windows default hotkeys
     if (saved && typeof saved === 'object') {
-      if (saved.rightClickAction !== undefined && !CLICK_ACTIONS.includes(saved.rightClickAction)) {
+      if ('rightClickAction' in saved) {
         delete saved.rightClickAction
         needsSave = true
       }
-      if (saved.leftClickAction !== undefined && !CLICK_ACTIONS.includes(saved.leftClickAction)) {
+      if ('leftClickAction' in saved) {
         delete saved.leftClickAction
         needsSave = true
       }
+      if ('shortcutSettings' in saved) {
+        delete saved.shortcutSettings
+        needsSave = true
+      }
       if (saved.doubleClickAction !== undefined && !CLICK_ACTIONS.includes(saved.doubleClickAction)) {
-        delete saved.doubleClickAction
+        saved.doubleClickAction = 'chat'
         needsSave = true
       }
       if (saved.rightDoubleClickAction !== undefined && !CLICK_ACTIONS.includes(saved.rightDoubleClickAction)) {
-        delete saved.rightDoubleClickAction
+        saved.rightDoubleClickAction = 'settings'
+        needsSave = true
+      }
+      if (
+        process.platform === 'win32' &&
+        saved.shortcutCallCat === 'Ctrl+Alt+C' &&
+        saved.shortcutChat === 'Ctrl+Alt+Shift+C'
+      ) {
+        saved.shortcutCallCat = 'Ctrl+Alt+Shift+C'
+        saved.shortcutChat = 'Ctrl+Alt+C'
         needsSave = true
       }
       if (saved.dragButton !== undefined && !DRAG_BUTTONS.includes(saved.dragButton)) {
@@ -793,13 +803,18 @@ function validateSettingsUpdate(patch) {
 
       case 'shortcutCallCat':
       case 'shortcutTogglePause':
-      case 'shortcutChat':
-      case 'shortcutSettings': {
+      case 'shortcutChat': {
         if (typeof value === 'string' && value.trim() && value.trim().length <= 64) {
           sanitized[key] = value.trim()
         } else {
           debugLog(key, 'must be a non-empty string (max 64 chars)')
         }
+        break
+      }
+
+      case 'shortcutSettings':
+      case 'leftClickAction':
+      case 'rightClickAction': {
         break
       }
 
@@ -839,8 +854,6 @@ function validateSettingsUpdate(patch) {
         break
       }
 
-      case 'leftClickAction':
-      case 'rightClickAction':
       case 'doubleClickAction':
       case 'rightDoubleClickAction': {
         if (typeof value === 'string' && CLICK_ACTIONS.includes(value)) {

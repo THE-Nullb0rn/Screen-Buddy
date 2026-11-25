@@ -18,7 +18,7 @@ export default function SettingsApp() {
   if (!settings) return null
 
   return (
-    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', maxHeight: '100vh', overflow: 'clip' }}>
       <SettingsModal
         settings={settings}
         onClose={handleClose}

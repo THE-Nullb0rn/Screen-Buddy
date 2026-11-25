@@ -110,6 +110,16 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
   const [updateState, setUpdateState] = useState(null)
   const saveTimerRef = useRef(null)
   const tabButtonRefs = useRef({})
+  const contentRef = useRef(null)
+
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = 0
+    }
+    if (document.scrollingElement) {
+      document.scrollingElement.scrollTop = 0
+    }
+  }, [activeTab])
 
   const visibleTabs = SETTINGS_TABS.filter((t) => !t.hidden)
   const currentTabObj = visibleTabs.find((t) => t.id === activeTab) || visibleTabs[0]
@@ -374,7 +384,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
         </header>
 
         {/* Scrollable Tab Content Cards */}
-        <main className="sb-content">
+        <main ref={contentRef} className="sb-content">
           <div className="sb-content__grid">
             {activeTab === 'general' && (
               <GeneralTab settings={settings} saveSettingsPatch={saveSettingsPatch} />

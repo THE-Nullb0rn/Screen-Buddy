@@ -1,5 +1,112 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { ChevronDown } from 'lucide-react'
+
+export function MasonryGrid({ children }) {
+  const containerRef = useRef(null)
+  const itemRefs = useRef({})
+  const heightsRef = useRef({})
+  const [columnCount, setColumnCount] = useState(1)
+  const [layoutTick, setLayoutTick] = useState(0)
+
+  const items = React.Children.toArray(children).filter(Boolean)
+
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const updateCols = () => {
+      const w = el.clientWidth || el.getBoundingClientRect().width || 0
+      const winW = typeof window !== 'undefined' ? window.innerWidth : w
+      const maxCols = winW >= 1800 ? 4 : 3
+      const fitCols = Math.max(1, Math.floor((w + 16) / (280 + 16)))
+      const nextCols = Math.max(1, Math.min(maxCols, fitCols, items.length || 1))
+      setColumnCount((prev) => (prev === nextCols ? prev : nextCols))
+    }
+
+    updateCols()
+    const ro = new ResizeObserver(() => updateCols())
+    ro.observe(el)
+    window.addEventListener('resize', updateCols)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', updateCols)
+    }
+  }, [items.length])
+
+  useLayoutEffect(() => {
+    let changed = false
+    const ro = new ResizeObserver((entries) => {
+      let roChanged = false
+      for (const entry of entries) {
+        const k = entry.target?.dataset?.masonryKey
+        if (k == null) continue
+        const h = Math.round(entry.contentRect?.height ?? entry.target.getBoundingClientRect().height)
+        if (h > 0 && Math.abs((heightsRef.current[k] || 0) - h) > 2) {
+          heightsRef.current[k] = h
+          roChanged = true
+        }
+      }
+      if (roChanged) setLayoutTick((n) => n + 1)
+    })
+
+    items.forEach((child, idx) => {
+      const k = String(child.key ?? idx)
+      const node = itemRefs.current[k]
+      if (!node) return
+      node.dataset.masonryKey = k
+      const h = Math.round(node.getBoundingClientRect().height)
+      if (h > 0 && Math.abs((heightsRef.current[k] || 0) - h) > 2) {
+        heightsRef.current[k] = h
+        changed = true
+      }
+      ro.observe(node)
+    })
+
+    if (changed) {
+      setLayoutTick((n) => n + 1)
+    }
+    return () => ro.disconnect()
+  }, [items.length, columnCount, layoutTick]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cols = Math.max(1, Math.min(columnCount, items.length || 1))
+  const colHeights = new Array(cols).fill(0)
+  const buckets = Array.from({ length: cols }, () => [])
+
+  items.forEach((child, idx) => {
+    const k = String(child.key ?? idx)
+    let shortest = 0
+    for (let c = 1; c < cols; c++) {
+      if (colHeights[c] < colHeights[shortest]) shortest = c
+    }
+    buckets[shortest].push({ child, key: k })
+    colHeights[shortest] += (heightsRef.current[k] || 220) + 16
+  })
+
+  return (
+    <div
+      ref={containerRef}
+      className={`sb-masonry ${items.length <= 1 ? 'sb-masonry--single' : ''}`}
+      data-cols={cols}
+    >
+      {buckets.map((bucket, colIdx) => (
+        <div key={colIdx} className="sb-masonry__col">
+          {bucket.map(({ child, key }) => (
+            <div
+              key={key}
+              className="sb-masonry__item"
+              ref={(node) => {
+                if (node) itemRefs.current[key] = node
+                else delete itemRefs.current[key]
+              }}
+            >
+              {child}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export function IconTile({ icon: Icon, size = 18, className = '' }) {
   if (!Icon) return null

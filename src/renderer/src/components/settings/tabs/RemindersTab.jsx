@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Card, Row, Toggle, NumberInput, Select, Button } from '../ui'
+import { Card, MasonryGrid, Row, Toggle, NumberInput, Select, Button } from '../ui'
 import {
   Clock,
   Droplet,
@@ -327,6 +327,7 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
 
   return (
     <>
+      <MasonryGrid>
       <Card
         title="Reminder System"
         subtitle="Manage your daily reminders and habits."
@@ -567,6 +568,7 @@ export default function RemindersTab({ settings, saveSettingsPatch }) {
           />
         </Row>
       </Card>
+      </MasonryGrid>
 
       {/* Centered Modal Overlay for Add/Edit Reminder */}
       {editingItem && (

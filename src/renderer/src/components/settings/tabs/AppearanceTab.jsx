@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card, Row, Slider } from '../ui'
+import { Card, MasonryGrid, Row, Slider } from '../ui'
 import { Cat, Maximize2, Eye, Gauge } from 'lucide-react'
 
 export default function AppearanceTab({ settings, saveSettingsPatch }) {
@@ -16,7 +16,7 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
   ]
 
   return (
-    <>
+    <MasonryGrid>
       <Card title="Cat Style" subtitle="Choose your buddy's look." icon={Cat}>
         <Row
           icon={Cat}
@@ -96,6 +96,6 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
           </div>
         </Row>
       </Card>
-    </>
+    </MasonryGrid>
   )
 }

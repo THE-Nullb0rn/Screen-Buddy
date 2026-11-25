@@ -13,6 +13,7 @@
 .settings-window {
   width: 100vw;
   height: 100vh;
+  max-height: 100vh;
   display: flex;
   background-color: var(--bg-app);
   color: var(--text);
@@ -20,7 +21,7 @@
   font-size: 14px;
   line-height: 1.5;
   user-select: none;
-  overflow: hidden;
+  overflow: clip;
   pointer-events: auto !important;
 }
 
@@ -241,11 +242,13 @@
 .sb-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-main);
   height: 100%;
-  overflow: hidden;
+  max-height: 100%;
+  overflow: clip;
   position: relative;
 }
 
@@ -429,23 +432,38 @@
 }
 
 .sb-content__grid {
-  display: block;
-  columns: 3 280px;
-  column-gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
   max-width: 1600px;
   margin: 0 auto;
 }
 
-@media (min-width: 1800px) {
-  .sb-content__grid {
-    columns: 4 280px;
-  }
+.sb-masonry {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 16px;
+  width: 100%;
 }
 
-.sb-content__grid:has(> .sb-card:only-child) {
-  columns: 1;
+.sb-masonry--single {
   max-width: 680px;
+  margin: 0 auto;
+}
+
+.sb-masonry__col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sb-masonry__item {
+  width: 100%;
+  min-width: 0;
 }
 
 @media (max-width: 900px) {
@@ -497,16 +515,11 @@
   border-radius: var(--radius-card);
   padding: 18px 20px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   gap: 14px;
   width: 100%;
   min-width: 0;
-  vertical-align: top;
-  break-inside: avoid;
-  page-break-inside: avoid;
-  -webkit-column-break-inside: avoid;
-  margin-bottom: 16px;
 }
 
 .sb-card__header {
@@ -1645,9 +1658,7 @@
 /* ── About Tab Components ────────────────────────────────────────────────── */
 .sb-about-hero-card {
   display: flex;
-  column-span: all;
-  break-inside: avoid;
-  margin-bottom: 16px;
+  width: 100%;
 }
 
 .sb-about-hero {

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card, Row, Toggle, Slider } from '../ui'
+import { Card, MasonryGrid, Row, Toggle, Slider } from '../ui'
 import {
   Bell,
   Sparkles,
@@ -16,7 +16,7 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
   const autoHide = settings.notificationAutoHide !== false
 
   return (
-    <>
+    <MasonryGrid>
       <Card
         title="Notification Settings"
         subtitle="Configure general notification behavior."
@@ -143,6 +143,6 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
           />
         </Row>
       </Card>
-    </>
+    </MasonryGrid>
   )
 }

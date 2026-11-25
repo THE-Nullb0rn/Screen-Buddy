@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Row, Toggle, Slider, Select, TextInput, Button, StatusLine } from '../ui'
+import { Card, MasonryGrid, Row, Toggle, Slider, Select, TextInput, Button, StatusLine } from '../ui'
 import {
   Sparkles,
   Bot,
@@ -138,7 +138,7 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
   }
 
   return (
-    <>
+    <MasonryGrid>
       <Card
         title="AI Provider"
         subtitle="Choose the AI provider and configure it."
@@ -470,6 +470,6 @@ export default function ChatTab({ settings, saveSettingsPatch }) {
           />
         </Row>
       </Card>
-    </>
+    </MasonryGrid>
   )
 }

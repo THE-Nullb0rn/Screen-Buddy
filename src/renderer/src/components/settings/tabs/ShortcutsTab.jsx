@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Row, Kbd, Button } from '../ui'
-import { Keyboard, Pause, MessageSquare, Settings, Copy, Check, Terminal, Bell } from 'lucide-react'
+import { Card, MasonryGrid, Row, Kbd, Button } from '../ui'
+import { Keyboard, Pause, MessageSquare, Copy, Check, Terminal, Bell } from 'lucide-react'
 
 function splitAccelerator(accel, isLinux) {
   if (typeof accel !== 'string' || !accel.trim()) return []
@@ -52,11 +52,6 @@ export default function ShortcutsTab({ settings }) {
       code: 'bind = CTRL ALT, C, exec, touch "$XDG_RUNTIME_DIR/screen-buddy-call"',
     },
     {
-      id: 'settings',
-      label: 'Open settings',
-      code: 'bind = SUPER SHIFT, S, exec, touch "$XDG_RUNTIME_DIR/screen-buddy-settings"',
-    },
-    {
       id: 'pause',
       label: 'Toggle pause',
       code: 'bind = CTRL ALT, P, exec, sh -c \'date +%s%N > "$XDG_RUNTIME_DIR/screen-buddy-toggle"\'',
@@ -74,7 +69,7 @@ export default function ShortcutsTab({ settings }) {
       icon: Bell,
       label: 'Call cat',
       hint: 'Call the cat to walk to your cursor',
-      accel: settings?.shortcutCallCat || 'Ctrl+Alt+C',
+      accel: settings?.shortcutCallCat || (isWin32 ? 'Ctrl+Alt+Shift+C' : 'Ctrl+Alt+C'),
     },
     {
       settingKey: 'shortcutTogglePause',
@@ -88,19 +83,12 @@ export default function ShortcutsTab({ settings }) {
       icon: MessageSquare,
       label: 'Open AI chat',
       hint: 'Quickly summon companion prompt',
-      accel: settings?.shortcutChat || (isWin32 ? 'Ctrl+Alt+Shift+C' : 'Ctrl+Super+C'),
-    },
-    {
-      settingKey: 'shortcutSettings',
-      icon: Settings,
-      label: 'Open settings',
-      hint: 'Open this configuration window',
-      accel: settings?.shortcutSettings || (isWin32 ? 'Ctrl+Alt+Shift+S' : 'Super+Shift+S'),
+      accel: settings?.shortcutChat || (isWin32 ? 'Ctrl+Alt+C' : 'Ctrl+Super+C'),
     },
   ]
 
   return (
-    <>
+    <MasonryGrid>
       <Card
         title="Shortcuts"
         subtitle="Main shortcuts to control Screen Buddy."
@@ -173,6 +161,6 @@ export default function ShortcutsTab({ settings }) {
           </div>
         </Card>
       )}
-    </>
+    </MasonryGrid>
   )
 }
