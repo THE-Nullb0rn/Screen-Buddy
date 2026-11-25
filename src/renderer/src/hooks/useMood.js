@@ -184,10 +184,10 @@ export function computeMoodLabel({
   // 5. Happy (affection >= 70 && energy >= 50 && !isHungry) with 5-point hysteresis
   const happyAffectionThreshold = currentMood === 'Happy'
     ? MOOD_CONSTANTS.THRESHOLD_HAPPY_AFFECTION - MOOD_CONSTANTS.HYSTERESIS_OFFSET
-    : MOOD_CONSTANTS.HAPPY_AFFECTION_THRESHOLD
+    : MOOD_CONSTANTS.THRESHOLD_HAPPY_AFFECTION
   const happyEnergyThreshold = currentMood === 'Happy'
     ? MOOD_CONSTANTS.THRESHOLD_HAPPY_ENERGY - MOOD_CONSTANTS.HYSTERESIS_OFFSET
-    : MOOD_CONSTANTS.HAPPY_ENERGY_THRESHOLD
+    : MOOD_CONSTANTS.THRESHOLD_HAPPY_ENERGY
   if (affection >= happyAffectionThreshold && energy >= happyEnergyThreshold && !isHungry) {
     return 'Happy'
   }

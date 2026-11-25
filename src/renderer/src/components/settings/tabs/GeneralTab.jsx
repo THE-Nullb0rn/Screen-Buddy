@@ -3,6 +3,8 @@ import { Card, MasonryGrid, Row, Toggle, Slider } from '../ui'
 import { Power, Pause, RefreshCw, Volume2, Volume, MessageSquare } from 'lucide-react'
 
 export default function GeneralTab({ settings, saveSettingsPatch }) {
+  const isLinux = window.api?.platform === 'linux'
+
   const handlePauseToggle = (checked) => {
     saveSettingsPatch({ paused: checked })
     if (window.api?.setPaused) {
@@ -17,10 +19,12 @@ export default function GeneralTab({ settings, saveSettingsPatch }) {
           icon={Power}
           label="Start with system"
           hint="Launch automatically on desktop login"
+          soon={!isLinux}
         >
           <Toggle
             checked={Boolean(settings.autostart)}
             onChange={(e) => saveSettingsPatch({ autostart: e.target.checked })}
+            disabled={!isLinux}
             ariaLabel="Start with system"
           />
         </Row>

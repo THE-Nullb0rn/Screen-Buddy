@@ -50,7 +50,18 @@ export function useHunger({
 
   const hungerEnabledRef = useRef(hungerEnabled)
   const hungerRateRef = useRef(hungerRate)
+  const prevHungerRateRef = useRef(hungerRate)
   hungerRateRef.current = hungerRate
+
+  useEffect(() => {
+    if (prevHungerRateRef.current === hungerRate) return
+    prevHungerRateRef.current = hungerRate
+    if (hungerEnabledRef.current && hungerStateRef.current === 'IDLE') {
+      const nextDuration = getRandomHungerDuration(hungerRate)
+      setTotalDuration(nextDuration)
+      setRemainingSeconds(nextDuration)
+    }
+  }, [hungerRate])
 
   const hungerPauseSleepingRef = useRef(hungerPauseSleeping)
   hungerPauseSleepingRef.current = hungerPauseSleeping
@@ -112,14 +123,14 @@ export function useHunger({
       if (pausedRef.current || !hungerEnabledRef.current) return
       if (hungerStateRef.current !== 'IDLE') return
 
-      // Pause while sleeping (preserves remaining time until wake)
-      if (isAsleepRef.current) return
+      // Pause while sleeping only if hungerPauseSleeping is enabled
+      if (isAsleepRef.current && hungerPauseSleepingRef.current) return
 
       setRemainingSeconds((prev) => {
         const next = Math.max(0, prev - 1)
         if (next === 0) {
-          // If cat is asleep, do not activate hunger yet; wait until wake
-          if (!isAsleepRef.current) {
+          // Wait until wake only when pausing hunger while sleeping
+          if (!isAsleepRef.current || !hungerPauseSleepingRef.current) {
             setHungerState('ACTIVE')
           }
           return 0

@@ -870,9 +870,14 @@
   transition: background-color 130ms ease, color 130ms ease;
 }
 
-.sb-segmented-btn:hover:not(.sb-segmented-btn--active) {
+.sb-segmented-btn:hover:not(.sb-segmented-btn--active):not(:disabled) {
   color: var(--text);
   background-color: rgba(255, 255, 255, 0.05);
+}
+
+.sb-segmented-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .sb-segmented-btn--active {
@@ -898,6 +903,11 @@
   color: var(--text);
   cursor: pointer;
   flex: 1;
+}
+
+.sb-row--soon .sb-char-card {
+  opacity: 0.7;
+  cursor: default;
 }
 
 .sb-char-avatar {

@@ -1266,7 +1266,7 @@ async function callGemini(userMessage) {
 
   const model = (settings?.geminiModel && settings.geminiModel.trim())
     ? settings.geminiModel.trim()
-    : 'gemini-2.5-flash-lite'
+    : 'gemini-3.5-flash-lite'
 
   // Construct request contents including history plus new user turn without mutating chatHistory yet
   const contents = [

@@ -148,6 +148,7 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           <Toggle
             checked={Boolean(settings.appFocusReaction)}
             onChange={(e) => saveSettingsPatch({ appFocusReaction: e.target.checked })}
+            disabled={true}
             ariaLabel="Application focus reaction"
           />
         </Row>
@@ -156,10 +157,12 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
           icon={Music}
           label="Media playback"
           hint="React to background music or video playback"
+          soon={!isLinux}
         >
           <Toggle
             checked={Boolean(settings.mediaReaction)}
             onChange={(e) => saveSettingsPatch({ mediaReaction: e.target.checked })}
+            disabled={!isLinux}
             ariaLabel="Media playback reaction"
           />
         </Row>

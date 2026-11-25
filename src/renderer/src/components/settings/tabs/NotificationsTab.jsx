@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 
 export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
+  const isLinux = window.api?.platform === 'linux'
   const currentDuration = settings.notificationDuration ?? 5
   const autoHide = settings.notificationAutoHide !== false
 
@@ -122,10 +123,12 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
           icon={Music}
           label="Music Playing"
           hint="Now-playing song alerts from supported players"
+          soon={!isLinux}
         >
           <Toggle
             checked={settings.notificationCardMusic !== false}
             onChange={(e) => saveSettingsPatch({ notificationCardMusic: e.target.checked })}
+            disabled={!isLinux}
             ariaLabel="Music cards"
           />
         </Row>
@@ -139,6 +142,7 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
           <Toggle
             checked={settings.notificationCardUpdates !== false}
             onChange={(e) => saveSettingsPatch({ notificationCardUpdates: e.target.checked })}
+            disabled={true}
             ariaLabel="Update alerts"
           />
         </Row>

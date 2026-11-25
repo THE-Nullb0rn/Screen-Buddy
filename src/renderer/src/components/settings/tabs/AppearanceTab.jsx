@@ -51,6 +51,7 @@ export default function AppearanceTab({ settings, saveSettingsPatch }) {
                 key={sz}
                 type="button"
                 className={`sb-segmented-btn ${currentSize === sz ? 'sb-segmented-btn--active' : ''}`}
+                disabled={true}
                 onClick={() => saveSettingsPatch({ catSize: sz })}
               >
                 {sz}%

@@ -310,14 +310,15 @@ export function useReminders({
         return
       }
 
-      const isAway = Boolean(pausedRef.current || isAsleepRef.current)
+      const isPaused = Boolean(pausedRef.current)
+      const isAway = Boolean(isAsleepRef.current)
       const list = s.remindersList || []
       const enabledItems = list.filter((r) => r.enabled !== false)
       const globalIntervalSec = (s.intervalMinutes || 20) * 60
 
       let minRemaining = Infinity
 
-      if (isAway) {
+      if (isPaused) {
         for (const item of enabledItems) {
           const effectiveSec =
             typeof item.intervalMinutes === 'number' && item.intervalMinutes > 0

@@ -139,30 +139,8 @@ class NotificationsManager {
   }
 
   start() {
-    if (process.platform !== 'linux') return
-    if (this.daemonRunning || this.starting || this.retryTimer) return
-
-    const settings = this.getSettings() || {}
-    if (settings.notificationsEnabled === false) return
-
-    this.starting = true
-
-    const dbusInfo = loadDbus()
-    if (!dbusInfo) {
-      this.starting = false
-      return
-    }
-
-    const { dbusModule: dbus, NotificationsDaemonClass: DaemonClass } = dbusInfo
-    try {
-      this.bus = dbus.sessionBus()
-      this.iface = new DaemonClass(this)
-      this.bus.export('/org/freedesktop/Notifications', this.iface)
-      this.requestName()
-    } catch (err) {
-      console.error('[notifications] Failed to start D-Bus session:', err)
-      this.starting = false
-    }
+    // Desktop notification daemon mode is disabled on all platforms.
+    return
   }
 
   async requestName() {
@@ -246,19 +224,9 @@ class NotificationsManager {
   }
 
   applySettings() {
-    const settings = this.getSettings() || {}
-    const mode = getEffectiveNotificationMode(settings)
-    const shouldRun = settings.notificationsEnabled !== false && mode === 'cat'
-    const isRunning = this.daemonRunning
-    const isRetrying = !!this.retryTimer || this.starting
-
-    if (shouldRun && !isRunning && !isRetrying) {
-      this.start()
-    } else if (!shouldRun && (isRunning || isRetrying)) {
+    if (this.daemonRunning || this.retryTimer || this.starting) {
       this.stop()
     }
-
-    console.log(`[notifications] applySettings: mode=${mode} shouldRun=${shouldRun} running=${this.daemonRunning}`)
   }
 
   async _lookupDbusOwner(mode) {

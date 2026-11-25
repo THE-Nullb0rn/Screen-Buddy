@@ -240,14 +240,8 @@ const DEFAULT_SETTINGS = {
   reminderShowMissed: true,
   reminderGroupSimilar: true,
 
-  /** Whether screen-buddy should act as the desktop notification daemon */
+  /** Whether Screen Buddy cards (reminders, hunger, music) are enabled */
   notificationsEnabled: true,
-
-  /** Notification daemon mode: 'system' (default) or 'cat' (desktop notification daemon) */
-  notificationMode: 'system',
-
-  /** List of app names (case-insensitive) to block from showing notifications */
-  notificationAppBlocklist: [],
 
   /** Chat & AI settings */
   chatEnabled: true,
@@ -354,10 +348,16 @@ function loadSettings() {
 
     let needsSave = false
 
-    // Migration for existing installs: if notificationMode key is not present, set to 'cat' and persist
-    if (saved && typeof saved === 'object' && !('notificationMode' in saved)) {
-      saved.notificationMode = 'cat'
-      needsSave = true
+    // Remove legacy notification daemon keys (Screen Buddy no longer acts as an OS daemon)
+    if (saved && typeof saved === 'object') {
+      if ('notificationMode' in saved) {
+        delete saved.notificationMode
+        needsSave = true
+      }
+      if ('notificationAppBlocklist' in saved) {
+        delete saved.notificationAppBlocklist
+        needsSave = true
+      }
     }
 
     // Backwards compatibility migration: merge old 'posture' and 'stretch' into 'movementBreak'
@@ -480,7 +480,7 @@ function loadSettings() {
     const merged = deepMerge(DEFAULT_SETTINGS, saved)
     if (needsSave) {
       saveSettings(merged)
-      console.log('[settings] Migrated existing install: notificationMode set to "cat"')
+      console.log('[settings] Migrated legacy settings')
     }
     console.log('[settings] Loaded from', SETTINGS_FILE)
     return merged
@@ -622,36 +622,10 @@ function validateSettingsUpdate(patch) {
       case 'startMinimized':
       case 'minimizeToTray':
       case 'notificationCardChat':
-      case 'notificationPosition': {
-        // Dropped / ignored
-        break
-      }
-
-      case 'notificationMode': {
-        if (value === 'system' || value === 'cat') {
-          sanitized.notificationMode = value
-        } else {
-          debugLog('notificationMode', 'must be "system" or "cat"')
-        }
-        break
-      }
-
+      case 'notificationPosition':
+      case 'notificationMode':
       case 'notificationAppBlocklist': {
-        if (Array.isArray(value)) {
-          const cleaned = []
-          for (const item of value) {
-            if (typeof item === 'string') {
-              const trimmed = item.trim()
-              if (trimmed.length > 0 && trimmed.length <= 100) {
-                cleaned.push(trimmed)
-                if (cleaned.length === 100) break
-              }
-            }
-          }
-          sanitized.notificationAppBlocklist = cleaned
-        } else {
-          debugLog('notificationAppBlocklist', 'must be an array')
-        }
+        // Dropped / ignored
         break
       }
 
@@ -995,16 +969,11 @@ function validateSettingsUpdate(patch) {
 
 /**
  * Determine the effective notification mode.
- * Returns 'cat' only on Linux when settings.notificationMode is 'cat';
- * otherwise returns 'system'.
+ * Screen Buddy no longer acts as an OS notification daemon on any platform.
  *
- * @param {object} settings
- * @returns {'system' | 'cat'}
+ * @returns {'system'}
  */
-function getEffectiveNotificationMode(settings) {
-  if (process.platform === 'linux' && settings && settings.notificationMode === 'cat') {
-    return 'cat'
-  }
+function getEffectiveNotificationMode() {
   return 'system'
 }
 
