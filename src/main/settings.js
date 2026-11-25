@@ -299,6 +299,9 @@ const DEFAULT_SETTINGS = {
   pettingEffects: true,
   catRemarks: true,
   shortcutCallCat: 'Ctrl+Alt+C',
+  shortcutTogglePause: 'Ctrl+Alt+P',
+  shortcutChat: process.platform === 'win32' ? 'Ctrl+Alt+Shift+C' : 'Ctrl+Super+C',
+  shortcutSettings: process.platform === 'win32' ? 'Ctrl+Alt+Shift+S' : 'Super+Shift+S',
   hungerEnabled: false,
   hungerRate: 'normal',
   hungerNotify: true,
@@ -326,6 +329,7 @@ const DEFAULT_SETTINGS = {
   developerMode: false,
   allowCustomCss: false,
   lastUpdateCheck: null,
+  settingsWindowBounds: null,
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -787,11 +791,14 @@ function validateSettingsUpdate(patch) {
         break
       }
 
-      case 'shortcutCallCat': {
-        if (typeof value === 'string' && value.trim()) {
-          sanitized.shortcutCallCat = value.trim()
+      case 'shortcutCallCat':
+      case 'shortcutTogglePause':
+      case 'shortcutChat':
+      case 'shortcutSettings': {
+        if (typeof value === 'string' && value.trim() && value.trim().length <= 64) {
+          sanitized[key] = value.trim()
         } else {
-          debugLog('shortcutCallCat', 'must be a non-empty string')
+          debugLog(key, 'must be a non-empty string (max 64 chars)')
         }
         break
       }
@@ -933,6 +940,32 @@ function validateSettingsUpdate(patch) {
           sanitized.mascotPosition = { x: value.x, y: value.y }
         } else {
           debugLog('mascotPosition', 'must be an object with finite numeric x and y')
+        }
+        break
+      }
+
+      case 'settingsWindowBounds': {
+        if (value === null) {
+          sanitized.settingsWindowBounds = null
+        } else if (
+          value &&
+          typeof value === 'object' &&
+          !Array.isArray(value) &&
+          typeof value.width === 'number' &&
+          Number.isFinite(value.width) &&
+          typeof value.height === 'number' &&
+          Number.isFinite(value.height)
+        ) {
+          const nextBounds = {
+            width: Math.round(value.width),
+            height: Math.round(value.height),
+            maximized: Boolean(value.maximized),
+          }
+          if (typeof value.x === 'number' && Number.isFinite(value.x)) nextBounds.x = Math.round(value.x)
+          if (typeof value.y === 'number' && Number.isFinite(value.y)) nextBounds.y = Math.round(value.y)
+          sanitized.settingsWindowBounds = nextBounds
+        } else {
+          debugLog('settingsWindowBounds', 'must be null or { width, height, x?, y?, maximized? }')
         }
         break
       }

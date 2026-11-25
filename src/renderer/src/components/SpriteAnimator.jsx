@@ -260,6 +260,8 @@ export function useSpriteAnimation({
   onAnimationEnd,
   onBoundary,
   speed = 'normal',
+  speedRef = null,
+  onCycleFrame = null,
   fpsCap = 60,
   idlePaused = false,
 }) {
@@ -295,6 +297,8 @@ export function useSpriteAnimation({
   const activeFrameIndex = isAnimSwitch ? 0 : frameIndex
   const onEndRef = useRef(onAnimationEnd)
   const onBoundaryRef = useRef(onBoundary)
+  const onCycleFrameRef = useRef(onCycleFrame)
+  const extSpeedRefRef = useRef(speedRef)
   const frameIndexRef = useRef(0)
   const speedFactorRef = useRef(1)
   const fpsCapRef = useRef(fpsCap)
@@ -307,8 +311,11 @@ export function useSpriteAnimation({
 
   onEndRef.current = onAnimationEnd
   onBoundaryRef.current = onBoundary
+  onCycleFrameRef.current = onCycleFrame
+  extSpeedRefRef.current = speedRef
   speedFactorRef.current = typeof speed === 'number' ? speed : (SPEED_FACTORS[speed] || 1)
   fpsCapRef.current = fpsCap
+  const isNumericSpeed = typeof speed === 'number' || Boolean(speedRef)
 
   useEffect(() => {
     if (currentKeyRef.current !== switchKey) {
@@ -334,9 +341,11 @@ export function useSpriteAnimation({
     let isCancelled = false
     let expectedNextTime = performance.now()
 
-    const getFrameDuration = (idx) => {
+    const getFrameDuration = (idx, overrideFactor = null) => {
       const { totalFrames: tf, fps: fRate, frameDurations: fDurs, isStrip: sMode } = animRef.current
-      const speedFactor = speedFactorRef.current || 1
+      const rawFactor = overrideFactor !== null ? overrideFactor : speedFactorRef.current
+      const speedFactor = rawFactor > 0 ? rawFactor : 0
+      if (speedFactor <= 0) return Infinity
       let rawDuration
       const isTwoFrameIdle = !sMode && (currentAnimationRef.current === 'idle' || currentAnimationRef.current === 'idle-old') && tf === 2
       if (isTwoFrameIdle) {
@@ -359,6 +368,56 @@ export function useSpriteAnimation({
         duration = minInterval
       }
       return Math.max(1, duration)
+    }
+
+    if (isNumericSpeed && animRef.current.loop) {
+      let lastNow = performance.now()
+      let framePhase = 0
+      const stepPhase = (now) => {
+        rafId = null
+        if (isCancelled) return
+        if (typeof window !== 'undefined' && window.__sbPerfCounters) {
+          window.__sbPerfCounters.rafTicks++
+        }
+        const dt = Math.max(0, Math.min(100, now - lastNow))
+        lastNow = now
+
+        const extRef = extSpeedRefRef.current
+        const factor = extRef ? (extRef.current ?? 0) : (speedFactorRef.current ?? 0)
+        if (factor > 0) {
+          const { totalFrames: tf } = animRef.current
+          const frameMs = getFrameDuration(frameIndexRef.current, factor)
+          if (Number.isFinite(frameMs) && frameMs > 0) {
+            framePhase += dt / frameMs
+            if (framePhase >= 1) {
+              const steps = Math.floor(framePhase)
+              framePhase -= steps
+              let idx = frameIndexRef.current
+              for (let s = 0; s < steps; s++) {
+                idx += 1
+                if (idx >= tf) {
+                  idx = 0
+                  onBoundaryRef.current?.('loop')
+                }
+                onCycleFrameRef.current?.(1 / tf)
+              }
+              if (idx !== frameIndexRef.current) {
+                frameIndexRef.current = idx
+                setFrameIndex(idx)
+              }
+            }
+          }
+        }
+        rafId = requestAnimationFrame(stepPhase)
+      }
+      rafId = requestAnimationFrame(stepPhase)
+      return () => {
+        isCancelled = true
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
+          rafId = null
+        }
+      }
     }
 
     const scheduleWake = (delay) => {
@@ -459,7 +518,7 @@ export function useSpriteAnimation({
         rafId = null
       }
     }
-  }, [switchKey, idlePaused, speed, fpsCap])
+  }, [switchKey, idlePaused, fpsCap, isNumericSpeed])
 
   let currentFrame = activeFrameIndex
   if (!isStrip) {
@@ -708,6 +767,8 @@ export default function SpriteAnimator({
   speed,
   animationSpeed,
   catAnimationSpeed,
+  speedRef = null,
+  onCycleFrame = null,
   eyeTracking = false,
   cursorOffset = null,
   fpsCap = 60,
@@ -882,7 +943,7 @@ export default function SpriteAnimator({
     }
   }
 
-  const effectiveSpeed = catAnimationSpeed || animationSpeed || speed || 'normal'
+  const effectiveSpeed = catAnimationSpeed ?? animationSpeed ?? speed ?? 'normal'
 
   const { currentFrame, cellWidth, cellHeight, columns } = useSpriteAnimation({
     animation: activeAsset.animName,
@@ -893,6 +954,8 @@ export default function SpriteAnimator({
     onAnimationEnd: handleAnimationEnd,
     onBoundary: handleBoundary,
     speed: effectiveSpeed,
+    speedRef,
+    onCycleFrame,
     fpsCap,
     idlePaused,
   })

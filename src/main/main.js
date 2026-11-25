@@ -95,6 +95,10 @@ if (!gotLock) {
 const enableFeatures = ['NetworkServiceInProcess2']
 const disableFeatures = ['AudioServiceOutOfProcess']
 
+if (process.platform === 'win32') {
+  disableFeatures.push('CalculateNativeWinOcclusion')
+}
+
 if (process.platform === 'linux') {
   // Required for proper rendering and portal shortcuts under Linux/Wayland compositors.
   enableFeatures.unshift('UseOzonePlatform', 'GlobalShortcutsPortal')
@@ -141,6 +145,7 @@ app.commandLine.appendSwitch('disable-features', disableFeatures.join(','))
 // ─── Globals ─────────────────────────────────────────────────────────────────
 let mainWindow = null
 let settingsWindow = null
+let pendingSettingsTab = null
 let bubbleWindow = null
 let bubbleWindowReady = false
 let bubbleMapped = false
@@ -370,22 +375,21 @@ app.whenReady().then(async () => {
     installChatHotkeyFallback()
     installSettingsHotkeyFallback()
     installCallHotkeyFallback()
+    registerGlobalPauseShortcut()
+    registerGlobalCallShortcut()
+  } else if (process.platform === 'win32') {
+    registerWindowsHotkeys()
+  } else {
+    registerGlobalPauseShortcut()
+    registerGlobalCallShortcut()
   }
-  registerGlobalPauseShortcut()
-  registerGlobalCallShortcut()
   startHyprlandFullscreenMonitor()
 
   // Monitor display changes (resolution, scaling, connect/disconnect)
   const handleDisplayChange = (eventType) => {
     logDisplayMetrics(eventType)
     restoreMascotPositionOnResume(eventType)
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-      const displays = electronScreen.getAllDisplays()
-      const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : 0
-      const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : 0
-      const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
-      mainWindow.webContents.send('display:changed', getDisplayCatGeometry(catDisplay))
-    }
+    sendDisplayGeometryToRenderer()
   }
   electronScreen.on('display-added', () => handleDisplayChange('display-added'))
   electronScreen.on('display-removed', () => handleDisplayChange('display-removed'))
@@ -408,6 +412,22 @@ app.whenReady().then(async () => {
     const current = mediaMonitor.getStatus()
     if (current && (current.playing || current.title || current.artist)) {
       mainWindow?.webContents.send('media:status', current)
+    }
+    sendDisplayGeometryToRenderer()
+
+    if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_DEBUG_OPEN) {
+      const target = String(process.env.SCREEN_BUDDY_DEBUG_OPEN).trim().toLowerCase()
+      setTimeout(() => {
+        if (isShuttingDown) return
+        console.log(`[debug] SCREEN_BUDDY_DEBUG_OPEN=${target} triggering`)
+        if (target === 'settings') {
+          openSettingsWindow()
+        } else if (target === 'chat') {
+          triggerChatOpen('debug-hook')
+        } else if (target === 'call') {
+          triggerCallCat()
+        }
+      }, 600)
     }
   })
 
@@ -708,6 +728,7 @@ async function unpark(reason) {
   const isHyprland = Boolean(process.env.HYPRLAND_INSTANCE_SIGNATURE)
 
   if (!isHyprland) {
+    if (reason === 'quit') return
     await logParkDiagnostic('unpark', reason, 'hide', 'before')
     mainWindow?.showInactive()
     if (parkBubbleVisible && bubbleWindow && !bubbleWindow.isDestroyed()) {
@@ -1023,6 +1044,15 @@ async function triggerCallCat() {
       cursorX = pt.x
       cursorY = pt.y
     }
+    const displays = electronScreen.getAllDisplays()
+    const insideAnyDisplay = Number.isFinite(cursorX) && Number.isFinite(cursorY) && displays.some((d) => {
+      const b = d?.bounds
+      return b && cursorX >= b.x && cursorX < b.x + b.width && cursorY >= b.y && cursorY < b.y + b.height
+    })
+    if (!insideAnyDisplay) {
+      console.log(`[call] ignored invalid cursor point (${cursorX}, ${cursorY})`)
+      return
+    }
     console.log(`[main] Call cat triggered at cursor (${cursorX}, ${cursorY})`)
     mainWindow.webContents.send('mascot:call', { cursorX, cursorY })
   } catch (err) {
@@ -1054,8 +1084,79 @@ function removeCallHotkeyFallback() {
   }
 }
 
+let shortcutRegistrationStatus = {}
+
+function toElectronAccelerator(accel) {
+  if (typeof accel !== 'string') return ''
+  return accel
+    .split('+')
+    .map((part) => {
+      const trimmed = part.trim()
+      if (/^ctrl$/i.test(trimmed)) return 'Control'
+      if (/^win$/i.test(trimmed)) return 'Super'
+      return trimmed
+    })
+    .filter(Boolean)
+    .join('+')
+}
+
+function triggerChatOpen(source = 'unknown') {
+  console.log(`[chat] open requested via ${source} (chatInputOpen=${chatInputOpen}, paused=${effectivePauseState()}, chatEnabled=${settings?.chatEnabled !== false})`)
+  if (effectivePauseState()) {
+    console.log(`[chat] open ignored (${source}) — app is paused`)
+    return
+  }
+  if (settings?.chatEnabled === false) {
+    console.log(`[chat] open ignored (${source}) — chatEnabled is false`)
+    return
+  }
+  if (chatInputOpen === 'waiting') {
+    console.log(`[chat] open ignored (${source}) — waiting for Gemini reply`)
+    return
+  }
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('chat:open', source)
+    console.log(`[chat] sent chat:open to overlay (${source})`)
+  }
+}
+
+function registerWindowsHotkeys() {
+  if (process.platform !== 'win32') return
+  globalShortcut.unregisterAll()
+  const specs = [
+    { key: 'shortcutCallCat', label: 'Call cat', handler: () => triggerCallCat() },
+    { key: 'shortcutTogglePause', label: 'Toggle pause', handler: () => toggleManualPause('globalShortcut') },
+    { key: 'shortcutChat', label: 'Open AI chat', handler: () => triggerChatOpen('hotkey') },
+    { key: 'shortcutSettings', label: 'Open settings', handler: () => openSettingsWindow() },
+  ]
+  const nextStatus = {}
+  for (const spec of specs) {
+    const rawAccel = settings?.[spec.key] || DEFAULT_SETTINGS[spec.key]
+    const electronAccel = toElectronAccelerator(rawAccel)
+    let ok = false
+    try {
+      const registered = electronAccel ? globalShortcut.register(electronAccel, spec.handler) : false
+      const isReg = electronAccel ? globalShortcut.isRegistered(electronAccel) : false
+      ok = Boolean(registered && isReg)
+    } catch (_err) {
+      ok = false
+    }
+    if (ok) {
+      console.log(`[hotkey] registered ${spec.key} (${rawAccel})`)
+      nextStatus[spec.key] = { accelerator: rawAccel, registered: true, error: null }
+    } else {
+      console.warn(`[hotkey] failed to register ${rawAccel} (in use by another app)`)
+      nextStatus[spec.key] = { accelerator: rawAccel, registered: false, error: 'In use by another app' }
+    }
+  }
+  shortcutRegistrationStatus = nextStatus
+  if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+    settingsWindow.webContents.send('shortcuts:status-updated', shortcutRegistrationStatus)
+  }
+}
+
 function registerGlobalCallShortcut() {
-  const callShortcut = settings?.shortcutCallCat || 'Control+Alt+C'
+  const callShortcut = toElectronAccelerator(settings?.shortcutCallCat || 'Control+Alt+C')
   try {
     globalShortcut.register(callShortcut, () => {
       triggerCallCat()
@@ -1072,6 +1173,7 @@ function registerGlobalCallShortcut() {
  */
 async function focusChatWindow() {
   if (!bubbleWindow || bubbleWindow.isDestroyed()) return
+  console.log(`[chat] focusChatWindow start (mapped=${bubbleMapped}, visible=${bubbleWindow.isVisible()})`)
 
   // Wait until bubble window is mapped and positioned
   if (!bubbleMapped) {
@@ -1104,6 +1206,10 @@ async function focusChatWindow() {
     }
 
     try {
+      if (process.platform === 'win32') {
+        if (!bubbleWindow.isVisible()) bubbleWindow.show()
+        bubbleWindow.moveTop()
+      }
       bubbleWindow.focus()
       bubbleWindow.webContents.focus()
     } catch (err) {
@@ -1186,7 +1292,7 @@ async function callGemini(userMessage) {
   // Resolve API key in main process only — never logged, never returned to renderer
   const apiKey = settings?.geminiApiKey || process.env.GEMINI_API_KEY || ''
   if (!apiKey) {
-    return { ok: false, error: 'Add your Gemini API key in Settings → Chat (AI)' }
+    return { ok: false, code: 'NO_API_KEY', error: 'Add your Gemini API key in Settings -> Chat & AI' }
   }
 
   const model = (settings?.geminiModel && settings.geminiModel.trim())
@@ -1442,6 +1548,7 @@ async function getBubbleWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
+    ...(process.platform === 'win32' ? { thickFrame: false } : {}),
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
@@ -1451,6 +1558,7 @@ async function getBubbleWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      ...(process.platform === 'win32' ? { backgroundThrottling: false } : {}),
     },
   });
 
@@ -1797,29 +1905,213 @@ async function applyBubbleWindowSize(w, h) {
  *                                 frameless + transparent still hide chrome / resize handles
  */
 
-function openSettingsWindow() {
+function openSettingsWindow(initialTab = null) {
   if (isParked) {
     unpark('settings-open')
   }
-  if (settingsWindow) {
+  if (initialTab) {
+    pendingSettingsTab = initialTab
+  }
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore()
+    settingsWindow.show()
     settingsWindow.focus()
+    if (initialTab && !settingsWindow.webContents.isDestroyed()) {
+      pendingSettingsTab = null
+      settingsWindow.webContents.send('settings:select-tab', initialTab)
+    }
     return
   }
+
+  const displays = electronScreen.getAllDisplays()
+  const catX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : 0
+  const catY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : 0
+  const catDisplay = getDisplayForPoint(displays, catX + NORMAL_CAT_CX, catY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
+  const catWa = catDisplay.workArea || catDisplay.bounds
+
+  const minWidth = Math.max(320, Math.min(720, Math.floor(catWa.width * 0.95)))
+  const minHeight = Math.max(240, Math.min(520, Math.floor(catWa.height * 0.95)))
+
+  const clampSettingsBoundsToDisplays = (allDisplays, rawBounds, fallbackDisplay) => {
+    const hasPos = Number.isFinite(rawBounds?.x) && Number.isFinite(rawBounds?.y)
+    const wRaw = Number.isFinite(rawBounds?.width) ? rawBounds.width : 1100
+    const hRaw = Number.isFinite(rawBounds?.height) ? rawBounds.height : 760
+    const targetDisplay = hasPos
+      ? (getDisplayForPoint(allDisplays, rawBounds.x + wRaw / 2, rawBounds.y + hRaw / 2) || fallbackDisplay)
+      : fallbackDisplay
+    const targetWa = targetDisplay.workArea || targetDisplay.bounds
+    const targetMinW = Math.max(320, Math.min(720, Math.floor(targetWa.width * 0.95)))
+    const targetMinH = Math.max(240, Math.min(520, Math.floor(targetWa.height * 0.95)))
+
+    const width = Math.max(targetMinW, Math.min(Math.round(wRaw), targetWa.width))
+    const height = Math.max(targetMinH, Math.min(Math.round(hRaw), targetWa.height))
+
+    let x
+    let y
+    if (hasPos) {
+      const maxX = Math.max(targetWa.x, targetWa.x + targetWa.width - width)
+      const maxY = Math.max(targetWa.y, targetWa.y + targetWa.height - height)
+      x = Math.round(Math.max(targetWa.x, Math.min(rawBounds.x, maxX)))
+      y = Math.round(Math.max(targetWa.y, Math.min(rawBounds.y, maxY)))
+    } else {
+      x = Math.round(targetWa.x + (targetWa.width - width) / 2)
+      y = Math.round(targetWa.y + (targetWa.height - height) / 2)
+    }
+    return { x, y, width, height, minWidth: targetMinW, minHeight: targetMinH }
+  }
+
+  let winWidth = Math.max(minWidth, Math.min(1100, Math.floor(catWa.width * 0.9)))
+  let winHeight = Math.max(minHeight, Math.min(760, Math.floor(catWa.height * 0.9)))
+  let winX = Math.round(catWa.x + (catWa.width - winWidth) / 2)
+  let winY = Math.round(catWa.y + (catWa.height - winHeight) / 2)
+  let shouldMaximize = false
+
+  const savedBounds = settings?.settingsWindowBounds
+  if (savedBounds && Number.isFinite(savedBounds.width) && Number.isFinite(savedBounds.height)) {
+    const clamped = clampSettingsBoundsToDisplays(displays, savedBounds, catDisplay)
+    winWidth = clamped.width
+    winHeight = clamped.height
+    winX = clamped.x
+    winY = clamped.y
+    shouldMaximize = Boolean(savedBounds.maximized)
+  }
+
+  let lastValidNormalBounds = { width: winWidth, height: winHeight, x: winX, y: winY }
+
+  const chromeOptions = process.platform === 'win32'
+    ? {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#00000000',
+          symbolColor: '#f3ecdf',
+          height: 40,
+        },
+      }
+    : process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          titleBarOverlay: true,
+        }
+      : {
+          frame: false,
+        }
+
   settingsWindow = new BrowserWindow({
     title: 'screen-buddy-settings',
-    width: 1120,
-    height: 740,
-    minWidth: 900,
-    minHeight: 600,
+    width: winWidth,
+    height: winHeight,
+    x: winX,
+    y: winY,
+    minWidth,
+    minHeight,
+    show: false,
     resizable: true,
+    minimizable: true,
+    maximizable: true,
+    closable: true,
+    skipTaskbar: false,
     backgroundColor: '#14111b',
-    frame: false,
-    alwaysOnTop: true,
+    ...chromeOptions,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+    },
+  })
+
+  if (shouldMaximize) {
+    settingsWindow.maximize()
+  } else {
+    settingsWindow.setBounds({ x: winX, y: winY, width: winWidth, height: winHeight })
+  }
+  settingsWindow.show()
+  settingsWindow.focus()
+
+  if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+    console.log(
+      `[settings-win] opened bounds=${JSON.stringify(settingsWindow.getBounds())} ` +
+      `normal=${JSON.stringify(settingsWindow.getNormalBounds())} ` +
+      `maximized=${settingsWindow.isMaximized()} ` +
+      `min=${JSON.stringify(settingsWindow.getMinimumSize())} ` +
+      `isAlwaysOnTop=${settingsWindow.isAlwaysOnTop()} ` +
+      `hasParent=${settingsWindow.getParentWindow() !== null} ` +
+      `resizable=${settingsWindow.isResizable()} ` +
+      `minimizable=${settingsWindow.isMinimizable()} ` +
+      `maximizable=${settingsWindow.isMaximizable()} ` +
+      `closable=${settingsWindow.isClosable()}`
+    )
+  }
+
+  let boundsSaveTimer = null
+  const persistSettingsWindowBounds = () => {
+    if (!settingsWindow || settingsWindow.isDestroyed()) return
+    const maximized = settingsWindow.isMaximized()
+    const raw = maximized ? settingsWindow.getNormalBounds() : settingsWindow.getBounds()
+    const allDisplays = electronScreen.getAllDisplays()
+    const fallbackDisp = allDisplays.length > 0
+      ? (getDisplayForPoint(allDisplays, (raw?.x ?? 0) + (raw?.width ?? 0) / 2, (raw?.y ?? 0) + (raw?.height ?? 0) / 2) || electronScreen.getPrimaryDisplay())
+      : electronScreen.getPrimaryDisplay()
+    const candidate = (raw && Number.isFinite(raw.width) && Number.isFinite(raw.height) && raw.width > 0 && raw.height > 0)
+      ? raw
+      : lastValidNormalBounds
+    const clamped = clampSettingsBoundsToDisplays(allDisplays, candidate, fallbackDisp)
+    if (!maximized) {
+      lastValidNormalBounds = { width: clamped.width, height: clamped.height, x: clamped.x, y: clamped.y }
     }
+    const nextBounds = {
+      width: clamped.width,
+      height: clamped.height,
+      x: clamped.x,
+      y: clamped.y,
+      maximized,
+    }
+    if (JSON.stringify(settings?.settingsWindowBounds) !== JSON.stringify(nextBounds)) {
+      settings = { ...settings, settingsWindowBounds: nextBounds }
+      saveSettings(settings)
+    }
+  }
+  const scheduleBoundsSave = () => {
+    if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
+    boundsSaveTimer = setTimeout(() => {
+      boundsSaveTimer = null
+      persistSettingsWindowBounds()
+    }, 250)
+  }
+
+  settingsWindow.on('resize', scheduleBoundsSave)
+  settingsWindow.on('move', scheduleBoundsSave)
+  settingsWindow.on('maximize', () => {
+    if (boundsSaveTimer) {
+      clearTimeout(boundsSaveTimer)
+      boundsSaveTimer = null
+    }
+    persistSettingsWindowBounds()
+  })
+  settingsWindow.on('unmaximize', () => {
+    if (boundsSaveTimer) {
+      clearTimeout(boundsSaveTimer)
+      boundsSaveTimer = null
+    }
+    if (!settingsWindow || settingsWindow.isDestroyed()) return
+    const cur = settingsWindow.getBounds()
+    const allDisplays = electronScreen.getAllDisplays()
+    const clamped = clampSettingsBoundsToDisplays(allDisplays, cur, electronScreen.getPrimaryDisplay())
+    if (
+      cur.x !== clamped.x ||
+      cur.y !== clamped.y ||
+      cur.width !== clamped.width ||
+      cur.height !== clamped.height
+    ) {
+      settingsWindow.setBounds({ x: clamped.x, y: clamped.y, width: clamped.width, height: clamped.height })
+    }
+    persistSettingsWindowBounds()
+  })
+  settingsWindow.on('close', () => {
+    if (boundsSaveTimer) {
+      clearTimeout(boundsSaveTimer)
+      boundsSaveTimer = null
+    }
+    persistSettingsWindowBounds()
   })
 
   settingsWindow.on('page-title-updated', (e) => {
@@ -1835,10 +2127,17 @@ function openSettingsWindow() {
   settingsWindow.webContents.on('did-finish-load', () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.setTitle('screen-buddy-settings')
+      if (initialTab && !settingsWindow.webContents.isDestroyed()) {
+        settingsWindow.webContents.send('settings:select-tab', initialTab)
+      }
     }
   })
 
   settingsWindow.on('closed', () => {
+    if (boundsSaveTimer) {
+      clearTimeout(boundsSaveTimer)
+      boundsSaveTimer = null
+    }
     settingsWindow = null
     reRaiseAndPinWindows('settings closed')
     if (isParked) {
@@ -1864,6 +2163,7 @@ function createOverlayWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
+    ...(process.platform === 'win32' ? { thickFrame: false } : {}),
     alwaysOnTop: true,
     skipTaskbar: true,
     // Must stay true: on Linux/Wayland, resizable:false can also block
@@ -1875,6 +2175,7 @@ function createOverlayWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      ...(process.platform === 'win32' ? { backgroundThrottling: false } : {}),
     },
   })
 
@@ -1900,7 +2201,7 @@ function createOverlayWindow() {
     mainWindow.setTitle(WINDOW_TITLE)
     console.log(`[main] Overlay window did-finish-load. Electron title="${mainWindow.getTitle()}" (canonical=${WINDOW_TITLE})`)
 
-    if (process.env.SCREEN_BUDDY_AUTO_DRAG === '1') {
+    if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_AUTO_DRAG === '1') {
       setTimeout(async () => {
         try {
           const wait = (ms) => new Promise((res) => setTimeout(res, ms))
@@ -2013,6 +2314,12 @@ function createOverlayWindow() {
   })
 }
 
+const DRIFT_POS_THRESHOLD_PX = 3
+const DRIFT_SIZE_THRESHOLD_PX = 4
+const DRIFT_LOG_INTERVAL_MS = 30_000
+let lastDriftLogAt = 0
+let suppressedDriftCount = 0
+
 function setWindowBoundsSafely(win, bounds, tag = 'window') {
   if (!win || win.isDestroyed()) return
   if (
@@ -2034,13 +2341,18 @@ function setWindowBoundsSafely(win, bounds, tag = 'window') {
   try {
     win.setBounds(requested)
     const actual = win.getBounds()
-    if (
-      actual.width !== requested.width ||
-      actual.height !== requested.height ||
-      actual.x !== requested.x ||
-      actual.y !== requested.y
-    ) {
-      console.log(`[display] ${tag} bounds drift detected (req=${requested.width}x${requested.height}@${requested.x},${requested.y} actual=${actual.width}x${actual.height}@${actual.x},${actual.y}), correcting`)
+    const posDrift = Math.max(Math.abs(actual.x - requested.x), Math.abs(actual.y - requested.y))
+    const sizeDrift = Math.max(Math.abs(actual.width - requested.width), Math.abs(actual.height - requested.height))
+    if (posDrift > DRIFT_POS_THRESHOLD_PX || sizeDrift > DRIFT_SIZE_THRESHOLD_PX) {
+      const now = Date.now()
+      if (lastDriftLogAt === 0 || now - lastDriftLogAt >= DRIFT_LOG_INTERVAL_MS) {
+        const suppressedNote = suppressedDriftCount > 0 ? ` (suppressed ${suppressedDriftCount} in last 30s)` : ''
+        console.log(`[display] ${tag} bounds drift detected (req=${requested.width}x${requested.height}@${requested.x},${requested.y} actual=${actual.width}x${actual.height}@${actual.x},${actual.y})${suppressedNote}, correcting`)
+        lastDriftLogAt = now
+        suppressedDriftCount = 0
+      } else {
+        suppressedDriftCount++
+      }
       win.setBounds(requested)
     }
   } catch (err) {
@@ -2370,6 +2682,13 @@ function createTray() {
     const icon = getTrayIcon()
     tray = new Tray(icon)
     tray.setToolTip('screen-buddy')
+    if (process.platform === 'win32') {
+      tray.on('click', () => {
+        if (tray && !tray.isDestroyed()) {
+          tray.popUpContextMenu()
+        }
+      })
+    }
     buildTrayMenu()
 
     if (trayRetryTimeout) {
@@ -2417,6 +2736,12 @@ function getNextTestReminderType(s) {
 function buildTrayMenu() {
   if (!tray) return
   const menu = Menu.buildFromTemplate([
+    {
+      label: '💬 Open AI Chat',
+      click: () => {
+        triggerChatOpen('tray')
+      },
+    },
     {
       label: '🔔 Test Reminder',
       click: () => {
@@ -2476,21 +2801,23 @@ function buildTrayMenu() {
   ])
 
   tray.setContextMenu(menu)
+  if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+    global.__sbDebugTrayMenu = menu
+  }
 }
 
-function redactSettings(obj) {
-  if (!obj || typeof obj !== 'object') return obj
-  const redacted = Array.isArray(obj) ? [] : {}
-  for (const [k, v] of Object.entries(obj)) {
-    if (typeof v === 'string' && /(?:key|token|secret|password|auth)/i.test(k)) {
-      redacted[k] = '[redacted]'
-    } else if (v && typeof v === 'object') {
-      redacted[k] = redactSettings(v)
-    } else {
-      redacted[k] = v
-    }
+function getCurrentCatDisplayGeometry() {
+  const displays = electronScreen.getAllDisplays()
+  const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : 0
+  const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : 0
+  const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
+  return getDisplayCatGeometry(catDisplay)
+}
+
+function sendDisplayGeometryToRenderer() {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('display:changed', getCurrentCatDisplayGeometry())
   }
-  return redacted
 }
 
 // ─── IPC handlers ────────────────────────────────────────────────────────────
@@ -2506,6 +2833,21 @@ function registerIpcHandlers() {
   })
 
   function applySettingsPipeline(nextSettings) {
+    const prevSettings = settings || {}
+    const allKeys = new Set([...Object.keys(prevSettings), ...Object.keys(nextSettings)])
+    const changedKeys = []
+    for (const key of allKeys) {
+      const a = prevSettings[key]
+      const b = nextSettings[key]
+      const isObjA = a !== null && typeof a === 'object'
+      const isObjB = b !== null && typeof b === 'object'
+      if (isObjA || isObjB) {
+        if (JSON.stringify(a) !== JSON.stringify(b)) changedKeys.push(key)
+      } else if (a !== b) {
+        changedKeys.push(key)
+      }
+    }
+
     settings = nextSettings
     saveSettings(settings)
     syncDeveloperMode(Boolean(settings.developerMode))
@@ -2560,7 +2902,14 @@ function registerIpcHandlers() {
 
     notificationsManager?.applySettings()
 
-    console.log('[main] Settings applied:', redactSettings(settings))
+    if (process.platform === 'win32') {
+      const shortcutKeys = ['shortcutCallCat', 'shortcutTogglePause', 'shortcutChat', 'shortcutSettings']
+      if (shortcutKeys.some((k) => changedKeys.includes(k))) {
+        registerWindowsHotkeys()
+      }
+    }
+
+    console.log('[main] Settings applied:', changedKeys.length ? changedKeys.join(', ') : '(none)')
     return settings
   }
 
@@ -2785,27 +3134,27 @@ function registerIpcHandlers() {
     }
   }
 
-  async function applyDragWindowSize(width, height) {
+  async function applyDragWindowSize(width, height, dragX = 0, dragY = 0) {
     const sizeBefore = mainWindow?.getSize?.()
     const boundsBefore = mainWindow?.getBounds?.()
     console.log(
-      `[main] window:mode drag calling setSize(${width}, ${height}) + setPosition(0, 0); ` +
+      `[main] window:mode drag calling setSize(${width}, ${height}) + setPosition(${dragX}, ${dragY}); ` +
       `resizable=${mainWindow?.isResizable?.()} ` +
       `electron getSize before=${JSON.stringify(sizeBefore)} ` +
       `getBounds before=${JSON.stringify(boundsBefore)}`
     )
-    mainWindow?.setSize(width, height)
-    mainWindow?.setPosition(0, 0)
-    const sizeAfter = mainWindow?.getSize?.()
-    const boundsAfter = mainWindow?.getBounds?.()
-    console.log(
-      `[main] window:mode drag setSize RETURNED; ` +
-      `electron getSize after=${JSON.stringify(sizeAfter)} ` +
-      `getBounds after=${JSON.stringify(boundsAfter)} ` +
-      `(Electron size is not used to gate the renderer)`
-    )
 
     if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+      mainWindow?.setSize(width, height)
+      mainWindow?.setPosition(0, 0)
+      const sizeAfter = mainWindow?.getSize?.()
+      const boundsAfter = mainWindow?.getBounds?.()
+      console.log(
+        `[main] window:mode drag setSize RETURNED; ` +
+        `electron getSize after=${JSON.stringify(sizeAfter)} ` +
+        `getBounds after=${JSON.stringify(boundsAfter)} ` +
+        `(Electron size is not used to gate the renderer)`
+      )
       _movePending = null
       await resizeHyprlandWindow(width, height, 'window:mode drag-start')
       try {
@@ -2816,7 +3165,7 @@ function registerIpcHandlers() {
       return waitForHyprlandSize(width, height, 'window:mode drag-start')
     }
 
-    setWindowBoundsSafely(mainWindow, { x: 0, y: 0, width, height }, 'mainWindow-drag')
+    setWindowBoundsSafely(mainWindow, { x: dragX, y: dragY, width, height }, 'mainWindow-drag')
     return { applied: true, compositorSize: [width, height], attempts: 1, elapsedMs: 0 }
   }
 
@@ -2846,11 +3195,7 @@ function registerIpcHandlers() {
   }
 
   ipcMain.handle('display:get-geometry', () => {
-    const displays = electronScreen.getAllDisplays()
-    const targetX = (lastKnownCatWinX !== null && Number.isFinite(lastKnownCatWinX)) ? lastKnownCatWinX : 0
-    const targetY = (lastKnownCatWinY !== null && Number.isFinite(lastKnownCatWinY)) ? lastKnownCatWinY : 0
-    const catDisplay = getDisplayForPoint(displays, targetX + NORMAL_CAT_CX, targetY + NORMAL_CAT_CY) || electronScreen.getPrimaryDisplay()
-    return getDisplayCatGeometry(catDisplay)
+    return getCurrentCatDisplayGeometry()
   })
 
   ipcMain.on('window:move', (event, x, y) => {
@@ -2908,6 +3253,9 @@ function registerIpcHandlers() {
         wx = clamped.winX
         wy = clamped.winY
         if (Number.isFinite(wx) && Number.isFinite(wy)) {
+          if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_DEBUG_MOVE === '1') {
+            console.log(`[debug:move] t=${Date.now()} cat=(${Math.round(x)},${Math.round(y)}) win=(${wx},${wy})`)
+          }
           setWindowBoundsSafely(mainWindow, { x: wx, y: wy, width: currentWinW, height: currentWinH }, 'mainWindow-move')
           lastKnownCatWinX = wx
           lastKnownCatWinY = wy
@@ -2956,12 +3304,15 @@ function registerIpcHandlers() {
       const currentX = lastKnownCatWinX !== null ? lastKnownCatWinX : 0
       const currentY = lastKnownCatWinY !== null ? lastKnownCatWinY : 0
       const catDisplay = getDisplayForPoint(displays, currentX + NORMAL_CAT_CX, currentY + NORMAL_CAT_CY) || screen.getPrimaryDisplay()
-      const { width, height } = catDisplay.workAreaSize
+      const wa = catDisplay.workArea || { x: 0, y: 0, ...catDisplay.workAreaSize }
+      const { width, height } = wa
+      const dragX = process.env.HYPRLAND_INSTANCE_SIGNATURE ? 0 : wa.x
+      const dragY = process.env.HYPRLAND_INSTANCE_SIGNATURE ? 0 : wa.y
       currentWinW = width
       currentWinH = height
-      const verify = await applyDragWindowSize(width, height)
+      const verify = await applyDragWindowSize(width, height, dragX, dragY)
       console.log(
-        `[main] window:mode -> drag (${width}x${height} at 0,0) title=${WINDOW_TITLE} ` +
+        `[main] window:mode -> drag (${width}x${height} at ${dragX},${dragY}) title=${WINDOW_TITLE} ` +
         `applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)} ` +
         `pollAttempts=${verify.attempts} pollElapsed=${verify.elapsedMs}ms ` +
         `handler ${Date.now() - modeEnteredAt}ms`
@@ -3004,7 +3355,7 @@ function registerIpcHandlers() {
           })
         }
       }
-      return { applied: verify.applied, width, height, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
+      return { applied: verify.applied, x: dragX, y: dragY, width, height, compositorSize: verify.compositorSize, elapsedMs: verify.elapsedMs }
     } else {
       bubblePositionGeneration++;
       mascotRepositionInProgress = true
@@ -3061,6 +3412,9 @@ function registerIpcHandlers() {
             verify = await applyMascotWindowSize(isTreatment ? 'treatment' : 'drag-end')
             if (!isTreatment && Number.isFinite(wx) && Number.isFinite(wy)) {
               persistMascotPosition(wx, wy)
+              if (!process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+                sendDisplayGeometryToRenderer()
+              }
             }
             console.log(`[main] window:mode -> ${mode} at window (${wx}, ${wy}) from cat center (${catX}, ${catY}) electronTitle="${mainWindow?.getTitle?.()}" hyprMatch=${HYPR_TITLE_MATCH} applied=${verify.applied} compositorSize=${JSON.stringify(verify.compositorSize)}`)
           }
@@ -3228,11 +3582,32 @@ function registerIpcHandlers() {
 
   // Bubble renderer (BubbleApp.jsx) requests a business-logic action.
   // Forward to the main overlay renderer (App.jsx) to handle state transitions.
+  ipcMain.handle('bubble:get-initial-state', () => {
+    return {
+      cardState: lastCardState,
+      notification: notificationsManager?.activeNotification || null,
+    }
+  })
+
+  ipcMain.handle('shortcuts:get-status', () => {
+    return shortcutRegistrationStatus
+  })
+
+  ipcMain.handle('settings:consume-initial-tab', () => {
+    const tab = pendingSettingsTab
+    pendingSettingsTab = null
+    return tab
+  })
+
   ipcMain.on('bubble:action', (_event, type, payload) => {
     // chat:ready: BubbleApp has mounted and DOM-focused the input.
     // Apply OS-level window focus now -- this is the correct moment.
     if (type === 'chat:ready') {
       focusChatWindow();
+      return;
+    }
+    if (type === 'chat:open-settings') {
+      openSettingsWindow('chat');
       return;
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3554,7 +3929,7 @@ function registerIpcHandlers() {
   ipcMain.handle('chat:test-connection', async () => {
     const apiKey = settings?.geminiApiKey || process.env.GEMINI_API_KEY || ''
     if (!apiKey) {
-      return { ok: false, error: 'Add your Gemini API key in Settings → Chat & AI' }
+      return { ok: false, error: 'Add your Gemini API key in Settings -> Chat & AI' }
     }
 
     const model = (settings?.geminiModel && settings.geminiModel.trim())
@@ -3824,8 +4199,8 @@ function registerIpcHandlers() {
   /** Expose the resolved settings file path to the renderer for display */
   ipcMain.handle('settings:get-path', () => getSettingsPath())
 
-  ipcMain.on('settings:open', () => {
-    openSettingsWindow()
+  ipcMain.on('settings:open', (_event, initialTab) => {
+    openSettingsWindow(initialTab || null)
   })
 
   // ── Mood state persistence ────────────────────────────────────────────────

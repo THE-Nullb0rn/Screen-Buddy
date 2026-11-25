@@ -48,6 +48,13 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
     { value: 'middle', label: 'Middle button' },
   ]
 
+  const actionOptions = [
+    { value: 'none', label: 'Do nothing' },
+    { value: 'react', label: 'Happy reaction' },
+    { value: 'chat', label: 'Open chat' },
+    { value: 'settings', label: 'Open settings' },
+    { value: 'pause', label: 'Toggle pause' },
+  ]
 
   const hungerRateOptions = [
     { value: 'slow', label: 'Slow' },
@@ -243,6 +250,58 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
             onChange={(e) => saveSettingsPatch({ dragButton: e.target.value })}
             options={dragButtonOptions}
             ariaLabel="Drag button"
+          />
+        </Row>
+
+        <Row
+          icon={MousePointer}
+          label="Left click"
+          hint="When you click the left button"
+        >
+          <Select
+            value={settings.leftClickAction || 'react'}
+            onChange={(e) => saveSettingsPatch({ leftClickAction: e.target.value })}
+            options={actionOptions}
+            ariaLabel="Left click action"
+          />
+        </Row>
+
+        <Row
+          icon={MousePointer}
+          label="Right click"
+          hint="When you click the right button"
+        >
+          <Select
+            value={settings.rightClickAction || 'none'}
+            onChange={(e) => saveSettingsPatch({ rightClickAction: e.target.value })}
+            options={actionOptions}
+            ariaLabel="Right click action"
+          />
+        </Row>
+
+        <Row
+          icon={Mouse}
+          label="Left double click"
+          hint="When you double-click the left button"
+        >
+          <Select
+            value={settings.doubleClickAction || 'chat'}
+            onChange={(e) => saveSettingsPatch({ doubleClickAction: e.target.value })}
+            options={actionOptions}
+            ariaLabel="Left double click action"
+          />
+        </Row>
+
+        <Row
+          icon={Mouse}
+          label="Right double click"
+          hint="When you double-click the right button"
+        >
+          <Select
+            value={settings.rightDoubleClickAction || 'settings'}
+            onChange={(e) => saveSettingsPatch({ rightDoubleClickAction: e.target.value })}
+            options={actionOptions}
+            ariaLabel="Right double click action"
           />
         </Row>
       </Card>

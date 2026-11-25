@@ -120,11 +120,24 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
   }, [initialSettings])
 
   useEffect(() => {
+    window.api?.consumeInitialSettingsTab?.().then((tabId) => {
+      if (tabId && SETTINGS_TABS.some((t) => t.id === tabId)) {
+        setActiveTab(tabId)
+      }
+    }).catch(() => {})
     if (!window.api?.on) return
-    const off = window.api.on('settings:updated', (updated) => {
+    const offSettings = window.api.on('settings:updated', (updated) => {
       setSettings(updated)
     })
-    return off
+    const offSelectTab = window.api.on('settings:select-tab', (tabId) => {
+      if (SETTINGS_TABS.some((t) => t.id === tabId)) {
+        setActiveTab(tabId)
+      }
+    })
+    return () => {
+      offSettings?.()
+      offSelectTab?.()
+    }
   }, [])
 
   // Instant apply settings patch
@@ -247,9 +260,11 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
 
   const TabIcon = currentTabObj.icon
   const hasUpdateBadge = updateState?.status === 'available'
+  const platform = window.api?.platform || 'linux'
+  const hasNativeTitleBarButtons = platform === 'win32' || platform === 'darwin'
 
   return (
-    <div className="settings-window">
+    <div className="settings-window" data-platform={platform}>
       {/* ── Left Sidebar ─────────────────────────────────────────────────── */}
       <aside className="sb-sidebar">
         {/* Brand row */}
@@ -281,6 +296,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                 tabIndex={isActive ? 0 : -1}
                 className={`sb-tab-btn ${isActive ? 'sb-tab-btn--active' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
+                title={tab.label}
               >
                 <IconComponent size={18} className="sb-tab-btn__icon" aria-hidden="true" />
                 <span className="sb-tab-btn__label">{tab.label}</span>
@@ -344,14 +360,16 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                 <span>{saveError}</span>
               </div>
             )}
-            <button
-              type="button"
-              className="sb-close-btn"
-              onClick={onClose}
-              aria-label="Close settings"
-            >
-              <X size={18} />
-            </button>
+            {!hasNativeTitleBarButtons && (
+              <button
+                type="button"
+                className="sb-close-btn"
+                onClick={onClose}
+                aria-label="Close settings"
+              >
+                <X size={18} />
+              </button>
+            )}
           </div>
         </header>
 
@@ -376,7 +394,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
             {activeTab === 'chat' && (
               <ChatTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
             )}
-            {activeTab === 'shortcuts' && <ShortcutsTab />}
+            {activeTab === 'shortcuts' && <ShortcutsTab settings={settings} />}
             {activeTab === 'advanced' && (
               <AdvancedTab
                 settings={settings}

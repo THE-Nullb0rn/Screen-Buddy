@@ -67,6 +67,11 @@
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid var(--card-border);
+  -webkit-app-region: drag;
+}
+
+.settings-window[data-platform='darwin'] .sb-sidebar__brand {
+  padding-top: max(22px, env(titlebar-area-height, 38px));
 }
 
 .sb-sidebar__brand-avatar {
@@ -235,6 +240,7 @@
 /* ── Right Main Area ─────────────────────────────────────────────────────── */
 .sb-main {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-main);
@@ -251,9 +257,10 @@
   overflow: hidden;
   display: flex;
   align-items: center;
-  padding: 0 28px;
+  padding: env(titlebar-area-y, 0px) 28px 0 28px;
   border-bottom: 1px solid var(--card-border);
   flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
 .sb-banner__img {
@@ -287,6 +294,9 @@
   display: flex;
   align-items: center;
   gap: 18px;
+  min-width: 0;
+  flex: 1;
+  padding-right: 16px;
 }
 
 .sb-banner__icon-wrap {
@@ -309,6 +319,7 @@
 .sb-banner__text {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .sb-banner__title {
@@ -325,16 +336,35 @@
   color: var(--text-muted);
   margin: 3px 0 0;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .sb-banner__top-actions {
   position: absolute;
-  top: 16px;
+  top: max(12px, env(titlebar-area-y, 12px));
   right: 20px;
   z-index: 4;
   display: flex;
   align-items: center;
   gap: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.settings-window[data-platform='win32'] .sb-banner__top-actions {
+  right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px);
+  top: 8px;
+}
+
+.settings-window[data-platform='win32'] .sb-banner__content,
+.settings-window[data-platform='darwin'] .sb-banner__content {
+  padding-right: 150px;
+}
+
+.sb-banner button,
+.sb-banner input,
+.sb-banner select,
+.sb-banner a {
+  -webkit-app-region: no-drag;
 }
 
 .sb-saved-pill {
@@ -392,25 +422,71 @@
 /* ── Scrollable Tab Content ──────────────────────────────────────────────── */
 .sb-content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px 24px 28px;
 }
 
 .sb-content__grid {
   display: block;
-  columns: 3 240px;
+  columns: 3 280px;
   column-gap: 16px;
   width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+@media (min-width: 1800px) {
+  .sb-content__grid {
+    columns: 4 280px;
+  }
 }
 
 .sb-content__grid:has(> .sb-card:only-child) {
   columns: 1;
-  max-width: 600px;
+  max-width: 680px;
 }
 
-@media (max-width: 950px) {
-  .sb-content__grid {
-    columns: 2 240px;
+@media (max-width: 900px) {
+  .sb-sidebar {
+    width: 68px;
+    min-width: 68px;
+  }
+
+  .sb-sidebar__brand {
+    padding: 16px 10px;
+    justify-content: center;
+  }
+
+  .sb-sidebar__brand-text,
+  .sb-tab-btn__label,
+  .sb-sidebar__footer {
+    display: none;
+  }
+
+  .sb-sidebar__nav {
+    padding: 12px 10px;
+  }
+
+  .sb-tab-btn {
+    justify-content: center;
+    padding: 10px;
+  }
+
+  .sb-tab-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
+
+  .sb-banner {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .sb-content {
+    padding: 16px 16px 24px;
   }
 }
 
@@ -421,11 +497,15 @@
   border-radius: var(--radius-card);
   padding: 18px 20px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   gap: 14px;
+  width: 100%;
+  min-width: 0;
+  vertical-align: top;
   break-inside: avoid;
   page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
   margin-bottom: 16px;
 }
 
@@ -559,6 +639,7 @@
   font-size: 14.5px;
   font-weight: 500;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .sb-soon-pill {
@@ -588,6 +669,7 @@
   font-size: 12.5px;
   color: var(--text-muted);
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .sb-row__control {
@@ -595,20 +677,30 @@
   display: flex;
   align-items: center;
   margin-left: auto;
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.sb-row__control:has(.sb-info-path) {
+  flex-basis: 100%;
+  width: 100%;
+  margin-left: 0;
 }
 
 /* ── Select Dropdown Controls ── */
 .sb-select-wrap {
   position: relative;
   min-width: 130px;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
 }
 
 .sb-row .sb-select-wrap {
   width: 180px;
-  min-width: 180px;
-  max-width: 180px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .sb-select {
@@ -660,7 +752,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 170px;
+  min-width: 140px;
+  max-width: 100%;
 }
 
 .sb-slider {
@@ -741,6 +834,8 @@
 /* ── Segmented Choice Buttons ── */
 .sb-segmented-group {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   background-color: var(--input-bg);
   padding: 3px;
   border-radius: 9px;
@@ -1320,9 +1415,17 @@
 }
 
 /* ── Keycaps (Kbd) ───────────────────────────────────────────────────────── */
+.sb-shortcut-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
 .sb-keycap-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
 }
 
@@ -1352,27 +1455,35 @@
 /* ── Code Boxes ──────────────────────────────────────────────────────────── */
 .sb-code-box {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
   background-color: var(--input-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-control);
-  padding: 8px 12px;
+  padding: 10px 12px;
 }
 
 .sb-code-box__text {
+  display: block;
+  width: 100%;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 12.5px;
+  line-height: 1.45;
   color: var(--accent);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
   user-select: text;
 }
 
 .sb-code-box__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  flex-shrink: 0;
+  width: 100%;
 }
 
 .sb-binds-list {
@@ -1401,6 +1512,8 @@
   border-radius: 12px;
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .sb-status-pill--muted {
@@ -1531,6 +1644,7 @@
 
 /* ── About Tab Components ────────────────────────────────────────────────── */
 .sb-about-hero-card {
+  display: flex;
   column-span: all;
   break-inside: avoid;
   margin-bottom: 16px;
@@ -1539,6 +1653,7 @@
 .sb-about-hero {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 18px;
 }
 
@@ -1612,6 +1727,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  overflow-wrap: anywhere;
 }
 
 .sb-update-banner--ok {
@@ -1665,6 +1783,7 @@
   max-height: 140px;
   overflow-y: auto;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   user-select: text;
 }
 
@@ -1672,19 +1791,26 @@
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--accent);
+  overflow-wrap: anywhere;
   user-select: text;
 }
 
 .sb-info-path {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text-muted);
   background: var(--input-bg);
-  padding: 3px 8px;
+  padding: 6px 10px;
   border-radius: 6px;
   border: 1px solid var(--card-border);
   user-select: text;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 /* ── Utility icons / animations ──────────────────────────────────────────── */

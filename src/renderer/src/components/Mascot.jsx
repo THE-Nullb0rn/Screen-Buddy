@@ -9,8 +9,6 @@ import meowUrl from '../assets/sounds/meow.wav'
 const MARGIN = 16
 const SPRITE_WIDTH = 126
 const SPRITE_HEIGHT = 180
-const FLOOR_GAP_PX = 24
-const FOOT_PAD_PX = 5
 
 // NORMAL_CAT_CY = window height (128) − CSS bottom inset (8, must match Mascot.css) − sprite half-height (90).
 // main.js has a copy that must change with this. The 8 must match Mascot.css `bottom: 8px`.
@@ -35,11 +33,49 @@ export const IDLE_LIFE_SIT_CHANCE = 0.25
 
 export const WALK_SPEED_MIN_PX_S = 80
 export const WALK_SPEED_MAX_PX_S = 120
-export const WALK_PX_PER_CYCLE = 84
+// Derived from walk.png (210x300 cell rendered at 126x180, scale 0.6):
+// measured cat sprite bounding-box width across the 8 walk frames is 184-187 px (avg 185.6 px),
+// which equals ~111.4 rendered px (111 px) per full walk gait cycle at catSize=100.
+export const WALK_PX_PER_CYCLE = 111
 
 export const RUN_SPEED_MIN_PX_S = 240
 export const RUN_SPEED_MAX_PX_S = 320
 export const RUN_PX_PER_CYCLE = 219
+
+const WALK_END_EASE_MS = 250
+
+/**
+ * Symmetric trapezoid velocity profile with short linear accel/decel ramps (<= 250 ms)
+ * at both ends and constant cruise speed across the middle.
+ */
+function evalTrapezoidTween(elapsedMs, durationMs, distPx) {
+  const T = Math.max(1, durationMs)
+  const e = Math.max(0, Math.min(T, elapsedMs))
+  const rampMs = Math.min(WALK_END_EASE_MS, T * 0.25)
+  const denomMs = Math.max(1, T - rampMs)
+  const cruisePxPerSec = (distPx * 1000) / denomMs
+
+  if (rampMs <= 0) {
+    return { fraction: e / T, speedPxPerSec: e >= T ? 0 : cruisePxPerSec }
+  }
+  if (e < rampMs) {
+    return {
+      fraction: (0.5 * e * e) / (rampMs * denomMs),
+      speedPxPerSec: cruisePxPerSec * (e / rampMs),
+    }
+  }
+  if (e <= T - rampMs) {
+    return {
+      fraction: (e - 0.5 * rampMs) / denomMs,
+      speedPxPerSec: cruisePxPerSec,
+    }
+  }
+  const rem = Math.max(0, T - e)
+  return {
+    fraction: Math.min(1, 1 - (0.5 * rem * rem) / (rampMs * denomMs)),
+    speedPxPerSec: cruisePxPerSec * (rem / rampMs),
+  }
+}
 
 // Knockoff constants
 export const KNOCKOFF_ARRIVE_CHANCE = 0.40
@@ -217,11 +253,9 @@ function clamp(value, min, max) {
 }
 
 function defaultPosition() {
-  const sw = window.screen.availWidth || window.screen.width || 1920
-  const sh = window.screen.availHeight || window.screen.height || 1080
   return {
-    x: Math.max(MARGIN, sw - FALLBACK_WIDTH - 48),
-    y: Math.max(MARGIN, sh - FALLBACK_HEIGHT - 48),
+    x: NORMAL_CAT_CX,
+    y: NORMAL_CAT_CY,
   }
 }
 
@@ -351,8 +385,15 @@ export default function Mascot({
   const [isHoveringHead, setIsHoveringHead] = useState(false)
   const [isHoveringCat, setIsHoveringCat] = useState(false)
 
-  // Walk tween: rAF-driven ease-in-out interpolation
-  const walkTweenRef = useRef(null) // { startX, targetX, startTime, duration }
+  // Walk tween: rAF-driven trapezoid interpolation + live distance-driven stride telemetry
+  const walkTweenRef = useRef(null)
+  const liveWalkSpeedRef = useRef(1)
+  const walkCyclesCompletedRef = useRef(0)
+  const handleWalkCycleFrame = useCallback((cycleFraction) => {
+    if (walkTweenRef.current) {
+      walkCyclesCompletedRef.current += cycleFraction
+    }
+  }, [])
 
   // Squash & stretch accent class
   const [spriteAccent, setSpriteAccent] = useState(null)
@@ -471,22 +512,67 @@ export default function Mascot({
 
   useEffect(() => {
     let active = true
-    if (window.api?.getDisplayGeometry) {
-      window.api.getDisplayGeometry().then((geom) => {
-        if (active && geom) {
-          setDisplayGeometry(geom)
-        }
+    let retryTimer = null
+    let fallbackTimer = null
+    const buildFallbackGeometry = () => {
+      const waX = typeof window.screen?.availLeft === 'number' ? window.screen.availLeft : 0
+      const waY = typeof window.screen?.availTop === 'number' ? window.screen.availTop : 0
+      const waW = Math.max(320, window.screen?.availWidth || window.screen?.width || 1280)
+      const waH = Math.max(240, window.screen?.availHeight || window.screen?.height || 720)
+      const minCatX = waX + NORMAL_CAT_CX
+      const maxCatX = Math.max(minCatX, waX + waW - NORMAL_CAT_CX)
+      return {
+        workArea: { x: waX, y: waY, width: waW, height: waH },
+        bounds: { x: waX, y: waY, width: waW, height: waH },
+        scaleFactor: window.devicePixelRatio || 1,
+        minCatX,
+        maxCatX,
+        floorY: waY + waH - NORMAL_CAT_CY,
+        source: 'fallback-primary',
+      }
+    }
+    const applyGeometry = (geom) => {
+      if (!active || !geom) return
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer)
+        fallbackTimer = null
+      }
+      displayGeometryRef.current = geom
+      setDisplayGeometry(geom)
+    }
+    const requestGeometry = () => {
+      if (!window.api?.getDisplayGeometry) return Promise.resolve(null)
+      return window.api.getDisplayGeometry().then((geom) => {
+        if (geom) applyGeometry(geom)
+        return geom
       }).catch((err) => {
         console.warn('[Mascot] getDisplayGeometry failed:', err?.message)
+        return null
       })
     }
-    const unsub = window.api?.on?.('display:changed', (geom) => {
-      if (active && geom) {
-        setDisplayGeometry(geom)
-      }
-    })
+    requestGeometry()
+    retryTimer = setTimeout(() => {
+      if (!active || displayGeometryRef.current) return
+      console.warn('[Mascot] displayGeometry missing after 3s, re-requesting')
+      requestGeometry().then((geom) => {
+        if (!active || displayGeometryRef.current || geom) return
+        fallbackTimer = setTimeout(() => {
+          if (!active || displayGeometryRef.current) return
+          const fb = buildFallbackGeometry()
+          console.warn('[Mascot] displayGeometry unavailable after retry, using primary fallback:', fb.workArea)
+          applyGeometry(fb)
+        }, 500)
+      })
+    }, 3000)
+    const unsub = window.api?.on?.('display:changed', applyGeometry)
     return () => {
       active = false
+      if (retryTimer) clearTimeout(retryTimer)
+      if (fallbackTimer) clearTimeout(fallbackTimer)
       unsub?.()
     }
   }, [])
@@ -528,6 +614,7 @@ export default function Mascot({
   const dragExpandingRef = useRef(false)
   const dragEndingRef = useRef(false)
   const dragPointerIdRef = useRef(null)
+  const dragOriginRef = useRef({ x: 0, y: 0 })
 
   const mediaPlayingRef = useRef(mediaPlaying)
   useEffect(() => {
@@ -597,13 +684,12 @@ export default function Mascot({
   const clampToViewport = useCallback(
     (nx, ny) => {
       const geom = displayGeometryRef.current
-      const minX = geom?.minCatX ?? NORMAL_CAT_CX
-      const maxX = geom?.maxCatX ?? Math.max(minX, (window.screen.availWidth || window.screen.width || 1920) - 160 + NORMAL_CAT_CX)
-      const minY = geom?.minCatY ?? NORMAL_CAT_CY
-      const maxY = geom?.floorY ?? Math.max(minY, (window.screen.availHeight || window.screen.height || 1080) - (SPRITE_HEIGHT / 2) - FLOOR_GAP_PX + FOOT_PAD_PX)
+      if (!geom) {
+        return { x: nx, y: ny }
+      }
       return {
-        x: clamp(nx, minX, maxX),
-        y: clamp(ny, minY, maxY),
+        x: clamp(nx, geom.minCatX, geom.maxCatX),
+        y: clamp(ny, geom.minCatY, geom.floorY),
       }
     },
     []
@@ -1087,11 +1173,28 @@ export default function Mascot({
   }
   getStrideForAnimRef.current = getStrideForAnim
 
+  const emitWalkSummaryLog = (tween, endNow = performance.now()) => {
+    if (!tween || tween.loggedSummary) return
+    tween.loggedSummary = true
+    const actualMs = Math.max(1, Math.round((tween.endNow || endNow) - tween.startTime))
+    const distPx = Number(tween.dist || 0)
+    const avgPxS = distPx / (actualMs / 1000)
+    const cycles = walkCyclesCompletedRef.current > 0 ? walkCyclesCompletedRef.current : (tween.cyclesAccum || 0)
+    const rafHz = tween.rafCount / (actualMs / 1000)
+    const avgMoveIpcMs = tween.ipcCount > 0 ? tween.ipcTimeTotalMs / tween.ipcCount : 0
+    console.log(
+      `[walk] kind=${tween.kind || tween.anim || 'walk'} ` +
+      `dist=${Math.round(distPx)} planned=${Math.round(tween.duration)} actual=${actualMs} ` +
+      `avgPxS=${avgPxS.toFixed(1)} cycles=${cycles.toFixed(2)} L=${Math.round(tween.strideL)} ` +
+      `rafHz=${rafHz.toFixed(1)} avgMoveIpcMs=${avgMoveIpcMs.toFixed(3)}`
+    )
+  }
+
   const performMovement = ({
+    kind = null,
     anim = 'walk',
     distanceOrTarget,
     speedRange,
-    edgeMargin = 40,
     token = null,
     gen = null,
     forcedDir = null,
@@ -1104,10 +1207,12 @@ export default function Mascot({
     if (gen && gen !== roamGenRef.current) return
 
     const geom = displayGeometryRef.current
-    const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-    const catW = measure().width
-    const minX = geom ? geom.minCatX : edgeMargin
-    const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - catW - edgeMargin)
+    if (!geom) {
+      onAbort?.('no displayGeometry')
+      return
+    }
+    const minX = geom.minCatX
+    const maxX = geom.maxCatX
     const currentX = posRef.current.x
 
     let targetX
@@ -1194,25 +1299,23 @@ export default function Mascot({
 
     const baseFps = anim === 'run' ? 14 : 12
     const totalFrames = 8
-    const stridePxPerCycle = getStrideForAnim(anim)
+    const stridePxPerCycle = Math.max(1, getStrideForAnim(anim))
 
-    const calculatedRate = groundSpeed / (stridePxPerCycle * (baseFps / totalFrames))
-    const minRate = anim === 'walk' ? 0.4 : 0.5
-    const rate = clamp(calculatedRate, minRate, 1.5)
-    setWalkSpeedRate(rate)
+    // Distance-driven rate: cycles/s = speed / L; normalized to baseFps / totalFrames
+    const initialRate = clamp(groundSpeed / (stridePxPerCycle * (baseFps / totalFrames)), 0.05, 4.0)
+    liveWalkSpeedRef.current = initialRate
+    setWalkSpeedRate(initialRate)
 
-    const cycles = (duration / 1000) * (baseFps * rate / totalFrames)
-    const impliedPxPerCycle = cycles > 0 ? (realDist / cycles) : stridePxPerCycle
-
+    const cycles = realDist / stridePxPerCycle
     const moveRecord = {
       anim,
       plannedPx: Number(plannedDist.toFixed(1)),
       realPx: Number(realDist.toFixed(1)),
       durationMs: Math.round(duration),
       speedPxS: Number(groundSpeed.toFixed(1)),
-      rate: Number(rate.toFixed(2)),
+      rate: Number(initialRate.toFixed(2)),
       impliedCycles: Number(cycles.toFixed(2)),
-      impliedPxPerCycle: Number(impliedPxPerCycle.toFixed(1))
+      impliedPxPerCycle: stridePxPerCycle
     }
     moveHistoryRef.current.push(moveRecord)
     if (moveHistoryRef.current.length > 5) {
@@ -1220,7 +1323,7 @@ export default function Mascot({
     }
 
     if (isDebugRef.current) {
-      console.log(`[move] anim=${anim} planned=${plannedDist.toFixed(1)} real=${realDist.toFixed(1)} duration=${Math.round(duration)} speed=${groundSpeed.toFixed(1)} rate=${rate.toFixed(2)} cycles=${cycles.toFixed(2)}`)
+      console.log(`[move] anim=${anim} planned=${plannedDist.toFixed(1)} real=${realDist.toFixed(1)} duration=${Math.round(duration)} speed=${groundSpeed.toFixed(1)} rate=${initialRate.toFixed(2)} cycles=${cycles.toFixed(2)}`)
     }
 
     const movePose = anim === 'walk'
@@ -1246,6 +1349,7 @@ export default function Mascot({
       if (holdPose) {
         // Continuous movement across legs: keep playing run animation
       } else {
+        liveWalkSpeedRef.current = 1
         setWalkSpeedRate(1)
         if (postureRef.current === 'stand') {
           poseRef.current = 'standidle'
@@ -1274,26 +1378,53 @@ export default function Mascot({
         triggerAccentRef.current('is-stretch')
       }
 
+      walkCyclesCompletedRef.current = 0
+      const startNow = performance.now()
       walkTweenRef.current = {
+        kind: kind || (anim === 'run' ? 'run' : 'roam'),
+        anim,
         startX: posRef.current.x,
         targetX,
-        startTime: performance.now(),
+        dist: realDist,
+        strideL: stridePxPerCycle,
+        baseFps,
+        startTime: startNow,
+        lastTickNow: startNow,
         duration,
+        rafCount: 0,
+        cyclesAccum: 0,
+        ipcTimeTotalMs: 0,
+        ipcCount: 0,
+        arrivedPendingPose: false,
+        endNow: null,
+        loggedSummary: false,
         onComplete: () => {
           finishMove('complete')
         }
       }
       dragTargetRef.current = { x: targetX, y: posRef.current.y }
 
+      // Emergency watchdog only if rAF completely stops firing: snap x first, then change pose next frame.
       fallbackTimeout = setTimeout(() => {
+        fallbackTimeout = null
+        if (moveEnded || !walkTweenRef.current) return
         if (token && chainTokenRef.current !== token) return
         if (gen && gen !== roamGenRef.current) return
-        if (roamBlockedRef.current || draggingRef.current || dragPointerDownRef.current) {
-          finishMove('blocked')
-        } else {
-          finishMove('complete')
+        const tw = walkTweenRef.current
+        const reason = (roamBlockedRef.current || draggingRef.current || dragPointerDownRef.current) ? 'blocked' : 'complete'
+        tw.arrivedPendingPose = true
+        tw.endNow = performance.now()
+        liveWalkSpeedRef.current = 0
+        if (reason === 'complete') {
+          posRef.current = { x: targetX, y: posRef.current.y }
+          setX(targetX)
         }
-      }, duration + 100)
+        requestAnimationFrame(() => {
+          if (moveEnded) return
+          emitWalkSummaryLog(tw)
+          finishMove(reason)
+        })
+      }, duration + 1500)
       if (token) {
         chainTimeoutsRef.current.push(fallbackTimeout)
       }
@@ -1504,7 +1635,8 @@ export default function Mascot({
               },
               (abortReason) => {
                 endChain(abortReason)
-              }
+              },
+              { kind: 'patrol' }
             )
           })
         })
@@ -1550,7 +1682,8 @@ export default function Mascot({
               },
               (abortReason) => {
                 endChain(abortReason)
-              }
+              },
+              { kind: 'walk_then_act' }
             )
           })
         })
@@ -1637,10 +1770,12 @@ export default function Mascot({
       advanceStep(1, () => {
         ensureStandingRef.current?.(token, () => {
           const geom = displayGeometryRef.current
-          const catW = measure().width
-          const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-          const minX = geom ? geom.minCatX : 40
-          const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - catW - 40)
+          if (!geom) {
+            endChain('no displayGeometry')
+            return
+          }
+          const minX = geom.minCatX
+          const maxX = geom.maxCatX
           const currentX = posRef.current.x
           let napTargetX
 
@@ -1665,7 +1800,7 @@ export default function Mascot({
             executeChainMoveRef.current(
               token,
               'walk',
-              napTargetX,
+              { targetX: napTargetX },
               WALK_PX_PER_CYCLE,
               [WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S],
               40,
@@ -1685,7 +1820,8 @@ export default function Mascot({
               },
               (abortReason) => {
                 endChain(abortReason)
-              }
+              },
+              { kind: 'nap' }
             )
           })
         })
@@ -1698,7 +1834,7 @@ export default function Mascot({
     }
 
     return true
-  }, [measure, falling, isReminder, notificationVisible, chatState])
+  }, [falling, isReminder, notificationVisible, chatState])
 
   startLifeChainRef.current = startLifeChain
 
@@ -2003,6 +2139,7 @@ export default function Mascot({
         }
         break
       case 'chat':
+        console.log('[chat] mascot double-click action triggered')
         if (onChatOpen) onChatOpen()
         break
       case 'settings':
@@ -2253,9 +2390,14 @@ export default function Mascot({
 
   // ── Ensure cat falls if spawned in the air ──
   useEffect(() => {
+    if (!displayGeometry) return
     requestAnimationFrame(() => {
       if (draggingRef.current || fallRafRef.current) return;
-      const { y: floorY } = clampToViewport(posRef.current.x, 999999)
+      const { x: clampedX, y: floorY } = clampToViewport(posRef.current.x, 999999)
+      if (clampedX !== posRef.current.x) {
+        posRef.current = { x: clampedX, y: posRef.current.y }
+        setX(clampedX)
+      }
       if (posRef.current.y < floorY - 5) {
         setFalling(true)
         poseRef.current = 'fall'
@@ -2311,7 +2453,7 @@ export default function Mascot({
         window.api?.persistPosition?.(posRef.current.x, floorY)
       }
     })
-  }, [clampToViewport, isReminder])
+  }, [clampToViewport, isReminder, displayGeometry])
   // ── Typing Activity Listener ──────────────────────────────────────────────
   useEffect(() => {
     const unsub = window.api.on('typing:activity', () => {
@@ -2374,10 +2516,9 @@ export default function Mascot({
 
   // Walk tween is idle-only. Active drag writes pointer coords 1:1 in onDragMove.
 
-  // ── Walk Tween (rAF ease-in-out) ─────────────────────────────────────────
+  // ── Walk Tween (rAF trapezoid constant-speed + short end eases) ────────────
   useEffect(() => {
     let rafId
-    const easeInOut = (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
 
     const step = (now) => {
       if (roamBlockedRef.current) {
@@ -2385,6 +2526,7 @@ export default function Mascot({
           cancelActiveLifeChainRef.current?.('roam_blocked')
         }
         walkTweenRef.current = null
+        liveWalkSpeedRef.current = 1
         setWalkMs(0)
         setWalkSpeedRate(1)
         if (poseRef.current.startsWith('walk') || poseRef.current.startsWith('run')) {
@@ -2394,21 +2536,15 @@ export default function Mascot({
       }
       const tween = walkTweenRef.current
       if (tween && !draggingRef.current && !dragPointerDownRef.current) {
-        const elapsed = now - tween.startTime
-        const t = Math.min(1, elapsed / tween.duration)
-        const eased = easeInOut(t)
-        const targetX = tween.targetX
-        const newX = tween.startX + (targetX - tween.startX) * eased
-        posRef.current = { x: newX, y: posRef.current.y }
-        setX(newX)
-
-        const reachedTarget = t >= 1 || Math.abs(newX - targetX) < 0.5
-        if (reachedTarget) {
+        if (tween.arrivedPendingPose) {
+          // Final frame at targetX was already committed while in walk pose; now transition cleanly with dx === 0.
           const onComplete = tween.onComplete
+          emitWalkSummaryLog(tween, now)
           walkTweenRef.current = null
           if (onComplete) {
             onComplete()
           } else {
+            liveWalkSpeedRef.current = 1
             setWalkMs(0)
             setWalkSpeedRate(1)
             if (postureRef.current === 'stand') {
@@ -2421,6 +2557,36 @@ export default function Mascot({
             triggerAccentRef.current('is-squash')
             lastActivityEndRef.current = Date.now()
           }
+          rafId = requestAnimationFrame(step)
+          return
+        }
+
+        const elapsed = Math.max(0, now - tween.startTime)
+        const { fraction, speedPxPerSec } = evalTrapezoidTween(elapsed, tween.duration, tween.dist)
+        const targetX = tween.targetX
+        const newX = tween.startX + (targetX - tween.startX) * fraction
+
+        const strideL = Math.max(1, tween.strideL || WALK_PX_PER_CYCLE)
+        const baseFps = tween.baseFps || 12
+        const cyclesPerSec = speedPxPerSec / strideL
+        const rate = clamp(cyclesPerSec / (baseFps / 8), 0, 4.0)
+        liveWalkSpeedRef.current = rate
+        setWalkSpeedRate(rate)
+
+        const dtMs = Math.max(0, now - (tween.lastTickNow || tween.startTime))
+        tween.cyclesAccum = (tween.cyclesAccum || 0) + (dtMs / 1000) * cyclesPerSec
+        tween.lastTickNow = now
+        tween.rafCount = (tween.rafCount || 0) + 1
+
+        if (elapsed >= tween.duration) {
+          posRef.current = { x: targetX, y: posRef.current.y }
+          setX(targetX)
+          liveWalkSpeedRef.current = 0
+          tween.arrivedPendingPose = true
+          tween.endNow = now
+        } else {
+          posRef.current = { x: newX, y: posRef.current.y }
+          setX(newX)
         }
       }
       rafId = requestAnimationFrame(step)
@@ -2438,10 +2604,11 @@ export default function Mascot({
         }
         setWalkMs(0)
         const geom = displayGeometryRef.current
-        const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-        const screenH = geom?.workArea?.height ?? (window.screen.availHeight || window.screen.height || 1080)
-        const waX = geom?.workArea?.x ?? 0
-        const waY = geom?.workArea?.y ?? 0
+        if (!geom?.workArea) return
+        const screenW = geom.workArea.width
+        const screenH = geom.workArea.height
+        const waX = geom.workArea.x
+        const waY = geom.workArea.y
         const cX = Math.round(waX + screenW / 2)
         const cY = Math.round(waY + screenH / 2)
         if (window.api?.setWindowMode) {
@@ -2611,17 +2778,19 @@ export default function Mascot({
 
       // ── Normal walk ──
       const geom = displayGeometryRef.current
-      const { width } = measure()
-      const minX = geom ? geom.minCatX : MARGIN
-      const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-      const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - width - MARGIN)
+      if (!geom) {
+        later(walkOnce, 500)
+        return
+      }
+      const minX = geom.minCatX
+      const maxX = geom.maxCatX
       const currentX = posRef.current.x
       let dir
       let targetX
       let realDist
 
       // Edge walk roll: 15% chance to intentionally pick an edge-zone destination
-      const trueRightEdge = geom ? geom.maxCatX : Math.max(NORMAL_CAT_CX, screenW - 160 + NORMAL_CAT_CX)
+      const trueRightEdge = geom.maxCatX
       if (Math.random() < KNOCKOFF_EDGE_WALK_CHANCE && currentX < trueRightEdge - 50) {
         targetX = trueRightEdge
         dir = 'right'
@@ -2719,6 +2888,7 @@ export default function Mascot({
                     forcedDir: 'right',
                     speedRange: [WALK_SPEED_MIN_PX_S, WALK_SPEED_MAX_PX_S],
                     edgeMargin: 0,
+                    kind: 'knockoff',
                     onArrive: () => {
                       poseRef.current = 'standidle'
                       setPose('standidle')
@@ -2885,8 +3055,8 @@ export default function Mascot({
 
       // Knockoff trigger (b): idle-life roll while already in edge zone
       const geom = displayGeometryRef.current
-      const currentScreenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-      const trueRightEdge = geom ? geom.maxCatX : Math.max(NORMAL_CAT_CX, currentScreenW - 160 + NORMAL_CAT_CX)
+      if (!geom) return 1000
+      const trueRightEdge = geom.maxCatX
       const inEdgeZone = posRef.current.x >= trueRightEdge - KNOCKOFF_EDGE_DIST_PX
       const canKnockoff = now - lastKnockoffRef.current >= KNOCKOFF_COOLDOWN_MS
       if (inEdgeZone && canKnockoff && Math.random() < KNOCKOFF_IDLE_CHANCE) {
@@ -3101,15 +3271,22 @@ export default function Mascot({
 
     // Lock target position before mouse moves
     const geom = displayGeometryRef.current
-    const { width } = measure()
-    const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-    const minX = geom ? geom.minCatX : MARGIN
-    const maxX = geom ? geom.maxCatX : Math.max(minX, screenW - width - MARGIN)
+    if (!geom) return
+    const minX = geom.minCatX
+    const maxX = geom.maxCatX
     const lockedStartX = posRef.current.x
     const lockedTargetX = clamp(posRef.current.x + offset.x - Math.sign(offset.x) * 40, minX, maxX)
 
     cancelIdleAndOneShot()
     playOneShot('crouchpounce', () => {
+      if (chaseStartTimeoutRef.current) {
+        clearTimeout(chaseStartTimeoutRef.current)
+        chaseStartTimeoutRef.current = null
+      }
+      if (chaseRafRef.current) {
+        cancelAnimationFrame(chaseRafRef.current)
+        chaseRafRef.current = null
+      }
       isChasingRef.current = false
       chaseFlippedRef.current = null
       poseRef.current = 'idle'
@@ -3154,7 +3331,6 @@ export default function Mascot({
     chatState,
     isReminder,
     isCareActive,
-    measure,
     cancelIdleAndOneShot,
     playOneShot,
     onTriggerRemark,
@@ -3257,9 +3433,8 @@ export default function Mascot({
 
     const proceedCallWalk = (destX) => {
       const geom = displayGeometryRef.current
-      const screenW = geom?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
       const minX = geom ? (geom.minCatX ?? geom.minX ?? NORMAL_CAT_CX) : NORMAL_CAT_CX
-      const maxX = geom ? (geom.maxCatX ?? geom.maxX ?? Math.max(minX, screenW - 160 + NORMAL_CAT_CX)) : Math.max(minX, screenW - 160 + NORMAL_CAT_CX)
+      const maxX = geom ? (geom.maxCatX ?? geom.maxX ?? minX) : Math.max(minX, posRef.current.x)
       const targetX = clamp(typeof destX === 'number' ? destX : posRef.current.x, minX, maxX)
 
       const dist = Math.abs(targetX - posRef.current.x)
@@ -3269,43 +3444,79 @@ export default function Mascot({
         return
       }
 
+      if (callWalkTimeoutRef.current) {
+        clearTimeout(callWalkTimeoutRef.current)
+        callWalkTimeoutRef.current = null
+      }
+      walkTweenRef.current = null
+
       const dir = targetX < posRef.current.x ? 'left' : 'right'
       facingRef.current = dir
-      const duration = clamp(dist * 5, 1200, 5000)
+      const speedMult = getMovementSpeedMultiplier(statsRef.current?.energy ?? 100, new Date())
+      const nominalSpeed = WALK_SPEED_MAX_PX_S * speedMult
+      const duration = Math.max(400, (dist / Math.max(1, nominalSpeed)) * 1000)
+      const stridePxPerCycle = Math.max(1, getStrideForAnimRef.current?.('walk') ?? WALK_PX_PER_CYCLE)
+      const baseFps = 12
+      const initialRate = clamp(nominalSpeed / (stridePxPerCycle * (baseFps / 8)), 0.05, 4.0)
 
-      // Compute playback rate proportional to real speed so one full leg cycle covers WALK_PX_PER_CYCLE (70px)
-      const speedPxPerSec = dist / (duration / 1000)
-      const targetFps = (speedPxPerSec / WALK_PX_PER_CYCLE) * 8
-      const walkRate = clamp(targetFps / 12, 0.4, 1.5)
-      setWalkSpeedRate(walkRate)
-
-      walkTweenRef.current = null
-      setWalkMs(duration)
+      liveWalkSpeedRef.current = initialRate
+      setWalkSpeedRate(initialRate)
       poseRef.current = dir === 'left' ? 'walk-left' : 'walk-right'
       setPose(poseRef.current)
-      triggerAccentRef.current('is-stretch')
 
-      walkTweenRef.current = {
-        startX: posRef.current.x,
-        targetX,
-        startTime: performance.now(),
-        duration,
-      }
-      dragTargetRef.current = { x: targetX, y: posRef.current.y }
-
-      if (callWalkTimeoutRef.current) clearTimeout(callWalkTimeoutRef.current)
-      callWalkTimeoutRef.current = setTimeout(() => {
-        callWalkTimeoutRef.current = null
-        walkTweenRef.current = null
-        setWalkMs(0)
-        setWalkSpeedRate(1)
-        if (poseRef.current.startsWith('walk')) {
-          poseRef.current = 'idle'
-          setPose('idle')
+      const startCallMovement = () => {
+        setWalkMs(duration)
+        triggerAccentRef.current('is-stretch')
+        walkCyclesCompletedRef.current = 0
+        const startNow = performance.now()
+        walkTweenRef.current = {
+          kind: 'call',
+          anim: 'walk',
+          startX: posRef.current.x,
+          targetX,
+          dist,
+          strideL: stridePxPerCycle,
+          baseFps,
+          startTime: startNow,
+          lastTickNow: startNow,
+          duration,
+          rafCount: 0,
+          cyclesAccum: 0,
+          ipcTimeTotalMs: 0,
+          ipcCount: 0,
+          arrivedPendingPose: false,
+          endNow: null,
+          loggedSummary: false,
+          onComplete: () => {
+            if (callWalkTimeoutRef.current) {
+              clearTimeout(callWalkTimeoutRef.current)
+              callWalkTimeoutRef.current = null
+            }
+            liveWalkSpeedRef.current = 1
+            setWalkMs(0)
+            setWalkSpeedRate(1)
+            if (poseRef.current.startsWith('walk')) {
+              poseRef.current = 'idle'
+              setPose('idle')
+            }
+            triggerAccentRef.current('is-squash')
+            onCallMeow?.()
+            window.api?.persistPosition?.(targetX, posRef.current.y)
+          },
         }
-        triggerAccentRef.current('is-squash')
-        onCallMeow?.()
-      }, duration + 40)
+        dragTargetRef.current = { x: targetX, y: posRef.current.y }
+      }
+
+      if (currentDrawnAnimRef.current === 'walk') {
+        startCallMovement()
+      } else {
+        const cancelShown = waitForAnimShownRef.current?.('walk', () => {
+          startCallMovement()
+        })
+        if (cancelShown) {
+          callWalkTimeoutRef.current = cancelShown
+        }
+      }
     }
 
     return () => {
@@ -3433,9 +3644,9 @@ export default function Mascot({
       targetX = globalMouseX - dragOffsetRef.current.x
       targetY = globalMouseY - dragOffsetRef.current.y
     } else {
-      // Window is fullscreen (1920x1080). clientX is now global screen coordinate.
-      targetX = event.clientX - dragOffsetRef.current.x
-      targetY = event.clientY - dragOffsetRef.current.y
+      // Window is expanded to drag workArea at dragOriginRef.current.
+      targetX = dragOriginRef.current.x + event.clientX - dragOffsetRef.current.x
+      targetY = dragOriginRef.current.y + event.clientY - dragOffsetRef.current.y
     }
 
     const next = clampToViewport(targetX, targetY)
@@ -3479,9 +3690,13 @@ export default function Mascot({
     dragTargetRef.current = { x: posRef.current.x, y: posRef.current.y }
 
     let dragResizeApplied = true
+    dragOriginRef.current = { x: 0, y: 0 }
     if (window.api?.setWindowMode) {
       const result = await window.api.setWindowMode('drag')
       dragResizeApplied = result?.applied === true
+      if (Number.isFinite(result?.x) && Number.isFinite(result?.y)) {
+        dragOriginRef.current = { x: result.x, y: result.y }
+      }
       if (!dragResizeApplied) {
         console.error('[Renderer] startDrag NOT switching to screen-space CSS: hyprctl did not confirm fullscreen size')
       }
@@ -3513,8 +3728,8 @@ export default function Mascot({
     }
 
     const latestPointer = lastDragPointerRef.current
-    const targetX = latestPointer.clientX - dragOffsetRef.current.x
-    const targetY = latestPointer.clientY - dragOffsetRef.current.y
+    const targetX = dragOriginRef.current.x + latestPointer.clientX - dragOffsetRef.current.x
+    const targetY = dragOriginRef.current.y + latestPointer.clientY - dragOffsetRef.current.y
     const next = clampToViewport(targetX, targetY)
     dragTargetRef.current = next
     posRef.current = next
@@ -4632,8 +4847,8 @@ export default function Mascot({
   }, [isEyeTrackingEligible])
 
   // ── Coordinates and Transitions for Center-Screen MovementBreak ───────────
-  const screenW = displayGeometry?.workArea?.width ?? (window.screen.availWidth || window.screen.width || 1920)
-  const screenH = displayGeometry?.workArea?.height ?? (window.screen.availHeight || window.screen.height || 1080)
+  const screenW = displayGeometry?.workArea?.width ?? window.innerWidth
+  const screenH = displayGeometry?.workArea?.height ?? window.innerHeight
   const waX = displayGeometry?.workArea?.x ?? 0
   const waY = displayGeometry?.workArea?.y ?? 0
   const centerX = Math.round(waX + screenW / 2)
@@ -4692,7 +4907,13 @@ export default function Mascot({
       if (DEBUG_MOVE_WINDOW) {
         console.log(`[Renderer] calling moveWindow(${rx}, ${ry}) draggingRef=${draggingRef.current} walkTween=${!!walkTweenRef.current}`)
       }
+      const ipcStart = performance.now()
       window.api.moveWindow(rx, ry)
+      const ipcElapsed = performance.now() - ipcStart
+      if (walkTweenRef.current) {
+        walkTweenRef.current.ipcTimeTotalMs = (walkTweenRef.current.ipcTimeTotalMs || 0) + ipcElapsed
+        walkTweenRef.current.ipcCount = (walkTweenRef.current.ipcCount || 0) + 1
+      }
     }
   }, [targetX, targetY])
 
@@ -4763,7 +4984,7 @@ export default function Mascot({
         left: 0,
         top: 0,
         bottom: 'auto',
-        transform: `translate3d(${targetX}px, ${targetY}px, 0) translate(-50%, calc(-100% + ${SPRITE_HEIGHT / 2}px))`,
+        transform: `translate3d(${targetX - dragOriginRef.current.x}px, ${targetY - dragOriginRef.current.y}px, 0) translate(-50%, calc(-100% + ${SPRITE_HEIGHT / 2}px))`,
         transition: 'none',
       } : {
         // Normal mode: cat is centered in the 160x128 window via Mascot.css.
@@ -4823,6 +5044,8 @@ export default function Mascot({
             onAnimationEnd={handleAnimationEnd}
             onShown={handleSpriteShown}
             catAnimationSpeed={displayPose.startsWith('walk') || displayPose.startsWith('run') ? walkSpeedRate : catAnimationSpeed}
+            speedRef={displayPose.startsWith('walk') || displayPose.startsWith('run') ? liveWalkSpeedRef : null}
+            onCycleFrame={displayPose.startsWith('walk') || displayPose.startsWith('run') ? handleWalkCycleFrame : null}
             eyeTracking={isEyeTrackingEligible}
             cursorOffset={cursorOffset}
             fpsCap={limitBackgroundCpu && (displayPose === 'sleep' || pose === 'sleep') ? Math.round(effectiveFps / 2) : effectiveFps}

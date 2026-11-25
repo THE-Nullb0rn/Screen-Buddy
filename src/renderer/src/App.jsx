@@ -786,8 +786,12 @@ export default function App() {
   }, [chatState])
 
   useEffect(() => {
-    const offOpen = window.api.on('chat:open', () => {
-      if (settingsRef.current?.chatEnabled === false) return
+    const offOpen = window.api.on('chat:open', (source) => {
+      if (settingsRef.current?.chatEnabled === false) {
+        console.log(`[chat] overlay ignored chat:open (chatEnabled=false, source=${source || 'ipc'})`)
+        return
+      }
+      console.log(`[chat] overlay received chat:open (source=${source || 'ipc'})`)
       setChatState(prev => {
         // If it's already showing the reply bubble, hotkey dismisses it.
         if (prev === 'reply') {
@@ -936,7 +940,11 @@ export default function App() {
   }, [])
 
   const handleChatOpen = useCallback(() => {
-    if (settingsRef.current?.chatEnabled === false) return
+    if (settingsRef.current?.chatEnabled === false) {
+      console.log('[chat] handleChatOpen ignored (chatEnabled=false)')
+      return
+    }
+    console.log('[chat] handleChatOpen -> setting chatState=input')
     setChatState((prev) => {
       if (prev === 'reply' || prev === 'idle') {
         return 'input'

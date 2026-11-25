@@ -60,7 +60,9 @@ contextBridge.exposeInMainWorld('api', {
   getSettingsPath: () => safeInvoke('settings:get-path'),
 
   /** Open the Settings window */
-  openSettings: () => safeSend('settings:open'),
+  openSettings: (tab) => safeSend('settings:open', tab),
+  consumeInitialSettingsTab: () => safeInvoke('settings:consume-initial-tab'),
+  getShortcutStatus: () => safeInvoke('shortcuts:get-status'),
 
   // ── Mouse hit-region ──────────────────────────────────────────────────────
 
@@ -174,6 +176,8 @@ contextBridge.exposeInMainWorld('api', {
       'mascot:cursor-offset',
       'mascot:call',
       'display:changed',
+      'shortcuts:status-updated',
+      'settings:select-tab',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)
@@ -191,6 +195,7 @@ contextBridge.exposeInMainWorld('api', {
   // ── Bubble card state (overlay → bubble window) ──────────────────
   bubble: {
     sendCardState: (state) => safeSend('bubble:card-state', state),
+    getInitialState: () => safeInvoke('bubble:get-initial-state'),
     action: (type, payload) => safeSend('bubble:action', type, payload),
     reportSize: (w, h) => safeSend('bubble:size', w, h),
   },

@@ -55,8 +55,8 @@ function compareSemver(v1, v2) {
 async function checkForUpdates() {
   const currentVersion = app.getVersion()
 
-  // Dev/test override
-  if (process.env.SCREEN_BUDDY_FAKE_LATEST) {
+  // Dev/test override (gated behind SCREEN_BUDDY_DEBUG=1)
+  if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_FAKE_LATEST) {
     const fakeVersion = process.env.SCREEN_BUDDY_FAKE_LATEST.replace(/^v/, '')
     return {
       status: 'available',

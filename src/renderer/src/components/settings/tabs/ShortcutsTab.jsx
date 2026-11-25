@@ -1,10 +1,37 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Card, Row, Kbd, Button } from '../ui'
 import { Keyboard, Pause, MessageSquare, Settings, Copy, Check, Terminal, Bell } from 'lucide-react'
 
-export default function ShortcutsTab() {
+function splitAccelerator(accel, isLinux) {
+  if (typeof accel !== 'string' || !accel.trim()) return []
+  return accel
+    .split('+')
+    .map((part) => {
+      const p = part.trim()
+      if (/^control$/i.test(p)) return 'Ctrl'
+      if (/^(super|meta)$/i.test(p)) return isLinux ? 'Super' : 'Win'
+      return p
+    })
+    .filter(Boolean)
+}
+
+export default function ShortcutsTab({ settings }) {
   const [copiedId, setCopiedId] = useState(null)
-  const isLinux = window.api?.platform === 'linux'
+  const [shortcutStatus, setShortcutStatus] = useState({})
+  const platform = window.api?.platform || 'linux'
+  const isLinux = platform === 'linux'
+  const isWin32 = platform === 'win32'
+
+  useEffect(() => {
+    if (!isWin32) return
+    window.api?.getShortcutStatus?.().then((s) => {
+      if (s && typeof s === 'object') setShortcutStatus(s)
+    }).catch(() => {})
+    const off = window.api?.on?.('shortcuts:status-updated', (s) => {
+      if (s && typeof s === 'object') setShortcutStatus(s)
+    })
+    return off
+  }, [isWin32])
 
   const copyToClipboard = async (text, id) => {
     if (window.api?.copyText) {
@@ -41,7 +68,36 @@ export default function ShortcutsTab() {
     },
   ]
 
-  const superKeyName = isLinux ? 'Super' : 'Win'
+  const shortcutItems = [
+    {
+      settingKey: 'shortcutCallCat',
+      icon: Bell,
+      label: 'Call cat',
+      hint: 'Call the cat to walk to your cursor',
+      accel: settings?.shortcutCallCat || 'Ctrl+Alt+C',
+    },
+    {
+      settingKey: 'shortcutTogglePause',
+      icon: Pause,
+      label: 'Toggle pause',
+      hint: 'Temporarily pause or resume reminder timers',
+      accel: settings?.shortcutTogglePause || 'Ctrl+Alt+P',
+    },
+    {
+      settingKey: 'shortcutChat',
+      icon: MessageSquare,
+      label: 'Open AI chat',
+      hint: 'Quickly summon companion prompt',
+      accel: settings?.shortcutChat || (isWin32 ? 'Ctrl+Alt+Shift+C' : 'Ctrl+Super+C'),
+    },
+    {
+      settingKey: 'shortcutSettings',
+      icon: Settings,
+      label: 'Open settings',
+      hint: 'Open this configuration window',
+      accel: settings?.shortcutSettings || (isWin32 ? 'Ctrl+Alt+Shift+S' : 'Super+Shift+S'),
+    },
+  ]
 
   return (
     <>
@@ -50,58 +106,35 @@ export default function ShortcutsTab() {
         subtitle="Main shortcuts to control Screen Buddy."
         icon={Keyboard}
       >
-        <Row
-          icon={Bell}
-          label="Call cat"
-          hint="Call the cat to walk to your cursor"
-        >
-          <div className="sb-keycap-group">
-            <Kbd>Ctrl</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>Alt</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>C</Kbd>
-          </div>
-        </Row>
-        <Row
-          icon={Pause}
-          label="Toggle pause"
-          hint="Temporarily pause or resume reminder timers"
-        >
-          <div className="sb-keycap-group">
-            <Kbd>Ctrl</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>Alt</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>P</Kbd>
-          </div>
-        </Row>
-        <Row
-          icon={MessageSquare}
-          label="Open AI chat"
-          hint="Quickly summon companion prompt"
-        >
-          <div className="sb-keycap-group">
-            <Kbd>Ctrl</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>{superKeyName}</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>C</Kbd>
-          </div>
-        </Row>
-        <Row
-          icon={Settings}
-          label="Open settings"
-          hint="Open this configuration window"
-        >
-          <div className="sb-keycap-group">
-            <Kbd>{superKeyName}</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>Shift</Kbd>
-            <span className="sb-keycap-plus">+</span>
-            <Kbd>S</Kbd>
-          </div>
-        </Row>
+        {shortcutItems.map((item) => {
+          const keys = splitAccelerator(item.accel, isLinux)
+          const reg = shortcutStatus?.[item.settingKey]
+          const failed = isWin32 && reg && reg.registered === false
+          return (
+            <Row
+              key={item.settingKey}
+              icon={item.icon}
+              label={item.label}
+              hint={item.hint}
+            >
+              <div className="sb-shortcut-control">
+                <div className="sb-keycap-group">
+                  {keys.map((k, idx) => (
+                    <React.Fragment key={`${item.settingKey}-${k}-${idx}`}>
+                      {idx > 0 && <span className="sb-keycap-plus">+</span>}
+                      <Kbd>{k}</Kbd>
+                    </React.Fragment>
+                  ))}
+                </div>
+                {failed && (
+                  <span className="sb-status-pill sb-status-pill--danger">
+                    {reg.error || 'In use by another app'}
+                  </span>
+                )}
+              </div>
+            </Row>
+          )
+        })}
       </Card>
 
       {isLinux && (

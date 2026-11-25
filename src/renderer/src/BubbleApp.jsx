@@ -49,6 +49,15 @@ export default function BubbleApp() {
 
   useEffect(() => {
     window.api.getSettings?.().then((s) => setSettings(s))
+    window.api.bubble?.getInitialState?.().then((init) => {
+      if (init?.cardState) {
+        setCardState(init.cardState)
+      }
+      if (init?.notification) {
+        lastReportedSize.current = { w: 0, h: 0 }
+        setActiveNotification(init.notification)
+      }
+    }).catch(() => {})
     const offSettings = window.api.on?.('settings:updated', (s) => setSettings(s))
     const offNotifShow = window.api.on('notification:show', (notif) => {
       lastReportedSize.current = { w: 0, h: 0 }
@@ -670,15 +679,28 @@ export default function BubbleApp() {
                 )}
               </div>
               {isError && (
-                <button
-                  className="mascot-chat-retry-btn"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleRetry()
-                  }}
-                >
-                  ↻ Retry
-                </button>
+                <div className="mascot-chat-error-actions">
+                  {(chatReply?.code === 'NO_API_KEY' || String(errorMessage).includes('Settings -> Chat & AI')) && (
+                    <button
+                      className="mascot-chat-settings-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.api.bubble.action('chat:open-settings')
+                      }}
+                    >
+                      Open settings
+                    </button>
+                  )}
+                  <button
+                    className="mascot-chat-retry-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleRetry()
+                    }}
+                  >
+                    ↻ Retry
+                  </button>
+                </div>
               )}
               {!isError && !chatExiting && (
                 <div
