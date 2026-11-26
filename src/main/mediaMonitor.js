@@ -169,14 +169,23 @@ function scheduleRetry() {
   }, RETRY_DELAY_MS)
 }
 
+let winHelper = null
+
 /**
  * Start monitoring media playback.
- * @param {Function} cb — called with { playing: boolean, artist: string, title: string }
+ * @param {Function} cb — called with { playing: boolean, artist: string, title: string, app?: string }
  */
 function start(cb) {
   callback = cb
   stopped = false
   lastState = { playing: false, artist: '', title: '' }
+  if (process.platform === 'win32') {
+    winHelper = require('./winMediaFullscreenHelper')
+    winHelper.start({
+      onMedia: (state) => emitIfChanged(state),
+    })
+    return
+  }
   if (process.platform !== 'linux') {
     if (typeof callback === 'function') {
       callback({ ...lastState })
@@ -191,6 +200,9 @@ function start(cb) {
  * @returns {{ playing: boolean, artist: string, title: string }}
  */
 function getStatus() {
+  if (process.platform === 'win32' && winHelper) {
+    return winHelper.getMediaStatus()
+  }
   return { ...lastState }
 }
 
@@ -199,6 +211,12 @@ function getStatus() {
  */
 function stop() {
   stopped = true
+
+  if (process.platform === 'win32' && winHelper) {
+    winHelper.stop()
+    callback = null
+    return
+  }
 
   if (retryTimer) {
     clearTimeout(retryTimer)

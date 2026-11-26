@@ -19,9 +19,20 @@ import {
   Eye,
 } from 'lucide-react'
 
-export default function BehaviorTab({ settings, saveSettingsPatch }) {
+export default function BehaviorTab({ settings, saveSettingsPatch, capabilities }) {
   const [typingPerm, setTypingPerm] = useState(null)
   const isLinux = window.api?.platform === 'linux'
+  const isWin32 = window.api?.platform === 'win32'
+  const typingDisabled = capabilities?.typing?.available === false
+  const typingHint = typingDisabled && capabilities?.typing?.reason
+    ? capabilities.typing.reason
+    : isWin32
+      ? 'Detect keystrokes across apps to animate and delay sleep while typing (no extra permissions needed on Windows)'
+      : 'Detect keystrokes across apps to delay reminders while actively working'
+  const mediaDisabled = capabilities?.media?.available === false
+  const mediaHint = mediaDisabled && capabilities?.media?.reason
+    ? capabilities.media.reason
+    : 'React to background music or video playback'
 
   const checkTypingPerm = useCallback(async () => {
     if (window.api?.checkTypingPermission) {
@@ -78,21 +89,23 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         subtitle="Choose what wakes up Screen Buddy and how it reacts."
         icon={Zap}
       >
-        {isLinux && (
+        {(isLinux || isWin32) && (
           <>
             <Row
               icon={Keyboard}
               label="React to typing system-wide"
-              hint="Detect keystrokes across apps to delay reminders while actively working"
+              hint={typingHint}
+              className={typingDisabled ? 'sb-row--disabled' : ''}
             >
               <Toggle
                 checked={Boolean(settings.systemTypingDetection)}
                 onChange={(e) => saveSettingsPatch({ systemTypingDetection: e.target.checked })}
+                disabled={typingDisabled}
                 ariaLabel="React to typing system-wide"
               />
             </Row>
 
-            {settings.systemTypingDetection && typingPerm && !typingPerm.permitted && (
+            {isLinux && settings.systemTypingDetection && typingPerm && !typingPerm.permitted && (
               <div className="sb-permission-box">
                 <div className="sb-permission-box__content">
                   <AlertCircle size={18} className="sb-permission-box__icon" />
@@ -156,13 +169,13 @@ export default function BehaviorTab({ settings, saveSettingsPatch }) {
         <Row
           icon={Music}
           label="Media playback"
-          hint="React to background music or video playback"
-          soon={!isLinux}
+          hint={mediaHint}
+          className={mediaDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
             checked={Boolean(settings.mediaReaction)}
             onChange={(e) => saveSettingsPatch({ mediaReaction: e.target.checked })}
-            disabled={!isLinux}
+            disabled={mediaDisabled}
             ariaLabel="Media playback reaction"
           />
         </Row>

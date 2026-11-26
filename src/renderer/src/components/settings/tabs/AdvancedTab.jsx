@@ -22,12 +22,16 @@ export default function AdvancedTab({
   onResetSettings,
   updateState,
   onCheckUpdates,
+  capabilities,
 }) {
   const [settingsPath, setSettingsPath] = useState('')
   const [copied, setCopied] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
-  const isLinux = window.api?.platform === 'linux'
+  const autostartDisabled = capabilities?.autostart?.available === false
+  const autostartHint = autostartDisabled && capabilities?.autostart?.reason
+    ? capabilities.autostart.reason
+    : 'Launch automatically on desktop login'
 
   useEffect(() => {
     if (window.api?.getSettingsPath) {
@@ -273,13 +277,13 @@ export default function AdvancedTab({
         <Row
           icon={Laptop}
           label="Start with system"
-          hint="Launch automatically on desktop login"
-          soon={!isLinux}
+          hint={autostartHint}
+          className={autostartDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
             checked={Boolean(settings.autostart)}
             onChange={(e) => saveSettingsPatch({ autostart: e.target.checked })}
-            disabled={!isLinux}
+            disabled={autostartDisabled}
             ariaLabel="Start with system"
           />
         </Row>
@@ -288,12 +292,12 @@ export default function AdvancedTab({
           icon={Clock}
           label="Delay startup"
           hint="Wait 10 seconds after login before showing the cat (applies to autostart only)"
-          soon={!isLinux}
+          className={autostartDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
             checked={Boolean(settings.delayStartup)}
             onChange={(e) => saveSettingsPatch({ delayStartup: e.target.checked })}
-            disabled={!isLinux}
+            disabled={autostartDisabled}
             ariaLabel="Delay startup"
           />
         </Row>
@@ -325,20 +329,6 @@ export default function AdvancedTab({
             checked={Boolean(settings.developerMode)}
             onChange={(e) => saveSettingsPatch({ developerMode: e.target.checked })}
             ariaLabel="Developer mode"
-          />
-        </Row>
-
-        <Row
-          icon={Code}
-          label="Allow custom CSS"
-          hint="Load user stylesheet overrides from config directory"
-          soon={true}
-        >
-          <Toggle
-            checked={Boolean(settings.allowCustomCss)}
-            onChange={(e) => saveSettingsPatch({ allowCustomCss: e.target.checked })}
-            disabled={true}
-            ariaLabel="Allow custom CSS"
           />
         </Row>
       </Card>

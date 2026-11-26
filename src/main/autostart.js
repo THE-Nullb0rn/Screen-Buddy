@@ -14,6 +14,7 @@
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const { app } = require('electron')
 
 // ─── XDG autostart path ──────────────────────────────────────────────────────
 const XDG_CONFIG_HOME =
@@ -64,11 +65,52 @@ X-GNOME-Autostart-enabled=true
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+function getAutostartStatus() {
+  if (process.platform === 'win32') {
+    if (!app.isPackaged) {
+      return {
+        available: false,
+        devBuild: true,
+        enabled: false,
+        reason: 'Available in packaged build only (disabled in dev builds)',
+      }
+    }
+    const info = app.getLoginItemSettings({ args: ['--autostart'] })
+    return {
+      available: true,
+      devBuild: false,
+      enabled: Boolean(info?.openAtLogin),
+    }
+  }
+  if (process.platform === 'linux') {
+    return {
+      available: true,
+      enabled: fs.existsSync(DESKTOP_FILE),
+    }
+  }
+  return {
+    available: false,
+    enabled: false,
+    reason: 'Autostart is unsupported on this platform',
+  }
+}
+
 /**
- * Write the autostart .desktop file, creating the autostart directory
- * if it does not already exist. Avoids rewriting if content is identical.
+ * Write the autostart entry / registry login item.
  */
 function setAutostart() {
+  if (process.platform === 'win32') {
+    if (!app.isPackaged) {
+      return { success: false, supported: false, devBuild: true, message: 'Autostart is disabled in dev builds' }
+    }
+    try {
+      app.setLoginItemSettings({ openAtLogin: true, args: ['--autostart'] })
+      return { success: true, supported: true }
+    } catch (err) {
+      console.error('[autostart] Failed to enable Windows login item:', err)
+      return { success: false, supported: true, error: err.message }
+    }
+  }
   if (process.platform !== 'linux') {
     return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
   }
@@ -91,9 +133,21 @@ function setAutostart() {
 }
 
 /**
- * Remove the autostart .desktop file if it exists.
+ * Remove the autostart entry / registry login item.
  */
 function removeAutostart() {
+  if (process.platform === 'win32') {
+    if (!app.isPackaged) {
+      return { success: false, supported: false, devBuild: true, message: 'Autostart is disabled in dev builds' }
+    }
+    try {
+      app.setLoginItemSettings({ openAtLogin: false, args: ['--autostart'] })
+      return { success: true, supported: true }
+    } catch (err) {
+      console.error('[autostart] Failed to remove Windows login item:', err)
+      return { success: false, supported: true, error: err.message }
+    }
+  }
   if (process.platform !== 'linux') {
     return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
   }
@@ -110,13 +164,17 @@ function removeAutostart() {
 }
 
 /**
- * Check whether the autostart .desktop file currently exists.
+ * Check whether autostart is currently enabled.
  *
  * @returns {boolean}
  */
 function isAutostartEnabled() {
+  if (process.platform === 'win32') {
+    if (!app.isPackaged) return false
+    return Boolean(app.getLoginItemSettings({ args: ['--autostart'] })?.openAtLogin)
+  }
   if (process.platform !== 'linux') return false
   return fs.existsSync(DESKTOP_FILE)
 }
 
-module.exports = { setAutostart, removeAutostart, isAutostartEnabled }
+module.exports = { setAutostart, removeAutostart, isAutostartEnabled, getAutostartStatus }

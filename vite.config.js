@@ -23,7 +23,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'dbus-next'],
+              external: ['electron', 'dbus-next', 'uiohook-napi'],
             },
           },
         },
@@ -56,7 +56,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'dbus-next'],
+              external: ['electron', 'dbus-next', 'uiohook-napi'],
             },
           },
         },
@@ -89,7 +89,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'dbus-next'],
+              external: ['electron', 'dbus-next', 'uiohook-napi'],
             },
           },
         },
@@ -107,6 +107,17 @@ export default defineConfig({
       },
       {
         entry: resolve(__dirname, 'src/main/displayGeometry.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron'),
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
+      },
+      {
+        entry: resolve(__dirname, 'src/main/winMediaFullscreenHelper.js'),
         vite: {
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
@@ -161,12 +172,23 @@ export default defineConfig({
         },
       },
       {
+        entry: resolve(__dirname, 'src/main/typing/UiohookProvider.js'),
+        vite: {
+          build: {
+            outDir: resolve(__dirname, 'dist-electron/typing'),
+            rollupOptions: {
+              external: ['electron', 'uiohook-napi'],
+            },
+          },
+        },
+      },
+      {
         entry: resolve(__dirname, 'src/main/typing/TypingDetector.js'),
         vite: {
           build: {
             outDir: resolve(__dirname, 'dist-electron/typing'),
             rollupOptions: {
-              external: ['electron'],
+              external: ['electron', 'uiohook-napi'],
             },
           },
         },

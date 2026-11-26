@@ -108,6 +108,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
   const [saveStatus, setSaveStatus] = useState(null) // 'saved' | null
   const [saveError, setSaveError] = useState(null)
   const [updateState, setUpdateState] = useState(null)
+  const [capabilities, setCapabilities] = useState(null)
   const saveTimerRef = useRef(null)
   const tabButtonRefs = useRef({})
   const contentRef = useRef(null)
@@ -135,9 +136,15 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
         setActiveTab(tabId)
       }
     }).catch(() => {})
+    window.api?.getCapabilities?.().then((caps) => {
+      if (caps && typeof caps === 'object') setCapabilities(caps)
+    }).catch(() => {})
     if (!window.api?.on) return
     const offSettings = window.api.on('settings:updated', (updated) => {
       setSettings(updated)
+    })
+    const offCaps = window.api.on('platform:capabilities-updated', (caps) => {
+      if (caps && typeof caps === 'object') setCapabilities(caps)
     })
     const offSelectTab = window.api.on('settings:select-tab', (tabId) => {
       if (SETTINGS_TABS.some((t) => t.id === tabId)) {
@@ -146,6 +153,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     })
     return () => {
       offSettings?.()
+      offCaps?.()
       offSelectTab?.()
     }
   }, [])
@@ -387,19 +395,19 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
         <main ref={contentRef} className="sb-content">
           <div className="sb-content__grid">
             {activeTab === 'general' && (
-              <GeneralTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
+              <GeneralTab settings={settings} saveSettingsPatch={saveSettingsPatch} capabilities={capabilities} />
             )}
             {activeTab === 'appearance' && (
               <AppearanceTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
             )}
             {activeTab === 'behavior' && (
-              <BehaviorTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
+              <BehaviorTab settings={settings} saveSettingsPatch={saveSettingsPatch} capabilities={capabilities} />
             )}
             {activeTab === 'reminders' && (
               <RemindersTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
             )}
             {activeTab === 'notifications' && (
-              <NotificationsTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
+              <NotificationsTab settings={settings} saveSettingsPatch={saveSettingsPatch} capabilities={capabilities} />
             )}
             {activeTab === 'chat' && (
               <ChatTab settings={settings} saveSettingsPatch={saveSettingsPatch} />
@@ -412,6 +420,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                 onResetSettings={handleResetSettings}
                 updateState={updateState}
                 onCheckUpdates={runUpdateCheck}
+                capabilities={capabilities}
               />
             )}
             {activeTab === 'about' && (

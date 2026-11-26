@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('api', {
   openSettings: (tab) => safeSend('settings:open', tab),
   consumeInitialSettingsTab: () => safeInvoke('settings:consume-initial-tab'),
   getShortcutStatus: () => safeInvoke('shortcuts:get-status'),
+  getCapabilities: () => safeInvoke('platform:capabilities'),
 
   // ── Mouse hit-region ──────────────────────────────────────────────────────
 
@@ -177,6 +178,7 @@ contextBridge.exposeInMainWorld('api', {
       'mascot:call',
       'display:changed',
       'shortcuts:status-updated',
+      'platform:capabilities-updated',
       'settings:select-tab',
     ]
     if (!ALLOWED.includes(channel)) {

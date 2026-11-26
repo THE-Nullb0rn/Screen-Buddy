@@ -52,7 +52,7 @@ const execFileAsync = util.promisify(execFileCallback)
 
 
 const { DEFAULT_SETTINGS, loadSettings, saveSettings, getSettingsPath, validateSettingsUpdate } = require('./settings')
-const { setAutostart, removeAutostart } = require('./autostart')
+const { setAutostart, removeAutostart, getAutostartStatus } = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
@@ -383,6 +383,23 @@ app.whenReady().then(async () => {
   }
   startHyprlandFullscreenMonitor()
 
+  if (process.platform === 'win32') {
+    const winHelper = require('./winMediaFullscreenHelper')
+    winHelper.start({
+      limitBackgroundCpu: Boolean(settings?.limitBackgroundCpu),
+      onFullscreen: (fullscreen, reason) => {
+        console.log(`[fullscreen] state=${fullscreen} reason=${reason}`)
+        setFullscreenAutoPause(fullscreen, `Windows ${reason}`)
+      },
+      onCapabilitiesChanged: () => {
+        const caps = getPlatformCapabilities()
+        if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+          settingsWindow.webContents.send('platform:capabilities-updated', caps)
+        }
+      },
+    })
+  }
+
   // Monitor display changes (resolution, scaling, connect/disconnect)
   const handleDisplayChange = (eventType) => {
     logDisplayMetrics(eventType)
@@ -582,6 +599,13 @@ app.on('will-quit', () => {
   // stop() is idempotent; safe to call even if never started.
   typingDetector?.stop()
   mediaMonitor.stop()
+  if (process.platform === 'win32') {
+    try {
+      require('./winMediaFullscreenHelper').stop()
+    } catch (_) {
+      /* ignore helper cleanup errors */
+    }
+  }
   notificationsManager?.stop()
   trayHostWatcher?.stop()
   if (passthruInterval) {
@@ -868,6 +892,7 @@ function broadcastPauseState(source) {
   const paused = effectivePauseState()
   mainWindow?.webContents.send('tray:pause-state', paused)
   notificationsManager?.setPaused(paused)
+  typingDetector?.setPaused(paused)
 
   if (paused) {
     park(autoPausedForFullscreen ? 'fullscreen' : 'manual')
@@ -895,6 +920,25 @@ function setFullscreenAutoPause(paused, source) {
   if (autoPausedForFullscreen === next) return
   autoPausedForFullscreen = next
   broadcastPauseState(source)
+}
+
+function getPlatformCapabilities() {
+  if (process.platform === 'win32') {
+    const winHelper = require('./winMediaFullscreenHelper')
+    const helperCaps = winHelper.getCapabilities()
+    return {
+      typing: typingDetector ? typingDetector.getCapabilityStatus() : { available: false, reason: 'Typing detector not initialized' },
+      media: helperCaps.media,
+      fullscreen: helperCaps.fullscreen,
+      autostart: getAutostartStatus(),
+    }
+  }
+  return {
+    typing: { available: true },
+    media: { available: true },
+    fullscreen: { available: true },
+    autostart: getAutostartStatus(),
+  }
 }
 
 function registerGlobalPauseShortcut() {
@@ -2922,6 +2966,9 @@ function registerIpcHandlers() {
 
     // Update fullscreen safety poll interval if limitBackgroundCpu changed
     updateFullscreenSafetyPoll()
+    if (process.platform === 'win32') {
+      require('./winMediaFullscreenHelper').setLimitBackgroundCpu(Boolean(settings.limitBackgroundCpu))
+    }
 
     // Update idle poll timer based on pauseAnimationIdle and eyeTracking
     updateIdlePollTimer?.()
@@ -3629,6 +3676,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('shortcuts:get-status', () => {
     return shortcutRegistrationStatus
+  })
+
+  ipcMain.handle('platform:capabilities', () => {
+    return getPlatformCapabilities()
   })
 
   ipcMain.handle('settings:consume-initial-tab', () => {

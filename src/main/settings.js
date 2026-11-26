@@ -318,7 +318,6 @@ const DEFAULT_SETTINGS = {
   showTrayIcon: true,
   experimentalFeatures: false,
   developerMode: false,
-  allowCustomCss: false,
   lastUpdateCheck: null,
   settingsWindowBounds: null,
 }
@@ -356,6 +355,10 @@ function loadSettings() {
       }
       if ('notificationAppBlocklist' in saved) {
         delete saved.notificationAppBlocklist
+        needsSave = true
+      }
+      if ('allowCustomCss' in saved) {
+        delete saved.allowCustomCss
         needsSave = true
       }
     }
@@ -582,7 +585,6 @@ function validateSettingsUpdate(patch) {
       case 'showTrayIcon':
       case 'experimentalFeatures':
       case 'developerMode':
-      case 'allowCustomCss':
       case 'chatEnabled':
       case 'chatUseEmojis':
       case 'chatUseCatPersonality':
@@ -624,7 +626,8 @@ function validateSettingsUpdate(patch) {
       case 'notificationCardChat':
       case 'notificationPosition':
       case 'notificationMode':
-      case 'notificationAppBlocklist': {
+      case 'notificationAppBlocklist':
+      case 'allowCustomCss': {
         // Dropped / ignored
         break
       }

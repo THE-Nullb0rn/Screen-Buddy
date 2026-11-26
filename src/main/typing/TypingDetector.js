@@ -12,8 +12,31 @@ class TypingDetector {
       new DevInputProvider(),
       new SimulationProvider()
     ]
+    if (process.platform === 'win32') {
+      // Loaded lazily on Windows only so uiohook is never required on Linux.
+      const UiohookProvider = require('./UiohookProvider')
+      this._uiohookProvider = new UiohookProvider()
+      this.providers.unshift(this._uiohookProvider)
+    } else {
+      this._uiohookProvider = null
+    }
     this.activeProvider = null
     this.isEnabled = false // from settings
+    this._paused = false
+    this._lastSettings = null
+    this._uiohookFailed = false
+  }
+
+  getCapabilityStatus() {
+    if (process.platform !== 'win32') {
+      return { available: true }
+    }
+    if (this._uiohookFailed) {
+      return { available: false, reason: 'Global keyboard hook failed (using fallback)' }
+    }
+    return this._uiohookProvider
+      ? this._uiohookProvider.checkAvailability()
+      : { available: false, reason: 'Keyboard hook provider missing' }
   }
 
   async getBestSupportedProvider() {
@@ -25,12 +48,29 @@ class TypingDetector {
     return this.providers[this.providers.length - 1] // fallback to simulation
   }
 
+  _computeShouldEnable(settings) {
+    if (process.platform === 'win32') {
+      return Boolean(settings?.systemTypingDetection) && !this._paused
+    }
+    return !!(settings?.systemTypingDetection || settings?.pauseAnimationIdle)
+  }
+
+  async setPaused(paused) {
+    const nextPaused = Boolean(paused)
+    if (this._paused === nextPaused) return
+    this._paused = nextPaused
+    if (this._lastSettings) {
+      await this.updateSettings(this._lastSettings)
+    }
+  }
+
   async updateSettings(settings) {
-    const shouldEnable = !!(settings?.systemTypingDetection || settings?.pauseAnimationIdle)
-    
+    this._lastSettings = settings
+    const shouldEnable = this._computeShouldEnable(settings)
+
     if (this.isEnabled !== shouldEnable) {
       this.isEnabled = shouldEnable
-      
+
       if (this.isEnabled) {
         await this._startDetection()
       } else {
@@ -40,19 +80,22 @@ class TypingDetector {
   }
 
   async checkPermissionStatus() {
+    if (process.platform === 'win32') {
+      return { supported: true, permitted: true, provider: 'uiohook' }
+    }
     const provider = await this.getBestSupportedProvider()
-    
+
     if (provider.id === 'simulation') {
       // If we're falling back to simulation, we don't have true system typing detection.
       // But we report granted so the UI doesn't show errors, or we can just say granted.
       return { supported: true, permitted: true, provider: provider.id }
     }
-    
+
     const hasPerm = await provider.hasPermission()
     if (hasPerm) {
       return { supported: true, permitted: true, provider: provider.id }
     }
-    
+
     const request = await provider.requestPermission()
     return {
       supported: true,
@@ -64,7 +107,7 @@ class TypingDetector {
 
   async _startDetection() {
     await this._stopDetection()
-    
+
     const provider = await this.getBestSupportedProvider()
     if (await provider.hasPermission()) {
       this.activeProvider = provider
@@ -73,19 +116,33 @@ class TypingDetector {
       this.activeProvider = this.providers.find(p => p.id === 'simulation')
     }
 
+    const handleActivity = (event) => {
+      if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+        console.log('[TypingDetector] Activity event received from provider:', event)
+      }
+      if (this.ipcSender) {
+        this.ipcSender('typing:activity', event)
+      }
+    }
+
     try {
       console.log(`[TypingDetector] Starting with provider: ${this.activeProvider.name}`)
-      await this.activeProvider.start((event) => {
-        console.log('[TypingDetector] Activity event received from provider:', event)
-        // Emit IPC to renderer
-        if (this.ipcSender) {
-          console.log('[TypingDetector] Forwarding typing:activity via IPC')
-          this.ipcSender('typing:activity', event)
-        } else {
-          console.warn('[TypingDetector] ipcSender is null — cannot forward event')
-        }
-      })
+      await this.activeProvider.start(handleActivity)
     } catch (err) {
+      if (this.activeProvider?.id === 'uiohook') {
+        this._uiohookFailed = true
+        console.warn(`[TypingDetector] uiohook-napi unavailable (${err.message}); falling back to SimulationProvider`)
+        const sim = this.providers.find(p => p.id === 'simulation')
+        if (sim) {
+          this.activeProvider = sim
+          try {
+            await sim.start(handleActivity)
+          } catch (simErr) {
+            console.error(`[TypingDetector] Failed to start fallback SimulationProvider: ${simErr.message}`)
+          }
+        }
+        return
+      }
       console.error(`[TypingDetector] Failed to start provider: ${err.message}`)
     }
   }

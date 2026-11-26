@@ -11,8 +11,11 @@ import {
   RefreshCw,
 } from 'lucide-react'
 
-export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
-  const isLinux = window.api?.platform === 'linux'
+export default function NotificationsTab({ settings = {}, saveSettingsPatch, capabilities }) {
+  const mediaDisabled = capabilities?.media?.available === false
+  const mediaHint = mediaDisabled && capabilities?.media?.reason
+    ? capabilities.media.reason
+    : 'Now-playing song alerts from supported players'
   const currentDuration = settings.notificationDuration ?? 5
   const autoHide = settings.notificationAutoHide !== false
 
@@ -122,13 +125,13 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch }) {
         <Row
           icon={Music}
           label="Music Playing"
-          hint="Now-playing song alerts from supported players"
-          soon={!isLinux}
+          hint={mediaHint}
+          className={mediaDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
             checked={settings.notificationCardMusic !== false}
             onChange={(e) => saveSettingsPatch({ notificationCardMusic: e.target.checked })}
-            disabled={!isLinux}
+            disabled={mediaDisabled}
             ariaLabel="Music cards"
           />
         </Row>
