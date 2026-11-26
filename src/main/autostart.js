@@ -72,7 +72,7 @@ function getAutostartStatus() {
         available: false,
         devBuild: true,
         enabled: false,
-        reason: 'Available in packaged build only (disabled in dev builds)',
+        reason: 'Available in the installed app',
       }
     }
     const info = app.getLoginItemSettings({ args: ['--autostart'] })

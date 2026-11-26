@@ -42,6 +42,9 @@ const { execFile: execFileCallback, spawn } = require('child_process')
 // Ensure app name and userData stay canonical across platforms.
 // On Linux, userData MUST remain ~/.config/screen-buddy regardless of productName.
 app.setName('screen-buddy')
+if (process.platform === 'win32') {
+  app.setAppUserModelId('io.github.the-nullb0rn.screen-buddy')
+}
 if (process.platform === 'linux') {
   const xdgConfigHome =
     process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
@@ -157,6 +160,7 @@ let settings = null // loaded from disk at startup
 let notificationsManager = null
 let stopEyeTrackingPolling = null
 let startEyeTrackingPolling = null
+let eyeTrackingTimer = null
 let updateIdlePollTimer = null
 // Manual pause is intentionally not persisted. Fullscreen pause is a separate
 // transient reason, so leaving fullscreen never overrides a manual pause.
@@ -177,6 +181,7 @@ let lastUserActivityTime = Date.now()
 let isSystemIdleState = false
 let lastKnownCursorX = null
 let lastKnownCursorY = null
+let lastEyeCursorSampleTime = 0
 let lastActivityReason = 'init'
 let lastCursorMovedTime = Date.now()
 let hyprctlSpawnCount = 0
@@ -450,6 +455,14 @@ app.whenReady().then(async () => {
     openSettingsWindow()
   }
 
+  if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+    global.__sbDebugSetCursor = (pt) => {
+      debugCursorOverride = pt ? { x: pt.x, y: pt.y } : null
+    }
+    global.__sbDebugTriggerCall = () => triggerCallCat()
+    global.__sbDebugTriggerChat = () => triggerChatOpen('debug-hook')
+    global.__sbDebugGetCallWatch = () => activeCallWatch ? { callId: activeCallWatch.callId, anchorX: activeCallWatch.anchorX, anchorY: activeCallWatch.anchorY } : null
+  }
   const isDevDebug = !app.isPackaged && (process.env.SCREEN_BUDDY_DEBUG === '1' || Boolean(settings?.developerMode))
   if (isDevDebug) {
     startDevCpuLogging()
@@ -598,6 +611,7 @@ app.on('will-quit', () => {
   // and nulls the IPC sender so no destroyed-webContents errors can fire.
   // stop() is idempotent; safe to call even if never started.
   typingDetector?.stop()
+  stopCallCursorWatch()
   mediaMonitor.stop()
   if (process.platform === 'win32') {
     try {
@@ -890,6 +904,9 @@ function effectivePauseState() {
 
 function broadcastPauseState(source) {
   const paused = effectivePauseState()
+  if (paused) {
+    stopCallCursorWatch()
+  }
   mainWindow?.webContents.send('tray:pause-state', paused)
   notificationsManager?.setPaused(paused)
   typingDetector?.setPaused(paused)
@@ -1026,6 +1043,107 @@ function removeChatHotkeyFallback() {
 
 // ─── Call cat hotkey (CTRL+ALT+C via Hyprland control file / globalShortcut) ─
 
+const CALL_CANCEL_MOVE_PX = 60
+const CALL_WATCH_INTERVAL_MS = 100
+const HYPR_CALL_WATCH_INTERVAL_MS = 125
+let callWatchSeq = 0
+let activeCallWatch = null
+let debugCursorOverride = null
+
+function isValidCursorPoint(pt) {
+  if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return false
+  const displays = electronScreen.getAllDisplays()
+  return displays.some((d) => {
+    const b = d?.bounds
+    return b && pt.x >= b.x && pt.x < b.x + b.width && pt.y >= b.y && pt.y < b.y + b.height
+  })
+}
+
+async function readCurrentCursorPoint() {
+  if (process.env.SCREEN_BUDDY_DEBUG === '1' && debugCursorOverride) {
+    return { ...debugCursorOverride }
+  }
+  if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
+    if (
+      eyeTrackingTimer &&
+      lastKnownCursorX != null &&
+      lastKnownCursorY != null &&
+      Date.now() - lastEyeCursorSampleTime < 250
+    ) {
+      return { x: lastKnownCursorX, y: lastKnownCursorY }
+    }
+    try {
+      hyprctlSpawnCount++
+      const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
+      const trimmed = (stdout || '').trim()
+      if (trimmed.startsWith('{')) {
+        const parsed = JSON.parse(trimmed)
+        return { x: parsed.x, y: parsed.y }
+      }
+      const parts = trimmed.split(/[\s,]+/).map(Number)
+      return { x: parts[0] || 0, y: parts[1] || 0 }
+    } catch (_e) {
+      return electronScreen.getCursorScreenPoint()
+    }
+  }
+  return electronScreen.getCursorScreenPoint()
+}
+
+function stopCallCursorWatch() {
+  if (!activeCallWatch) return
+  if (activeCallWatch.timer) clearTimeout(activeCallWatch.timer)
+  if (activeCallWatch.safetyTimer) clearTimeout(activeCallWatch.safetyTimer)
+  activeCallWatch = null
+}
+
+function startCallCursorWatch(callId, anchorX, anchorY) {
+  stopCallCursorWatch()
+  const intervalMs = process.env.HYPRLAND_INSTANCE_SIGNATURE
+    ? HYPR_CALL_WATCH_INTERVAL_MS
+    : CALL_WATCH_INTERVAL_MS
+  const watch = {
+    callId,
+    anchorX,
+    anchorY,
+    timer: null,
+    safetyTimer: setTimeout(() => {
+      if (activeCallWatch?.callId === callId) stopCallCursorWatch()
+    }, 30000),
+  }
+  activeCallWatch = watch
+
+  const tick = async () => {
+    if (!activeCallWatch || activeCallWatch.callId !== callId) return
+    if (isShuttingDown || effectivePauseState() || !mainWindow || mainWindow.isDestroyed()) {
+      stopCallCursorWatch()
+      return
+    }
+    try {
+      const pt = await readCurrentCursorPoint()
+      if (!activeCallWatch || activeCallWatch.callId !== callId) return
+      if (isValidCursorPoint(pt)) {
+        const movedPx = Math.hypot(pt.x - watch.anchorX, pt.y - watch.anchorY)
+        if (movedPx > CALL_CANCEL_MOVE_PX) {
+          const roundedMove = Math.round(movedPx)
+          stopCallCursorWatch()
+          console.log(`[call] cancelled: cursor moved ${roundedMove}px`)
+          if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send('mascot:call-cancel', { callId, movedPx: roundedMove })
+          }
+          return
+        }
+      }
+    } catch (_) {
+      /* ignore transient cursor query errors */
+    }
+    if (activeCallWatch && activeCallWatch.callId === callId) {
+      watch.timer = setTimeout(tick, intervalMs)
+    }
+  }
+
+  watch.timer = setTimeout(tick, intervalMs)
+}
+
 async function triggerCallCat() {
   if (effectivePauseState()) {
     console.log('[main] Call cat ignored — app is paused')
@@ -1033,42 +1151,17 @@ async function triggerCallCat() {
   }
   if (!mainWindow || mainWindow.isDestroyed()) return
   try {
-    let cursorX = 0
-    let cursorY = 0
-    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
-      try {
-        const { stdout } = await execFileAsync('hyprctl', ['cursorpos'])
-        const trimmed = (stdout || '').trim()
-        if (trimmed.startsWith('{')) {
-          const parsed = JSON.parse(trimmed)
-          cursorX = parsed.x
-          cursorY = parsed.y
-        } else {
-          const parts = trimmed.split(/[\s,]+/).map(Number)
-          cursorX = parts[0] || 0
-          cursorY = parts[1] || 0
-        }
-      } catch (_e) {
-        const pt = electronScreen.getCursorScreenPoint()
-        cursorX = pt.x
-        cursorY = pt.y
-      }
-    } else {
-      const pt = electronScreen.getCursorScreenPoint()
-      cursorX = pt.x
-      cursorY = pt.y
-    }
-    const displays = electronScreen.getAllDisplays()
-    const insideAnyDisplay = Number.isFinite(cursorX) && Number.isFinite(cursorY) && displays.some((d) => {
-      const b = d?.bounds
-      return b && cursorX >= b.x && cursorX < b.x + b.width && cursorY >= b.y && cursorY < b.y + b.height
-    })
-    if (!insideAnyDisplay) {
-      console.log(`[call] ignored invalid cursor point (${cursorX}, ${cursorY})`)
+    const pt = await readCurrentCursorPoint()
+    if (!isValidCursorPoint(pt)) {
+      console.log(`[call] ignored invalid cursor point (${pt?.x}, ${pt?.y})`)
       return
     }
+    const cursorX = pt.x
+    const cursorY = pt.y
+    const callId = ++callWatchSeq
+    startCallCursorWatch(callId, cursorX, cursorY)
     console.log(`[main] Call cat triggered at cursor (${cursorX}, ${cursorY})`)
-    mainWindow.webContents.send('mascot:call', { cursorX, cursorY })
+    mainWindow.webContents.send('mascot:call', { callId, cursorX, cursorY })
   } catch (err) {
     console.warn('[main] Call cat failed:', err.message)
   }
@@ -1554,6 +1647,7 @@ async function getBubbleWindow() {
 
   console.log('[bubble] creating window');
   bubbleWindowReady = false;
+  const appIcon = getAppWindowIcon()
   bubbleWindow = new BrowserWindow({
     title: 'screen-buddy-bubbles',
     width: 300,
@@ -1561,6 +1655,7 @@ async function getBubbleWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
+    ...(appIcon ? { icon: appIcon } : {}),
     ...(process.platform === 'win32' ? { thickFrame: false } : {}),
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -2009,6 +2104,7 @@ function openSettingsWindow(initialTab = null) {
           frame: false,
         }
 
+  const appIcon = getAppWindowIcon()
   settingsWindow = new BrowserWindow({
     title: 'screen-buddy-settings',
     width: winWidth,
@@ -2023,6 +2119,7 @@ function openSettingsWindow(initialTab = null) {
     maximizable: true,
     closable: true,
     skipTaskbar: false,
+    ...(appIcon ? { icon: appIcon } : {}),
     backgroundColor: '#14111b',
     ...chromeOptions,
     webPreferences: {
@@ -2229,6 +2326,7 @@ function createOverlayWindow() {
   const isAutostart = process.argv.includes('--autostart')
   const shouldDelayStartup = isAutostart && Boolean(settings?.delayStartup)
   const savedPosition = getSavedMascotPosition()
+  const appIcon = getAppWindowIcon()
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
     width: NORMAL_WIN_W,
@@ -2239,6 +2337,7 @@ function createOverlayWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
+    ...(appIcon ? { icon: appIcon } : {}),
     ...(process.platform === 'win32' ? { thickFrame: false } : {}),
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -2706,6 +2805,33 @@ let trayRetryCount = 0
 const MAX_TRAY_RETRIES = 24
 
 let cachedTrayIcon = null
+let cachedAppIcon = null
+
+function getAppWindowIcon() {
+  if (cachedAppIcon) {
+    return cachedAppIcon
+  }
+  const rel = process.platform === 'win32' ? 'build/icon.ico' : 'build/icon.png'
+  const possiblePaths = [
+    path.join(app.getAppPath(), rel),
+    path.join(process.resourcesPath, rel),
+    path.join(__dirname, '..', rel),
+  ]
+  for (const iconPath of possiblePaths) {
+    if (fs.existsSync(iconPath)) {
+      if (process.platform === 'win32' && !iconPath.toLowerCase().includes('.asar')) {
+        cachedAppIcon = iconPath
+        return cachedAppIcon
+      }
+      const icon = nativeImage.createFromPath(iconPath)
+      if (!icon.isEmpty()) {
+        cachedAppIcon = icon
+        return cachedAppIcon
+      }
+    }
+  }
+  return undefined
+}
 
 function getTrayIcon() {
   if (cachedTrayIcon && !cachedTrayIcon.isEmpty()) {
@@ -3728,7 +3854,6 @@ function registerIpcHandlers() {
   })
 
   // ── Eye tracking (cursor follower) ──────────────────────────────────────
-  let eyeTrackingTimer = null
   let eyeTrackingBusy = false
   let lastCatBoundsRefreshTime = 0
   let cachedCatBounds = null
@@ -3831,6 +3956,7 @@ function registerIpcHandlers() {
           }
           lastKnownCursorX = cursorX
           lastKnownCursorY = cursorY
+          lastEyeCursorSampleTime = now
 
           const catCenterX = catX + catW / 2
           const catCenterY = catY + catH / 2
@@ -3913,6 +4039,14 @@ function registerIpcHandlers() {
       startEyeTrackingPolling()
     } else {
       stopEyeTrackingPolling()
+    }
+  })
+
+  ipcMain.on('mascot:call-state', (_event, activeCallId) => {
+    if (!activeCallId) {
+      stopCallCursorWatch()
+    } else if (activeCallWatch && activeCallWatch.callId !== activeCallId) {
+      stopCallCursorWatch()
     }
   })
 

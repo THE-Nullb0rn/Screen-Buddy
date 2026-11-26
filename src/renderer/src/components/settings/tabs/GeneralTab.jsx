@@ -4,8 +4,8 @@ import { Power, Pause, RefreshCw, Volume2, Volume, MessageSquare } from 'lucide-
 
 export default function GeneralTab({ settings, saveSettingsPatch, capabilities }) {
   const autostartDisabled = capabilities?.autostart?.available === false
-  const autostartHint = autostartDisabled && capabilities?.autostart?.reason
-    ? capabilities.autostart.reason
+  const autostartHint = autostartDisabled
+    ? (capabilities?.autostart?.reason || 'Available in the installed app')
     : 'Launch automatically on desktop login'
 
   const handlePauseToggle = (checked) => {
@@ -25,8 +25,10 @@ export default function GeneralTab({ settings, saveSettingsPatch, capabilities }
           className={autostartDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
-            checked={Boolean(settings.autostart)}
-            onChange={(e) => saveSettingsPatch({ autostart: e.target.checked })}
+            checked={autostartDisabled ? false : Boolean(settings.autostart)}
+            onChange={(e) => {
+              if (!autostartDisabled) saveSettingsPatch({ autostart: e.target.checked })
+            }}
             disabled={autostartDisabled}
             ariaLabel="Start with system"
           />

@@ -29,9 +29,12 @@ export default function AdvancedTab({
   const [confirmReset, setConfirmReset] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
   const autostartDisabled = capabilities?.autostart?.available === false
-  const autostartHint = autostartDisabled && capabilities?.autostart?.reason
-    ? capabilities.autostart.reason
+  const autostartHint = autostartDisabled
+    ? (capabilities?.autostart?.reason || 'Available in the installed app')
     : 'Launch automatically on desktop login'
+  const delayStartupHint = autostartDisabled
+    ? (capabilities?.autostart?.reason || 'Available in the installed app')
+    : 'Wait 10 seconds after login before showing the cat (applies to autostart only)'
 
   useEffect(() => {
     if (window.api?.getSettingsPath) {
@@ -281,8 +284,10 @@ export default function AdvancedTab({
           className={autostartDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
-            checked={Boolean(settings.autostart)}
-            onChange={(e) => saveSettingsPatch({ autostart: e.target.checked })}
+            checked={autostartDisabled ? false : Boolean(settings.autostart)}
+            onChange={(e) => {
+              if (!autostartDisabled) saveSettingsPatch({ autostart: e.target.checked })
+            }}
             disabled={autostartDisabled}
             ariaLabel="Start with system"
           />
@@ -291,12 +296,14 @@ export default function AdvancedTab({
         <Row
           icon={Clock}
           label="Delay startup"
-          hint="Wait 10 seconds after login before showing the cat (applies to autostart only)"
+          hint={delayStartupHint}
           className={autostartDisabled ? 'sb-row--disabled' : ''}
         >
           <Toggle
-            checked={Boolean(settings.delayStartup)}
-            onChange={(e) => saveSettingsPatch({ delayStartup: e.target.checked })}
+            checked={autostartDisabled ? false : Boolean(settings.delayStartup)}
+            onChange={(e) => {
+              if (!autostartDisabled) saveSettingsPatch({ delayStartup: e.target.checked })
+            }}
             disabled={autostartDisabled}
             ariaLabel="Delay startup"
           />

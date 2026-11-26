@@ -12,6 +12,8 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - assets/**/*
+  - build/icon.ico
+  - build/icon.png
   - package.json
   - LICENSE
   - "!**/*.map"
@@ -45,6 +47,9 @@ nsis:
   createStartMenuShortcut: true
   runAfterFinish: true
   shortcutName: Screen Buddy
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
 
 linux:
   maintainer: nullborn <nullborn@users.noreply.github.com>

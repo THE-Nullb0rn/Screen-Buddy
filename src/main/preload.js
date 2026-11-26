@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('api', {
   updates: { check: () => safeInvoke('updates:check') },
   getMainPerfStats: () => safeInvoke('perf:get-stats'),
   getCursorOffset: () => safeInvoke('mascot:get-cursor-offset'),
+  notifyCallWalkState: (callId) => safeSend('mascot:call-state', callId),
   getDisplayGeometry: () => safeInvoke('display:get-geometry'),
   getIpcStats: () => ({
     received: { ...ipcReceiveCounts },
@@ -176,6 +177,7 @@ contextBridge.exposeInMainWorld('api', {
       'chat:focus-input',
       'mascot:cursor-offset',
       'mascot:call',
+      'mascot:call-cancel',
       'display:changed',
       'shortcuts:status-updated',
       'platform:capabilities-updated',

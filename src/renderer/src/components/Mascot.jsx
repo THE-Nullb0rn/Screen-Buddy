@@ -419,6 +419,7 @@ export default function Mascot({
   const chaseStartTimeoutRef = useRef(null)
   const chaseRafRef = useRef(null)
   const lastIdleBehaviorRef = useRef(null)
+  const activeCallIdRef = useRef(null)
 
   // Life chain refs
   const chainTokenRef = useRef(0)
@@ -2521,6 +2522,10 @@ export default function Mascot({
         if (isChainActiveRef.current) {
           cancelActiveLifeChainRef.current?.('roam_blocked')
         }
+        if (walkTweenRef.current?.kind === 'call' || activeCallIdRef.current != null) {
+          activeCallIdRef.current = null
+          window.api?.notifyCallWalkState?.(null)
+        }
         walkTweenRef.current = null
         liveWalkSpeedRef.current = 1
         setWalkMs(0)
@@ -2552,6 +2557,44 @@ export default function Mascot({
             }
             triggerAccentRef.current('is-squash')
             lastActivityEndRef.current = Date.now()
+          }
+          rafId = requestAnimationFrame(step)
+          return
+        }
+
+        if (tween.cancelling) {
+          const stopElapsed = Math.max(0, now - tween.cancelStartNow)
+          const stopDur = Math.max(1, tween.cancelDuration)
+          const u = Math.min(1, stopElapsed / stopDur)
+          const decelFrac = 1 - (1 - u) * (1 - u)
+          const stopX = tween.cancelStartX + (tween.cancelTargetX - tween.cancelStartX) * decelFrac
+          const stopSpan = Math.abs(tween.cancelTargetX - tween.cancelStartX)
+          const speedPxPerSec = (2 * stopSpan * (1 - u)) / (stopDur / 1000)
+
+          const strideL = Math.max(1, tween.strideL || WALK_PX_PER_CYCLE)
+          const baseFps = tween.baseFps || 12
+          const cyclesPerSec = speedPxPerSec / strideL
+          const rate = clamp(cyclesPerSec / (baseFps / 8), 0, 4.0)
+          liveWalkSpeedRef.current = rate
+          setWalkSpeedRate(rate)
+
+          const dtMs = Math.max(0, now - (tween.lastTickNow || tween.cancelStartNow))
+          tween.cyclesAccum = (tween.cyclesAccum || 0) + (dtMs / 1000) * cyclesPerSec
+          tween.lastTickNow = now
+          tween.rafCount = (tween.rafCount || 0) + 1
+
+          if (u >= 1) {
+            const finalX = tween.cancelTargetX
+            posRef.current = { x: finalX, y: posRef.current.y }
+            setX(finalX)
+            liveWalkSpeedRef.current = 0
+            tween.targetX = finalX
+            tween.dist = Math.abs(finalX - tween.startX)
+            tween.arrivedPendingPose = true
+            tween.endNow = now
+          } else {
+            posRef.current = { x: stopX, y: posRef.current.y }
+            setX(stopX)
           }
           rafId = requestAnimationFrame(step)
           return
@@ -3416,8 +3459,45 @@ export default function Mascot({
 
   // ── Part 4: Call Cat Listener ─────────────────────────────────────────────
   useEffect(() => {
+    const beginSmoothCallStop = () => {
+      activeCallIdRef.current = null
+      window.api?.notifyCallWalkState?.(null)
+      if (callWalkTimeoutRef.current) {
+        clearTimeout(callWalkTimeoutRef.current)
+        callWalkTimeoutRef.current = null
+      }
+      const tween = walkTweenRef.current
+      if (tween && tween.kind === 'call' && !tween.arrivedPendingPose && !tween.cancelling) {
+        const stopNow = performance.now()
+        const elapsed = Math.max(0, stopNow - tween.startTime)
+        const { fraction, speedPxPerSec } = evalTrapezoidTween(elapsed, tween.duration, tween.dist)
+        const curX = tween.startX + (tween.targetX - tween.startX) * fraction
+        const remMs = Math.max(0, tween.duration - elapsed)
+        const stopDur = Math.min(WALK_END_EASE_MS, Math.max(60, Math.round(remMs)))
+        const slideDist = 0.5 * speedPxPerSec * (stopDur / 1000)
+        const remDist = Math.abs(tween.targetX - curX)
+        const clampedSlide = Math.min(remDist, slideDist)
+        const dirSign = tween.targetX >= tween.startX ? 1 : -1
+        const geom = displayGeometryRef.current
+        const minX = geom ? (geom.minCatX ?? geom.minX ?? NORMAL_CAT_CX) : NORMAL_CAT_CX
+        const maxX = geom ? (geom.maxCatX ?? geom.maxX ?? Math.max(minX, curX)) : Math.max(minX, curX)
+        const stopTargetX = clamp(curX + dirSign * clampedSlide, minX, maxX)
+
+        tween.cancelling = true
+        tween.cancelled = true
+        tween.cancelStartNow = stopNow
+        tween.cancelStartX = curX
+        tween.cancelTargetX = stopTargetX
+        tween.cancelDuration = stopDur
+        tween.duration = Math.max(1, Math.round(elapsed + stopDur))
+        return true
+      }
+      return false
+    }
+
     const unsub = window.api?.on?.('mascot:call', (payload) => {
       moodHandleShortcutCall()
+      const callId = payload?.callId ?? null
       // Ignore if dragging, eating/drinking, or in reminder / chat
       if (
         draggingRef.current ||
@@ -3428,8 +3508,12 @@ export default function Mascot({
         isReminder ||
         chatState !== 'idle'
       ) {
+        activeCallIdRef.current = null
+        window.api?.notifyCallWalkState?.(null)
         return
       }
+
+      activeCallIdRef.current = callId
 
       // If sleeping, play wakeup first
       const wasSleeping = poseRef.current === 'sleep'
@@ -3438,15 +3522,34 @@ export default function Mascot({
         poseRef.current = 'idle'
         setPose('idle')
         playOneShot('wakeup', () => {
-          proceedCallWalk(payload?.cursorX ?? payload?.x)
+          if (activeCallIdRef.current !== callId) return
+          proceedCallWalk(payload?.cursorX ?? payload?.x, callId)
         })
       } else {
         cancelIdleAndOneShot()
-        proceedCallWalk(payload?.cursorX ?? payload?.x)
+        proceedCallWalk(payload?.cursorX ?? payload?.x, callId)
       }
     })
 
-    const proceedCallWalk = (destX) => {
+    const unsubCancel = window.api?.on?.('mascot:call-cancel', (payload) => {
+      const targetCallId = payload?.callId ?? null
+      if (targetCallId != null && activeCallIdRef.current !== null && activeCallIdRef.current !== targetCallId) {
+        return
+      }
+      const smoothlyStopping = beginSmoothCallStop()
+      if (!smoothlyStopping) {
+        // Call was waiting on wakeup or sprite frame before moving
+        cancelIdleAndOneShot()
+        setWalkMs(0)
+        if (poseRef.current.startsWith('walk') || poseRef.current === 'wakeup') {
+          poseRef.current = 'idle'
+          setPose('idle')
+        }
+      }
+    })
+
+    const proceedCallWalk = (destX, callId) => {
+      if (callId != null && activeCallIdRef.current !== callId) return
       const geom = displayGeometryRef.current
       const minX = geom ? (geom.minCatX ?? geom.minX ?? NORMAL_CAT_CX) : NORMAL_CAT_CX
       const maxX = geom ? (geom.maxCatX ?? geom.maxX ?? minX) : Math.max(minX, posRef.current.x)
@@ -3454,6 +3557,8 @@ export default function Mascot({
 
       const dist = Math.abs(targetX - posRef.current.x)
       if (dist < 40) {
+        activeCallIdRef.current = null
+        window.api?.notifyCallWalkState?.(null)
         triggerAccentRef.current('is-squash')
         onCallMeow?.()
         return
@@ -3480,12 +3585,14 @@ export default function Mascot({
       setPose(poseRef.current)
 
       const startCallMovement = () => {
+        if (callId != null && activeCallIdRef.current !== callId) return
         setWalkMs(duration)
         triggerAccentRef.current('is-stretch')
         walkCyclesCompletedRef.current = 0
         const startNow = performance.now()
-        walkTweenRef.current = {
+        const tweenRef = {
           kind: 'call',
+          callId,
           anim: 'walk',
           startX: posRef.current.x,
           targetX,
@@ -3500,9 +3607,15 @@ export default function Mascot({
           ipcTimeTotalMs: 0,
           ipcCount: 0,
           arrivedPendingPose: false,
+          cancelling: false,
+          cancelled: false,
           endNow: null,
           loggedSummary: false,
           onComplete: () => {
+            if (activeCallIdRef.current === callId) {
+              activeCallIdRef.current = null
+              window.api?.notifyCallWalkState?.(null)
+            }
             if (callWalkTimeoutRef.current) {
               clearTimeout(callWalkTimeoutRef.current)
               callWalkTimeoutRef.current = null
@@ -3514,11 +3627,14 @@ export default function Mascot({
               poseRef.current = 'idle'
               setPose('idle')
             }
-            triggerAccentRef.current('is-squash')
-            onCallMeow?.()
-            window.api?.persistPosition?.(targetX, posRef.current.y)
+            if (!tweenRef.cancelled) {
+              triggerAccentRef.current('is-squash')
+              onCallMeow?.()
+            }
+            window.api?.persistPosition?.(tweenRef.targetX, posRef.current.y)
           },
         }
+        walkTweenRef.current = tweenRef
         dragTargetRef.current = { x: targetX, y: posRef.current.y }
       }
 
@@ -3536,6 +3652,7 @@ export default function Mascot({
 
     return () => {
       unsub?.()
+      unsubCancel?.()
       if (callWalkTimeoutRef.current) {
         clearTimeout(callWalkTimeoutRef.current)
         callWalkTimeoutRef.current = null
@@ -3680,6 +3797,14 @@ export default function Mascot({
     dragPointerIdRef.current = event.pointerId
     try { containerRef.current?.setPointerCapture(event.pointerId) } catch (err) { void err }
 
+    if (activeCallIdRef.current != null || walkTweenRef.current?.kind === 'call') {
+      activeCallIdRef.current = null
+      window.api?.notifyCallWalkState?.(null)
+    }
+    if (callWalkTimeoutRef.current) {
+      clearTimeout(callWalkTimeoutRef.current)
+      callWalkTimeoutRef.current = null
+    }
     walkTweenRef.current = null
     wakingUpRef.current = false
     wakeTargetPoseRef.current = null
