@@ -190,36 +190,64 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
     []
   )
 
-  // Auto check for updates on mount if autoCheckUpdates is enabled
+  // Auto check / sync updater state from main process
   const runUpdateCheck = useCallback(
     async (isSilent = false) => {
       if (!window.api?.updates?.check) return
       if (!isSilent) {
-        setUpdateState({ status: 'checking' })
+        setUpdateState((prev) => ({ ...(prev || {}), status: 'checking', reason: null, error: null }))
       }
       try {
-        const res = await window.api.updates.check()
-        setUpdateState(res)
-        if (
-          res &&
-          (res.status === 'up-to-date' ||
-            res.status === 'available' ||
-            res.status === 'no-releases')
-        ) {
-          saveSettingsPatch({ lastUpdateCheck: Date.now() })
-        }
+        const res = await window.api.updates.check({ manual: !isSilent })
+        if (res) setUpdateState(res)
       } catch (err) {
         if (!isSilent) {
-          setUpdateState({ status: 'error', error: err.message || 'Update check failed' })
+          setUpdateState((prev) => ({
+            ...(prev || {}),
+            status: 'error',
+            reason: err.message || 'Update check failed',
+            error: err.message || 'Update check failed',
+          }))
         }
       }
     },
-    [saveSettingsPatch]
+    []
   )
 
+  const handleDownloadUpdate = useCallback(async () => {
+    if (!window.api?.updates?.download) return
+    try {
+      const res = await window.api.updates.download()
+      if (res) setUpdateState(res)
+    } catch (err) {
+      setUpdateState((prev) => ({
+        ...(prev || {}),
+        status: 'error',
+        reason: err.message || 'Download failed',
+        error: err.message || 'Download failed',
+      }))
+    }
+  }, [])
+
+  const handleInstallUpdate = useCallback(() => {
+    window.api?.updates?.install?.()
+  }, [])
+
   useEffect(() => {
-    if (settings?.autoCheckUpdates !== false) {
-      runUpdateCheck(true)
+    let active = true
+    window.api?.updates?.getState?.().then((state) => {
+      if (!active || !state) return
+      setUpdateState(state)
+      if (state.status === 'idle' && settings?.autoCheckUpdates !== false) {
+        runUpdateCheck(true)
+      }
+    }).catch(() => {})
+    const offUpdates = window.api?.on?.('updates:state', (state) => {
+      if (state) setUpdateState(state)
+    })
+    return () => {
+      active = false
+      offUpdates?.()
     }
   }, [settings?.autoCheckUpdates, runUpdateCheck])
 
@@ -277,7 +305,7 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
   if (!settings) return null
 
   const TabIcon = currentTabObj.icon
-  const hasUpdateBadge = updateState?.status === 'available'
+  const hasUpdateBadge = updateState?.status === 'available' || updateState?.status === 'ready'
   const platform = window.api?.platform || 'linux'
   const hasNativeTitleBarButtons = platform === 'win32' || platform === 'darwin'
 
@@ -420,11 +448,19 @@ export default function SettingsModal({ settings: initialSettings, onClose }) {
                 onResetSettings={handleResetSettings}
                 updateState={updateState}
                 onCheckUpdates={runUpdateCheck}
+                onDownloadUpdate={handleDownloadUpdate}
+                onInstallUpdate={handleInstallUpdate}
                 capabilities={capabilities}
               />
             )}
             {activeTab === 'about' && (
-              <AboutTab updateState={updateState} onCheckUpdates={runUpdateCheck} />
+              <AboutTab
+                settings={settings}
+                updateState={updateState}
+                onCheckUpdates={runUpdateCheck}
+                onDownloadUpdate={handleDownloadUpdate}
+                onInstallUpdate={handleInstallUpdate}
+              />
             )}
           </div>
         </main>

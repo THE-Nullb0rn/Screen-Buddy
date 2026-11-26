@@ -93,7 +93,12 @@ contextBridge.exposeInMainWorld('api', {
   getMoodState: () => safeInvoke('get-mood-state'),
   saveMoodState: (state) => safeInvoke('save-mood-state', state),
   platform: process.platform,
-  updates: { check: () => safeInvoke('updates:check') },
+  updates: {
+    getState: () => safeInvoke('updates:get-state'),
+    check: (options) => safeInvoke('updates:check', options),
+    download: () => safeInvoke('updates:download'),
+    install: () => safeInvoke('updates:install'),
+  },
   getMainPerfStats: () => safeInvoke('perf:get-stats'),
   getCursorOffset: () => safeInvoke('mascot:get-cursor-offset'),
   notifyCallWalkState: (callId) => safeSend('mascot:call-state', callId),
@@ -182,6 +187,7 @@ contextBridge.exposeInMainWorld('api', {
       'shortcuts:status-updated',
       'platform:capabilities-updated',
       'settings:select-tab',
+      'updates:state',
     ]
     if (!ALLOWED.includes(channel)) {
       console.warn('[preload] Blocked subscription to unknown channel:', channel)

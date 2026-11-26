@@ -373,6 +373,8 @@ export default function BubbleApp() {
     showRemark,
     remarkExiting,
     remarkText,
+    showUpdateCard,
+    updateVersion,
   } = cardState || {}
   const isBigTreatment = isReminderActive && reminderType === 'movementBreak'
   const reminderInfo = reminderData || REMINDER_MESSAGES[reminderType] || REMINDER_MESSAGES.water
@@ -442,6 +444,44 @@ export default function BubbleApp() {
               handleNowPlayingDismiss()
             }}
             aria-label="Dismiss now playing"
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Update available card */}
+      {showUpdateCard && updateVersion && (
+        <div
+          className="mascot-reminder-card mascot-update-card"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mascot-reminder-card__content">
+            <span className="mascot-reminder-card__icon">
+              <Sparkles size={18} />
+            </span>
+            <div className="mascot-reminder-card__text-wrap">
+              <div className="mascot-reminder-card__title">Update available</div>
+              <div className="mascot-reminder-card__message">Update v{updateVersion} available</div>
+              <button
+                className="mascot-hunger-feed-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  window.api.bubble.action('update:open-settings')
+                }}
+              >
+                View update
+              </button>
+            </div>
+          </div>
+          <button
+            className="mascot-dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              window.api.bubble.action('update:dismiss')
+            }}
+            aria-label="Dismiss update notice"
             title="Dismiss"
           >
             ✕

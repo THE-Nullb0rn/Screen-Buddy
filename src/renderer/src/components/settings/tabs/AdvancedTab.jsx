@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Card, MasonryGrid, Row, Toggle, Button } from '../ui'
+import UpdatePanel, { formatLastChecked } from '../UpdatePanel'
 import {
   RefreshCw,
   Zap,
@@ -13,7 +14,6 @@ import {
   Check,
   Clock,
   Loader2,
-  ExternalLink,
 } from 'lucide-react'
 
 export default function AdvancedTab({
@@ -22,6 +22,8 @@ export default function AdvancedTab({
   onResetSettings,
   updateState,
   onCheckUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
   capabilities,
 }) {
   const [settingsPath, setSettingsPath] = useState('')
@@ -79,46 +81,6 @@ export default function AdvancedTab({
     }
   }
 
-  const formatLastChecked = (ts) => {
-    if (!ts) return 'Never checked yet'
-    try {
-      const d = new Date(ts)
-      if (isNaN(d.getTime())) return 'Never checked yet'
-
-      const now = new Date()
-      const isToday =
-        d.getDate() === now.getDate() &&
-        d.getMonth() === now.getMonth() &&
-        d.getFullYear() === now.getFullYear()
-
-      const yesterday = new Date(now)
-      yesterday.setDate(now.getDate() - 1)
-      const isYesterday =
-        d.getDate() === yesterday.getDate() &&
-        d.getMonth() === yesterday.getMonth() &&
-        d.getFullYear() === yesterday.getFullYear()
-
-      const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-
-      if (isToday) {
-        return `Today, ${timeStr}`
-      }
-      if (isYesterday) {
-        return `Yesterday, ${timeStr}`
-      }
-
-      const isSameYear = d.getFullYear() === now.getFullYear()
-      const dateStr = d.toLocaleDateString([], {
-        month: 'short',
-        day: 'numeric',
-        ...(isSameYear ? {} : { year: 'numeric' }),
-      })
-      return `${dateStr}, ${timeStr}`
-    } catch (_) {
-      return 'Never checked yet'
-    }
-  }
-
   const fpsOptions = [30, 60]
 
   return (
@@ -131,7 +93,7 @@ export default function AdvancedTab({
         <Row
           icon={RefreshCw}
           label="Check for updates automatically"
-          hint="Check GitHub releases when Settings opens"
+          hint="Check automatically after startup and every 6 hours"
         >
           <Toggle
             checked={settings.autoCheckUpdates !== false}
@@ -143,13 +105,13 @@ export default function AdvancedTab({
         <Row
           icon={Clock}
           label="Update status"
-          hint={`Last checked: ${formatLastChecked(settings.lastUpdateCheck)}`}
+          hint={`Last checked: ${formatLastChecked(updateState?.lastCheckedAt || settings.lastUpdateCheck)}`}
         >
           <Button
             variant="primary"
             size="small"
             onClick={handleManualUpdateCheck}
-            disabled={updateState?.status === 'checking'}
+            disabled={updateState?.status === 'checking' || updateState?.status === 'downloading'}
           >
             {updateState?.status === 'checking' ? (
               <>
@@ -165,50 +127,14 @@ export default function AdvancedTab({
           </Button>
         </Row>
 
-        {updateState && updateState.status !== 'checking' && (
-          <div className="sb-update-status-wrap">
-            {updateState.status === 'up-to-date' && (
-              <div className="sb-update-banner sb-update-banner--ok">
-                <span>You&apos;re on the latest version</span>
-              </div>
-            )}
-            {updateState.status === 'no-releases' && (
-              <div className="sb-update-banner sb-update-banner--muted">
-                <span>No releases published yet</span>
-              </div>
-            )}
-            {updateState.status === 'offline' && (
-              <div className="sb-update-banner sb-update-banner--danger">
-                <span>Can&apos;t reach GitHub. Check your network connection.</span>
-              </div>
-            )}
-            {updateState.status === 'error' && (
-              <div className="sb-update-banner sb-update-banner--danger">
-                <span>{updateState.error || 'Failed to check updates.'}</span>
-              </div>
-            )}
-            {updateState.status === 'available' && (
-              <div className="sb-new-version-card">
-                <span className="sb-new-version-card__title">
-                  New version v{updateState.latestVersion} available!
-                </span>
-                <Button
-                  variant="primary"
-                  size="small"
-                  onClick={() =>
-                    window.api?.openExternal?.(
-                      updateState.htmlUrl ||
-                        'https://github.com/THE-Nullb0rn/Screen-Buddy/releases'
-                    )
-                  }
-                >
-                  <ExternalLink size={12} />
-                  <span>Open on GitHub</span>
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
+        <UpdatePanel
+          updateState={updateState}
+          lastUpdateCheck={settings.lastUpdateCheck}
+          compact={true}
+          onRetry={handleManualUpdateCheck}
+          onDownload={onDownloadUpdate}
+          onInstall={onInstallUpdate}
+        />
       </Card>
 
       <Card

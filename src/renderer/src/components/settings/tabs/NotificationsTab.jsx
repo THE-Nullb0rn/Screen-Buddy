@@ -139,13 +139,11 @@ export default function NotificationsTab({ settings = {}, saveSettingsPatch, cap
         <Row
           icon={RefreshCw}
           label="Updates"
-          hint="New version and release announcements"
-          soon={true}
+          hint="Show a card above the mascot when a new release is available"
         >
           <Toggle
             checked={settings.notificationCardUpdates !== false}
             onChange={(e) => saveSettingsPatch({ notificationCardUpdates: e.target.checked })}
-            disabled={true}
             ariaLabel="Update alerts"
           />
         </Row>

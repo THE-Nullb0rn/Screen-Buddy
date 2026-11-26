@@ -174,6 +174,8 @@ export default function App() {
 
   const [nowPlayingExiting, setNowPlayingExiting] = useState(false)
   const nowPlayingExitTimerRef = useRef(null)
+  const [activeUpdateNotice, setActiveUpdateNotice] = useState(null)
+  const shownUpdateVersionsRef = useRef(new Set())
 
   const dismissNowPlaying = useCallback(() => {
     if (nowPlayingTimerRef.current) {
@@ -505,13 +507,38 @@ export default function App() {
     }
   }, [])
 
-  // ── IPC: desktop notifications ────────────────────────────────────────────
+  // ── IPC: desktop notifications & app updates ──────────────────────────────
   useEffect(() => {
     const offNotifVisible = window.api.on('notification:visible', (visible) => {
       setNotificationVisible(visible)
     })
+
+    const handleUpdaterState = (state) => {
+      if (!state) return
+      if (state.status === 'available' && state.version) {
+        if (
+          settingsRef.current?.notificationsEnabled !== false &&
+          settingsRef.current?.notificationCardUpdates !== false &&
+          !shownUpdateVersionsRef.current.has(state.version)
+        ) {
+          shownUpdateVersionsRef.current.add(state.version)
+          setActiveUpdateNotice({ version: state.version })
+        }
+      } else if (
+        state.status === 'downloading' ||
+        state.status === 'ready' ||
+        state.status === 'up-to-date'
+      ) {
+        setActiveUpdateNotice(null)
+      }
+    }
+
+    window.api?.updates?.getState?.().then(handleUpdaterState).catch(() => {})
+    const offUpdates = window.api.on('updates:state', handleUpdaterState)
+
     return () => {
       offNotifVisible()
+      offUpdates()
     }
   }, [])
 
@@ -547,6 +574,11 @@ export default function App() {
       (remarkVisible || remarkExiting) &&
       remarkText
     )
+    const effectiveShowUpdate = Boolean(
+      masterCardsEnabled &&
+      settings?.notificationCardUpdates !== false &&
+      activeUpdateNotice?.version
+    )
 
     const hasContent =
       (masterCardsEnabled && settings?.reminderNotifications !== false && isReminderActive) ||
@@ -554,6 +586,7 @@ export default function App() {
       effectiveShowHunger ||
       effectiveShowNowPlaying ||
       effectiveShowRemark ||
+      effectiveShowUpdate ||
       chatState !== 'idle' ||
       chatExiting
 
@@ -580,6 +613,9 @@ export default function App() {
       showRemark: effectiveShowRemark,
       remarkExiting,
       remarkText,
+      // Update alert
+      showUpdateCard: effectiveShowUpdate,
+      updateVersion: activeUpdateNotice?.version || null,
       // Timer
       showTimer,
       timerMode,
@@ -599,6 +635,7 @@ export default function App() {
     settings?.notificationsEnabled,
     settings?.reminderNotifications,
     settings?.notificationCardMusic,
+    settings?.notificationCardUpdates,
     settings?.notificationAnimations,
     settings?.chatThinkingIndicator,
     settings?.mediaReaction,
@@ -610,6 +647,7 @@ export default function App() {
     remarkVisible,
     remarkExiting,
     remarkText,
+    activeUpdateNotice,
     timerMode,
     timerSeconds,
     nowPlayingVisible,
@@ -639,6 +677,8 @@ export default function App() {
         handleSnoozeWithAnimation()
       } else if (type === 'remark:dismiss') {
         dismissRemark()
+      } else if (type === 'update:dismiss') {
+        setActiveUpdateNotice(null)
       } else if (type === 'chat:send') {
         handleChatSend(payload)
       } else if (type === 'chat:retry') {

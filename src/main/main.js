@@ -60,7 +60,15 @@ const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
 const { watchTrayHost } = require('./trayHost')
-const { checkForUpdates } = require('./updater')
+const {
+  checkForUpdates,
+  downloadUpdate,
+  installUpdate,
+  getUpdateState,
+  initUpdater,
+  notifyUpdaterSettingsChanged,
+  cleanupUpdater,
+} = require('./updater')
 const {
   NORMAL_WIN_W,
   NORMAL_WIN_H,
@@ -428,6 +436,30 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send('media:status', status)
   })
 
+  initUpdater({
+    getSettings: () => settings,
+    broadcast: (state) => {
+      if (isShuttingDown) return
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('updates:state', state)
+      }
+      if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+        settingsWindow.webContents.send('updates:state', state)
+      }
+    },
+    onCheckPersisted: (ts) => {
+      if (isShuttingDown || !settings) return
+      settings = { ...settings, lastUpdateCheck: ts }
+      saveSettings(settings)
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('settings:updated', settings)
+      }
+      if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+        settingsWindow.webContents.send('settings:updated', settings)
+      }
+    },
+  })
+
   mainWindow?.webContents.on('did-finish-load', () => {
     const current = mediaMonitor.getStatus()
     if (current && (current.playing || current.title || current.artist)) {
@@ -621,6 +653,7 @@ app.on('will-quit', () => {
     }
   }
   notificationsManager?.stop()
+  cleanupUpdater()
   trayHostWatcher?.stop()
   if (passthruInterval) {
     clearInterval(passthruInterval)
@@ -3066,6 +3099,7 @@ function registerIpcHandlers() {
     } else {
       removeAutostart()
     }
+    notifyUpdaterSettingsChanged(settings)
 
     // Toggle system tray icon based on showTrayIcon setting
     if (settings.showTrayIcon !== false) {
@@ -3825,6 +3859,13 @@ function registerIpcHandlers() {
       openSettingsWindow('chat');
       return;
     }
+    if (type === 'update:open-settings') {
+      openSettingsWindow('about');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('bubble:action', 'update:dismiss');
+      }
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('bubble:action', type, payload);
     }
@@ -4348,14 +4389,29 @@ function registerIpcHandlers() {
     }
   })
 
-  /** Check for app updates via GitHub releases */
-  ipcMain.handle('updates:check', async () => {
+  /** Get current updater state */
+  ipcMain.handle('updates:get-state', () => getUpdateState())
+
+  /** Check for app updates via electron-updater or GitHub releases */
+  ipcMain.handle('updates:check', async (_event, options) => {
     try {
-      return await checkForUpdates()
+      return await checkForUpdates(options)
     } catch (err) {
-      return { status: 'error', currentVersion: app.getVersion(), error: err.message || 'Unknown update check error' }
+      return { status: 'error', currentVersion: app.getVersion(), error: err.message || 'Unknown update check error', reason: err.message || 'Unknown update check error' }
     }
   })
+
+  /** Download available app update (user-triggered) */
+  ipcMain.handle('updates:download', async () => {
+    try {
+      return await downloadUpdate()
+    } catch (err) {
+      return { status: 'error', currentVersion: app.getVersion(), error: err.message || 'Download failed', reason: err.message || 'Download failed' }
+    }
+  })
+
+  /** Quit and apply downloaded app update (user-triggered) */
+  ipcMain.handle('updates:install', () => installUpdate())
 
   /** Get current application version */
   ipcMain.handle('app:get-version', () => app.getVersion())

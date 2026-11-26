@@ -23,7 +23,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'dbus-next', 'uiohook-napi'],
+              external: ['electron', 'dbus-next', 'uiohook-napi', 'electron-updater'],
             },
           },
         },
@@ -56,7 +56,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'dbus-next', 'uiohook-napi'],
+              external: ['electron', 'dbus-next', 'uiohook-napi', 'electron-updater'],
             },
           },
         },
@@ -89,7 +89,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron', 'dbus-next', 'uiohook-napi'],
+              external: ['electron', 'dbus-next', 'uiohook-napi', 'electron-updater'],
             },
           },
         },
@@ -100,7 +100,7 @@ export default defineConfig({
           build: {
             outDir: resolve(__dirname, 'dist-electron'),
             rollupOptions: {
-              external: ['electron'],
+              external: ['electron', 'electron-updater'],
             },
           },
         },

@@ -200,6 +200,40 @@ Known daemons to disable:
 ---
 
 
+---
+
+## Releasing
+
+Screen Buddy uses `electron-updater` and GitHub Actions (`.github/workflows/release.yml`) to build and publish updates.
+
+### Cut a new release
+
+1. Bump `"version"` in `package.json` and `package-lock.json` (for example `npm version 0.1.1 --no-git-tag-version`).
+2. Commit the changes on `main`.
+3. Create and push the matching `v*` tag:
+   ```bash
+   git tag v0.1.1
+   git push origin main --tags
+   ```
+
+### What CI does
+
+- Verifies that the tag version (without `v`) matches `package.json` `version`.
+- Runs `node scripts/lint-baseline.js` and `npm run build`.
+- Creates a non-draft GitHub Release with auto-generated release notes.
+- Packages and attaches:
+  - **Windows:** NSIS installer (`*.exe`), blockmap (`*.blockmap`), and `latest.yml`.
+  - **Linux:** `*.AppImage`, `latest-linux.yml`, `*.rpm`, and `*.deb`.
+- Manual `workflow_dispatch` runs build and upload artifacts without publishing (`--publish never`).
+
+### How updates reach users
+
+- **Windows (installed NSIS app) & Linux (AppImage):** Checks on startup (after 30s) and every 6 hours when `autoCheckUpdates` is enabled, shows an available notice, downloads only when clicked, verifies against the `.yml` / `.blockmap` metadata, and applies on **"Restart to update"** or quit.
+- **Linux `.deb` / `.rpm` & dev builds:** Check release metadata only and open the GitHub Release page via **"View release"** rather than self-updating in place.
+- **Unsigned Windows builds:** Because no code-signing certificate / `publisherName` is configured, Windows SmartScreen may prompt on fresh downloads; `electron-updater` still downloads and installs unsigned updates verified by SHA-512 in `latest.yml`.
+
+---
+
 Concept loosely inspired by early hydration-reminder desktop apps — screen-buddy itself is an original build from scratch: own code, own mascot, own architecture.
 
 ---

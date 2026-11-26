@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Card, MasonryGrid, Row, Button } from '../ui'
+import UpdatePanel from '../UpdatePanel'
 import {
   Cat,
   RefreshCw,
@@ -8,12 +9,17 @@ import {
   Shield,
   Star,
   MessageSquare,
-  Sparkles,
   Heart,
   Loader2,
 } from 'lucide-react'
 
-export default function AboutTab({ updateState, onCheckUpdates }) {
+export default function AboutTab({
+  settings = {},
+  updateState,
+  onCheckUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
+}) {
   const [appInfo, setAppInfo] = useState(null)
 
   useEffect(() => {
@@ -30,7 +36,8 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
     }
   }
 
-  const version = appInfo?.version || ''
+  const version = appInfo?.version || updateState?.currentVersion || ''
+  const isBusy = updateState?.status === 'checking' || updateState?.status === 'downloading'
 
   return (
     <>
@@ -54,7 +61,7 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
           <Button
             variant="primary"
             onClick={() => onCheckUpdates && onCheckUpdates(false)}
-            disabled={updateState?.status === 'checking'}
+            disabled={isBusy}
           >
             {updateState?.status === 'checking' ? (
               <>
@@ -86,70 +93,15 @@ export default function AboutTab({ updateState, onCheckUpdates }) {
           </Button>
         </div>
 
-        {/* Update status results */}
-        {updateState && updateState.status !== 'checking' && (
-          <div className="sb-update-status-wrap">
-            {updateState.status === 'up-to-date' && (
-              <div className="sb-update-banner sb-update-banner--ok">
-                <span>You&apos;re on the latest version{version ? ` (v${version})` : ''}</span>
-              </div>
-            )}
-
-            {updateState.status === 'no-releases' && (
-              <div className="sb-update-banner sb-update-banner--muted">
-                <span>No releases published yet</span>
-              </div>
-            )}
-
-            {updateState.status === 'offline' && (
-              <div className="sb-update-banner sb-update-banner--danger">
-                <span>Can&apos;t reach GitHub. Check your network connection.</span>
-              </div>
-            )}
-
-            {updateState.status === 'error' && (
-              <div className="sb-update-banner sb-update-banner--danger">
-                <span>{updateState.error || 'Failed to check updates.'}</span>
-                <Button
-                  variant="secondary"
-                  size="small"
-                  onClick={() => onCheckUpdates && onCheckUpdates(false)}
-                >
-                  Try again
-                </Button>
-              </div>
-            )}
-
-            {updateState.status === 'available' && (
-              <div className="sb-new-version-card">
-                <div className="sb-new-version-card__header">
-                  <Sparkles size={16} className="sb-icon--accent" />
-                  <span className="sb-new-version-card__title">
-                    New version v{updateState.latestVersion} is out!
-                  </span>
-                </div>
-                {updateState.notes && (
-                  <pre className="sb-new-version-notes">{updateState.notes}</pre>
-                )}
-                <div className="sb-new-version-card__action">
-                  <Button
-                    variant="primary"
-                    size="small"
-                    onClick={() =>
-                      openUrl(
-                        updateState.htmlUrl ||
-                          'https://github.com/THE-Nullb0rn/Screen-Buddy/releases'
-                      )
-                    }
-                  >
-                    <ExternalLink size={13} />
-                    <span>Open on GitHub</span>
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <UpdatePanel
+          updateState={updateState}
+          currentVersion={version}
+          lastUpdateCheck={settings?.lastUpdateCheck}
+          onRetry={() => onCheckUpdates && onCheckUpdates(false)}
+          onDownload={onDownloadUpdate}
+          onInstall={onInstallUpdate}
+          onOpenExternal={openUrl}
+        />
       </Card>
 
       <MasonryGrid>
