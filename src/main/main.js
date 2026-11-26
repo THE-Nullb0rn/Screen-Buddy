@@ -860,10 +860,13 @@ app.on('will-quit', () => {
     }
   }
   console.log('[main] Cleanup completed (will-quit)')
-  try {
-    app.exit(0)
-  } catch (_) { /* ignore */ }
-  process.exit(0)
+})
+
+app.on('quit', (event, exitCode) => {
+  if (process.env.SCREEN_BUDDY_DEBUG === '1') {
+    console.log(`[main] quit event (exitCode=${exitCode})`)
+    console.log('[updater] fake autoInstallOnAppQuit triggered on quit event')
+  }
 })
 
 let beforeQuitHandled = false
