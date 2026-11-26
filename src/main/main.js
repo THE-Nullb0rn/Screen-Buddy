@@ -44,8 +44,15 @@ const { execFile: execFileCallback, spawn } = require('child_process')
 app.setName('screen-buddy')
 if (process.platform === 'win32') {
   app.setAppUserModelId('io.github.the-nullb0rn.screen-buddy')
+  app.on('session-end', () => app.quit())
 }
-if (process.platform === 'linux') {
+const userDataArg = process.argv.find((arg) => typeof arg === 'string' && arg.startsWith('--user-data-dir='))
+const customUserData = userDataArg
+  ? userDataArg.slice('--user-data-dir='.length)
+  : (process.env.SCREEN_BUDDY_USER_DATA_DIR || null)
+if (customUserData) {
+  app.setPath('userData', customUserData)
+} else if (process.platform === 'linux') {
   const xdgConfigHome =
     process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
   app.setPath('userData', path.join(xdgConfigHome, 'screen-buddy'))
@@ -179,6 +186,85 @@ let hyprlandEventReconnectTimer = null
 let fullscreenSafetyPoll = null
 let fullscreenReconcileTimer = null
 let isShuttingDown = false
+let isQuitting = false
+let quitWatchdogTimer = null
+let persistSettingsWindowBoundsRef = null
+let stopIdlePollTimer = null
+
+function ensureQuitWatchdog() {
+  if (quitWatchdogTimer) return
+  quitWatchdogTimer = setTimeout(() => {
+    console.log('[main] quit watchdog: forcing exit')
+    try {
+      app.exit(0)
+    } catch (_) { /* ignore */ }
+    process.exit(0)
+  }, 3000)
+}
+
+function destroyAllWindows() {
+  console.log('[main] Destroying all remaining windows')
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    try {
+      if (typeof persistSettingsWindowBoundsRef === 'function') {
+        persistSettingsWindowBoundsRef()
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      settingsWindow.destroy()
+    } catch (_) {
+      /* ignore */
+    }
+    settingsWindow = null
+  }
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    try {
+      bubbleWindow.destroy()
+    } catch (_) {
+      /* ignore */
+    }
+    bubbleWindow = null
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.destroy()
+    } catch (_) {
+      /* ignore */
+    }
+    mainWindow = null
+  }
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        try {
+          win.destroy()
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+let signalHandlersRegistered = false
+function setupSignalHandlers() {
+  if (signalHandlersRegistered) return
+  signalHandlersRegistered = true
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => {
+      console.log(`[main] Received ${sig} — quitting application`)
+      isQuitting = true
+      isShuttingDown = true
+      ensureQuitWatchdog()
+      destroyAllWindows()
+      app.quit()
+    })
+  }
+}
 const TRAY_TOOLTIP_UPDATE_INTERVAL_MS = 10 * 1000
 let lastTrayTooltipUpdateAt = 0
 let lastTrayTooltipMode = null
@@ -353,6 +439,7 @@ if (rendererOverride === 'swiftshader') {
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   if (!gotLock) return
+  setupSignalHandlers()
   settings = loadSettings()
   syncDeveloperMode(Boolean(settings?.developerMode))
 
@@ -470,16 +557,43 @@ app.whenReady().then(async () => {
     if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_DEBUG_OPEN) {
       const target = String(process.env.SCREEN_BUDDY_DEBUG_OPEN).trim().toLowerCase()
       setTimeout(() => {
-        if (isShuttingDown) return
+        if (isShuttingDown || isQuitting) return
         console.log(`[debug] SCREEN_BUDDY_DEBUG_OPEN=${target} triggering`)
-        if (target === 'settings') {
+        if (target.includes('settings')) {
           openSettingsWindow()
-        } else if (target === 'chat') {
+        }
+        if (target.includes('chat')) {
           triggerChatOpen('debug-hook')
-        } else if (target === 'call') {
+        }
+        if (target.includes('call')) {
           triggerCallCat()
         }
       }, 600)
+    }
+
+    if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_DEBUG_QUIT_TRAY === '1') {
+      const delay = Number(process.env.SCREEN_BUDDY_DEBUG_QUIT_TRAY_DELAY_MS) || 2000
+      setTimeout(() => {
+        if (isShuttingDown || isQuitting) return
+        console.log('[debug] SCREEN_BUDDY_DEBUG_QUIT_TRAY triggering tray quit')
+        const quitItem = global.__sbDebugTrayMenu?.items?.find((item) => item.label && item.label.includes('Exit'))
+        if (quitItem && typeof quitItem.click === 'function') {
+          quitItem.click()
+        } else {
+          app.quit()
+        }
+      }, delay)
+    }
+
+    if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_DEBUG_CLOSE_OVERLAY === '1') {
+      const delay = Number(process.env.SCREEN_BUDDY_DEBUG_CLOSE_OVERLAY_DELAY_MS) || 2000
+      setTimeout(() => {
+        if (isShuttingDown || isQuitting) return
+        console.log('[debug] SCREEN_BUDDY_DEBUG_CLOSE_OVERLAY triggering mainWindow.close()')
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.close()
+        }
+      }, delay)
     }
   })
 
@@ -494,6 +608,11 @@ app.whenReady().then(async () => {
     global.__sbDebugTriggerCall = () => triggerCallCat()
     global.__sbDebugTriggerChat = () => triggerChatOpen('debug-hook')
     global.__sbDebugGetCallWatch = () => activeCallWatch ? { callId: activeCallWatch.callId, anchorX: activeCallWatch.anchorX, anchorY: activeCallWatch.anchorY } : null
+    global.__sbDebugCloseOverlay = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.close()
+      }
+    }
   }
   const isDevDebug = !app.isPackaged && (process.env.SCREEN_BUDDY_DEBUG === '1' || Boolean(settings?.developerMode))
   if (isDevDebug) {
@@ -634,27 +753,15 @@ app.on('window-all-closed', () => {
 
 // Clean up child processes before exit
 app.on('will-quit', () => {
+  console.log('[main] Application shutting down (will-quit)')
   isShuttingDown = true
+  isQuitting = true
+  ensureQuitWatchdog()
+
   if (devCpuInterval) {
     clearInterval(devCpuInterval)
     devCpuInterval = null
   }
-  // Stop typing detection first — kills any /dev/input 'cat' child processes
-  // and nulls the IPC sender so no destroyed-webContents errors can fire.
-  // stop() is idempotent; safe to call even if never started.
-  typingDetector?.stop()
-  stopCallCursorWatch()
-  mediaMonitor.stop()
-  if (process.platform === 'win32') {
-    try {
-      require('./winMediaFullscreenHelper').stop()
-    } catch (_) {
-      /* ignore helper cleanup errors */
-    }
-  }
-  notificationsManager?.stop()
-  cleanupUpdater()
-  trayHostWatcher?.stop()
   if (passthruInterval) {
     clearInterval(passthruInterval)
     passthruInterval = null
@@ -663,31 +770,120 @@ app.on('will-quit', () => {
     clearTimeout(trayRetryTimeout)
     trayRetryTimeout = null
   }
-  globalShortcut.unregisterAll()
-  stopHyprlandFullscreenMonitor()
+
+  // Stop typing detection first — kills any /dev/input 'cat' child processes
+  // and nulls the IPC sender so no destroyed-webContents errors can fire.
+  // stop() is idempotent; safe to call even if never started.
+  try {
+    typingDetector?.stop()
+  } catch (err) {
+    console.warn('[cleanup] typingDetector stop error:', err.message)
+  }
+
+  try {
+    stopCallCursorWatch()
+  } catch (err) {
+    console.warn('[cleanup] stopCallCursorWatch error:', err.message)
+  }
+
+  try {
+    mediaMonitor.stop()
+  } catch (err) {
+    console.warn('[cleanup] mediaMonitor stop error:', err.message)
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      require('./winMediaFullscreenHelper').stop()
+    } catch (_) {
+      /* ignore helper cleanup errors */
+    }
+    try {
+      typingDetector?._uiohookProvider?.stop()
+    } catch (_) {
+      /* ignore uiohook stop errors */
+    }
+  }
+
+  try {
+    destroyTray()
+  } catch (err) {
+    console.warn('[cleanup] destroyTray error:', err.message)
+  }
+
+  try {
+    notificationsManager?.stop()
+  } catch (err) {
+    console.warn('[cleanup] notificationsManager stop error:', err.message)
+  }
+
+  try {
+    cleanupUpdater()
+  } catch (err) {
+    console.warn('[cleanup] cleanupUpdater error:', err.message)
+  }
+
+  try {
+    trayHostWatcher?.stop()
+  } catch (err) {
+    console.warn('[cleanup] trayHostWatcher stop error:', err.message)
+  }
+
+  try {
+    globalShortcut.unregisterAll()
+  } catch (err) {
+    console.warn('[cleanup] globalShortcut unregister error:', err.message)
+  }
+
+  try {
+    stopHyprlandFullscreenMonitor()
+  } catch (err) {
+    console.warn('[cleanup] stopHyprlandFullscreenMonitor error:', err.message)
+  }
+
   if (process.platform === 'linux') {
-    removeHyprlandHotkeyFallback()
-    removeChatHotkeyFallback()
-    stopEyeTrackingPolling?.()
-    removeCallHotkeyFallback()
+    try { removeHyprlandHotkeyFallback() } catch (err) { console.warn('[cleanup] removeHyprlandHotkeyFallback error:', err.message) }
+    try { removeChatHotkeyFallback() } catch (err) { console.warn('[cleanup] removeChatHotkeyFallback error:', err.message) }
+    try { stopEyeTrackingPolling?.() } catch (err) { console.warn('[cleanup] stopEyeTrackingPolling error:', err.message) }
+    try { stopIdlePollTimer?.() } catch (err) { console.warn('[cleanup] stopIdlePollTimer error:', err.message) }
+    try { removeCallHotkeyFallback() } catch (err) { console.warn('[cleanup] removeCallHotkeyFallback error:', err.message) }
   } else {
-    stopEyeTrackingPolling?.()
+    try { stopEyeTrackingPolling?.() } catch (err) { console.warn('[cleanup] stopEyeTrackingPolling error:', err.message) }
+    try { stopIdlePollTimer?.() } catch (err) { console.warn('[cleanup] stopIdlePollTimer error:', err.message) }
   }
+
   if (latestMoodState) {
-    saveMoodStateToDisk(latestMoodState)
+    try {
+      saveMoodStateToDisk(latestMoodState)
+    } catch (err) {
+      console.warn('[cleanup] saveMoodStateToDisk error:', err.message)
+    }
   }
-  if (isParked) {
-    unpark('quit')
-  }
+  console.log('[main] Cleanup completed (will-quit)')
+  try {
+    app.exit(0)
+  } catch (_) { /* ignore */ }
+  process.exit(0)
 })
 
+let beforeQuitHandled = false
 app.on('before-quit', () => {
+  if (beforeQuitHandled) return
+  beforeQuitHandled = true
+  console.log('[main] Quitting application (before-quit)')
+  isQuitting = true
+  isShuttingDown = true
+  ensureQuitWatchdog()
+
   if (latestMoodState) {
-    saveMoodStateToDisk(latestMoodState)
+    try {
+      saveMoodStateToDisk(latestMoodState)
+    } catch (err) {
+      console.warn('[main] saveMoodStateToDisk error:', err.message)
+    }
   }
-  if (isParked) {
-    unpark('quit')
-  }
+
+  destroyAllWindows()
 })
 
 // ─── Pause / fullscreen / hotkey state ──────────────────────────────────────
@@ -790,6 +986,7 @@ async function park(reason) {
 }
 
 async function unpark(reason) {
+  if (reason === 'quit') return
   if (!isParked) return
   isParked = false
 
@@ -1668,7 +1865,11 @@ function stopHyprlandFullscreenMonitor() {
   fullscreenSafetyPoll = null
   hyprlandEventReconnectTimer = null
   fullscreenReconcileTimer = null
-  hyprlandEventSocket?.destroy()
+  try {
+    hyprlandEventSocket?.destroy()
+  } catch (_) {
+    /* ignore */
+  }
   hyprlandEventSocket = null
 }
 
@@ -1712,6 +1913,10 @@ async function getBubbleWindow() {
   } else {
     bubbleWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'), { hash: 'bubbles' });
   }
+
+  bubbleWindow.on('close', () => {
+    // Permitted through unconditionally
+  });
 
   bubbleWindow.on('closed', () => {
     if (bubbleFollowTrailingTimer) {
@@ -2270,6 +2475,7 @@ function openSettingsWindow(initialTab = null) {
       saveSettings(settings)
     }
   }
+  persistSettingsWindowBoundsRef = persistSettingsWindowBounds
   const scheduleBoundsSave = (evtName) => {
     logSettingsWinEvent(evtName)
     if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
@@ -2317,6 +2523,9 @@ function openSettingsWindow(initialTab = null) {
       clearTimeout(boundsSaveTimer)
       boundsSaveTimer = null
     }
+    if (isQuitting || isShuttingDown) {
+      return
+    }
     persistSettingsWindowBounds()
   })
 
@@ -2344,12 +2553,15 @@ function openSettingsWindow(initialTab = null) {
       clearTimeout(boundsSaveTimer)
       boundsSaveTimer = null
     }
+    persistSettingsWindowBoundsRef = null
     settingsWindow = null
-    reRaiseAndPinWindows('settings closed')
-    if (isParked) {
-      unpark('settings-closed')
+    if (!isQuitting && !isShuttingDown) {
+      reRaiseAndPinWindows('settings closed')
+      if (isParked) {
+        unpark('settings-closed')
+      }
+      setTimeout(() => logAppMetrics('settings-closed-10s'), 10000)
     }
-    setTimeout(() => logAppMetrics('settings-closed-10s'), 10000)
   })
 
   setTimeout(() => logAppMetrics('settings-opened-10s'), 10000)
@@ -2521,8 +2733,12 @@ function createOverlayWindow() {
   // Guard isShuttingDown so we don't recurse if app.quit() was already called.
   mainWindow.on('closed', () => {
     mainWindow = null  // Null immediately so the IPC guard drops any in-flight events
-    if (!isShuttingDown) {
+    if (!isShuttingDown && !isQuitting) {
       console.log('[main] Primary overlay window closed — quitting application')
+      isQuitting = true
+      isShuttingDown = true
+      ensureQuitWatchdog()
+      destroyAllWindows()
       app.quit()
     }
   })
@@ -3037,7 +3253,14 @@ function buildTrayMenu() {
     { type: 'separator' },
     {
       label: '✖  Exit',
-      click: () => app.quit(),
+      click: () => {
+        console.log('[main] Tray Quit clicked — quitting application')
+        isQuitting = true
+        isShuttingDown = true
+        ensureQuitWatchdog()
+        destroyAllWindows()
+        app.quit()
+      },
     },
   ])
 
@@ -4522,11 +4745,14 @@ function registerPowerMonitor() {
   }
 
   let idlePollTimer = null
-  updateIdlePollTimer = function () {
+  stopIdlePollTimer = function () {
     if (idlePollTimer) {
       clearInterval(idlePollTimer)
       idlePollTimer = null
     }
+  }
+  updateIdlePollTimer = function () {
+    stopIdlePollTimer()
 
     // Poll cursor only when pauseAnimationIdle is ON and eyeTracking is OFF.
     // When eyeTracking is ON, startEyeTrackingPolling already tracks cursor movement & idle state.

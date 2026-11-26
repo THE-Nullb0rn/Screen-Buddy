@@ -224,8 +224,12 @@ function stop() {
   }
 
   if (childProcess) {
-    console.log('[media] Stopping playerctl monitor (pid:', childProcess.pid, ')')
-    childProcess.kill('SIGTERM')
+    try {
+      console.log('[media] Stopping playerctl monitor (pid:', childProcess.pid, ')')
+      childProcess.kill('SIGTERM')
+    } catch (_) {
+      /* ignore kill error */
+    }
     childProcess = null
   }
 

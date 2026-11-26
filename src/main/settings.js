@@ -17,7 +17,14 @@ const os = require('os')
 let SETTINGS_DIR
 let SETTINGS_FILE
 
-if (process.platform === 'win32') {
+const userDataArg = process.argv.find((arg) => typeof arg === 'string' && arg.startsWith('--user-data-dir='))
+const customUserDataDir = userDataArg
+  ? userDataArg.slice('--user-data-dir='.length)
+  : (process.env.SCREEN_BUDDY_USER_DATA_DIR || null)
+if (customUserDataDir) {
+  SETTINGS_DIR = customUserDataDir
+  SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
+} else if (process.platform === 'win32') {
   const { app } = require('electron')
   SETTINGS_DIR = app.getPath('userData')
   SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
