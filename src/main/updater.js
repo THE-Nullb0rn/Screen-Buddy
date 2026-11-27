@@ -1,6 +1,7 @@
 const https = require('https')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 const { app } = require('electron')
 
 const REPO_OWNER = 'THE-Nullb0rn'
@@ -12,7 +13,41 @@ const USER_AGENT = `${REPO_NAME}-Updater`
 const INITIAL_CHECK_DELAY_MS = 30 * 1000
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000
-const REQUEST_TIMEOUT_MS = 8000
+const CHECK_ATTEMPT_TIMEOUT_MS = 20 * 1000
+const RETRY_DELAY_MS = 2 * 1000
+const MAX_CHECK_ATTEMPTS = 2
+
+const _testOverrides = {}
+
+function _setTestOverrides(overrides) {
+  Object.assign(_testOverrides, overrides)
+}
+
+function _clearTestOverrides() {
+  for (const k of Object.keys(_testOverrides)) {
+    delete _testOverrides[k]
+  }
+  isQuittingUpdater = false
+  updateState = null
+  inFlightCheckPromise = null
+  checkGeneration = 0
+  activeAttemptId = 0
+  attemptIdCounter = 0
+}
+
+function getAppVersion() {
+  if (_testOverrides.appVersion) return _testOverrides.appVersion
+  try {
+    return (app && typeof app.getVersion === 'function') ? app.getVersion() : '0.1.1'
+  } catch (_) {
+    return '0.1.1'
+  }
+}
+
+function isAppPackaged() {
+  if (_testOverrides.isPackaged !== undefined) return _testOverrides.isPackaged
+  return Boolean(app && app.isPackaged)
+}
 
 /**
  * Strip leading 'v' and trim whitespace from a version string.
@@ -95,13 +130,66 @@ function buildReleaseUrl(version) {
 }
 
 /**
+ * Extract update target filename from info (path, files[0].url, downloadedFile).
+ * @param {any} info
+ * @returns {string|null}
+ */
+function getUpdateFileName(info) {
+  if (!info) return null
+  if (info.downloadedFile) return path.basename(info.downloadedFile)
+  if (info.path) return path.basename(info.path)
+  if (Array.isArray(info.files) && info.files[0]) {
+    const rawUrl = info.files[0].url || info.files[0].path
+    if (rawUrl) {
+      try {
+        const u = new URL(rawUrl, 'https://github.com')
+        return path.basename(u.pathname)
+      } catch (_) {
+        return path.basename(rawUrl)
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Build restart hint object for ready update state.
+ * @param {any} info
+ * @param {{ platform?: string, appImageEnv?: string }} [opts]
+ * @returns {{ kind: 'appimage', path: string } | { kind: 'start-menu' } | null}
+ */
+function buildRestartHint(
+  info,
+  {
+    platform = _testOverrides.platform || process.platform,
+    appImageEnv = _testOverrides.appImage !== undefined ? _testOverrides.appImage : process.env.APPIMAGE,
+  } = {}
+) {
+  if (platform === 'linux' && appImageEnv && String(appImageEnv).trim()) {
+    const dir = path.dirname(appImageEnv)
+    const fileName = getUpdateFileName(info)
+    const fullPath = fileName ? path.join(dir, fileName) : appImageEnv
+    return {
+      kind: 'appimage',
+      path: fullPath,
+    }
+  }
+  if (platform === 'win32') {
+    return {
+      kind: 'start-menu',
+    }
+  }
+  return null
+}
+
+/**
  * Determine how updates should run for the current OS and build type.
  * Exported as a pure helper so packaged Linux/macOS/Windows/dev branches can be tested directly.
  */
 function resolveUpdateMode({
-  platform = process.platform,
-  isPackaged = app.isPackaged,
-  appImageEnv = process.env.APPIMAGE,
+  platform = _testOverrides.platform || process.platform,
+  isPackaged = isAppPackaged(),
+  appImageEnv = _testOverrides.appImage !== undefined ? _testOverrides.appImage : process.env.APPIMAGE,
   debugEnabled = process.env.SCREEN_BUDDY_DEBUG === '1',
   debugFeedUrl = process.env.SCREEN_BUDDY_UPDATE_FEED_URL,
 } = {}) {
@@ -223,7 +311,7 @@ function classifyUpdaterError(err) {
 }
 
 function createInitialState(mode) {
-  const currentVersion = normalizeVersion(app.getVersion())
+  const currentVersion = normalizeVersion(getAppVersion())
   if (mode.engine === 'dev-github') {
     return {
       status: 'dev',
@@ -257,6 +345,7 @@ function createInitialState(mode) {
 }
 
 let updateState = null
+let lastDownloadedInfo = null
 let stateBroadcastFn = null
 let settingsGetter = null
 let onCheckPersistedFn = null
@@ -270,6 +359,12 @@ let initialCheckTimer = null
 let periodicCheckTimer = null
 let consecutiveFailures = 0
 let lastProgressBroadcastAt = 0
+let checkGeneration = 0
+let activeAttemptId = 0
+let attemptIdCounter = 0
+let activeCheckTimer = null
+let activeRetryTimer = null
+let activeCheckAbortController = null
 
 function getCurrentMode() {
   return resolveUpdateMode()
@@ -291,9 +386,21 @@ function setUpdateState(patch) {
   const next = {
     ...prev,
     ...patch,
-    currentVersion: normalizeVersion(app.getVersion()),
+    currentVersion: normalizeVersion(getAppVersion()),
   }
   next.error = next.status === 'error' ? (next.reason || next.error || 'Update error') : null
+
+  if (next.status === 'ready') {
+    next.restartHint = patch.restartHint !== undefined
+      ? patch.restartHint
+      : (next.restartHint || buildRestartHint(lastDownloadedInfo))
+  } else {
+    delete next.restartHint
+    if (next.status !== 'downloading') {
+      lastDownloadedInfo = null
+    }
+  }
+
   updateState = next
 
   if (typeof stateBroadcastFn === 'function') {
@@ -307,15 +414,23 @@ function setUpdateState(patch) {
 }
 
 /**
- * Fetch JSON via Node HTTPS with User-Agent + timeout (used only on dev builds & Linux .deb/.rpm).
+ * Fetch JSON via Node HTTPS with User-Agent + signal (used only on dev builds & Linux .deb/.rpm).
  * @param {string} url
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<{ statusCode: number, data: any }>}
  */
-function fetchJson(url) {
+function fetchJson(url, { signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      const err = new Error('Request aborted')
+      err.name = 'AbortError'
+      return reject(err)
+    }
+
     const req = https.get(
       url,
       {
+        signal,
         headers: {
           'User-Agent': USER_AGENT,
           Accept: 'application/vnd.github+json',
@@ -333,10 +448,9 @@ function fetchJson(url) {
         })
       }
     )
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      req.destroy(new Error('ETIMEDOUT: Request timed out'))
+    req.on('error', (err) => {
+      reject(err)
     })
-    req.on('error', reject)
   })
 }
 
@@ -366,7 +480,8 @@ function ensureAutoUpdater() {
   if (mode.feedUrl) {
     const defaultCfgPath = path.join(process.resourcesPath || '', 'app-update.yml')
     if (!fs.existsSync(defaultCfgPath)) {
-      const scratchCfg = path.join(app.getPath('temp'), 'screen-buddy-debug-app-update.yml')
+      const tempDir = (app && typeof app.getPath === 'function') ? app.getPath('temp') : os.tmpdir()
+      const scratchCfg = path.join(tempDir, 'screen-buddy-debug-app-update.yml')
       fs.writeFileSync(
         scratchCfg,
         `provider: generic\nurl: ${mode.feedUrl}\nupdaterCacheDirName: screen-buddy-updater\n`,
@@ -397,16 +512,140 @@ function ensureAutoUpdater() {
       })
     }
 
-    autoUpdaterInstance.on('checking-for-update', () => {
+    autoUpdaterInstance.on('download-progress', (progress) => {
+      const now = Date.now()
+      const pct = Number.isFinite(progress?.percent) ? Math.min(100, Math.max(0, Math.round(progress.percent * 10) / 10)) : 0
+      const bps = Number.isFinite(progress?.bytesPerSecond) ? Math.max(0, Math.round(progress.bytesPerSecond)) : 0
+      if (now - lastProgressBroadcastAt < 80 && pct < 100) return
+      lastProgressBroadcastAt = now
       setUpdateState({
-        status: 'checking',
+        status: 'downloading',
+        percent: pct,
+        bytesPerSecond: bps,
         reason: null,
-        percent: null,
-        bytesPerSecond: null,
       })
     })
 
-    autoUpdaterInstance.on('update-available', (info) => {
+    autoUpdaterInstance.on('update-downloaded', (info) => {
+      lastDownloadedInfo = info
+      const prev = ensureInitializedState()
+      const latest = normalizeVersion(info?.version) || prev.version
+      const notes = formatReleaseNotes(info?.releaseNotes) || prev.notes
+      setUpdateState({
+        status: 'ready',
+        version: latest,
+        notes,
+        percent: 100,
+        bytesPerSecond: 0,
+        reason: null,
+        canSelfUpdate: true,
+        htmlUrl: buildReleaseUrl(latest),
+      })
+    })
+
+    autoUpdaterInstance.on('error', (err) => {
+      const prev = ensureInitializedState()
+      if (prev.status === 'downloading') {
+        const { reason } = classifyUpdaterError(err)
+        console.warn('[updater] Download error:', reason)
+        setUpdateState({
+          status: 'error',
+          percent: null,
+          bytesPerSecond: null,
+          reason,
+        })
+      }
+    })
+  }
+
+  return autoUpdaterInstance
+}
+
+/**
+ * Log check timing to stdout.
+ * Format: [updates] check source=<startup|schedule|manual> attempt=<n> ms=<elapsed> result=<available|up-to-date|no-releases|timeout|error>
+ */
+function logCheckTiming(source, attempt, elapsedMs, result) {
+  console.log(`[updates] check source=${source} attempt=${attempt} ms=${elapsedMs} result=${result}`)
+}
+
+/**
+ * Determine if an error / result is eligible for retry (timeout or network error).
+ */
+function isNetworkOrTimeout(err, result) {
+  if (result === 'timeout') return true
+  if (!err) return true
+  if (err.isTimeout || err.name === 'TimeoutError' || err.name === 'AbortError') return true
+  const msg = String(err.message || err || '').toLowerCase()
+  if (msg.includes('rate limit') || msg.includes('403')) return false
+  return (
+    msg.includes('timeout') ||
+    msg.includes('etimedout') ||
+    msg.includes('enotfound') ||
+    msg.includes('econnrefused') ||
+    msg.includes('econnreset') ||
+    msg.includes('ehostunreach') ||
+    msg.includes('enetunreach') ||
+    msg.includes('eai_again') ||
+    msg.includes('err_internet_disconnected') ||
+    msg.includes('err_name_not_resolved') ||
+    msg.includes('err_connection_refused') ||
+    msg.includes('err_connection_reset') ||
+    msg.includes('err_connection_timed_out') ||
+    msg.includes('err_timed_out') ||
+    msg.includes('network') ||
+    msg.includes('fetch failed') ||
+    msg.includes('eai_')
+  )
+}
+
+/**
+ * Run a single check attempt using electron-updater with 20s time limit.
+ */
+function runElectronUpdaterAttempt(mode, thisAttemptId, thisGen) {
+  return new Promise((resolve, reject) => {
+    const updater = _testOverrides.autoUpdater || ensureAutoUpdater()
+    if (!updater) {
+      return reject(new Error('electron-updater not available'))
+    }
+
+    let settled = false
+    const timeoutMs = _testOverrides.checkTimeoutMs || CHECK_ATTEMPT_TIMEOUT_MS
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      cleanup()
+      try {
+        updater.checkForUpdatesPromise = null
+      } catch (_) {
+        /* ignore */
+      }
+      const err = new Error('Update check timed out')
+      err.isTimeout = true
+      reject(err)
+    }, timeoutMs)
+    activeCheckTimer = timer
+
+    function cleanup() {
+      if (timer) {
+        clearTimeout(timer)
+        if (activeCheckTimer === timer) activeCheckTimer = null
+      }
+      try {
+        updater.removeListener('update-available', onAvailable)
+        updater.removeListener('update-not-available', onNotAvailable)
+        updater.removeListener('error', onError)
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    function onAvailable(info) {
+      if (settled) return
+      if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) return
+      settled = true
+      cleanup()
       consecutiveFailures = 0
       const latest = normalizeVersion(info?.version)
       const now = Date.now()
@@ -426,15 +665,20 @@ function ensureAutoUpdater() {
         lastCheckedAt: now,
       })
       if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-    })
+      resolve('available')
+    }
 
-    autoUpdaterInstance.on('update-not-available', () => {
+    function onNotAvailable() {
+      if (settled) return
+      if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) return
+      settled = true
+      cleanup()
       consecutiveFailures = 0
       const now = Date.now()
       const currentMode = getCurrentMode()
       setUpdateState({
         status: 'up-to-date',
-        version: normalizeVersion(app.getVersion()),
+        version: normalizeVersion(getAppVersion()),
         notes: null,
         percent: null,
         bytesPerSecond: null,
@@ -445,42 +689,14 @@ function ensureAutoUpdater() {
         lastCheckedAt: now,
       })
       if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-    })
+      resolve('up-to-date')
+    }
 
-    autoUpdaterInstance.on('download-progress', (progress) => {
-      const now = Date.now()
-      const pct = Number.isFinite(progress?.percent) ? Math.min(100, Math.max(0, Math.round(progress.percent * 10) / 10)) : 0
-      const bps = Number.isFinite(progress?.bytesPerSecond) ? Math.max(0, Math.round(progress.bytesPerSecond)) : 0
-      if (now - lastProgressBroadcastAt < 80 && pct < 100) return
-      lastProgressBroadcastAt = now
-      setUpdateState({
-        status: 'downloading',
-        percent: pct,
-        bytesPerSecond: bps,
-        reason: null,
-      })
-    })
-
-    autoUpdaterInstance.on('update-downloaded', (info) => {
-      const prev = ensureInitializedState()
-      const latest = normalizeVersion(info?.version) || prev.version
-      const notes = formatReleaseNotes(info?.releaseNotes) || prev.notes
-      setUpdateState({
-        status: 'ready',
-        version: latest,
-        notes,
-        percent: 100,
-        bytesPerSecond: 0,
-        reason: null,
-        canSelfUpdate: true,
-        htmlUrl: buildReleaseUrl(latest),
-      })
-    })
-
-    autoUpdaterInstance.on('error', (err) => {
-      const prev = ensureInitializedState()
-      if (prev.status === 'ready') return
-      consecutiveFailures++
+    function onError(err) {
+      if (settled) return
+      if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) return
+      settled = true
+      cleanup()
       const { status, reason } = classifyUpdaterError(err)
       if (status === 'no-releases') {
         consecutiveFailures = 0
@@ -495,43 +711,56 @@ function ensureAutoUpdater() {
           reason,
           lastCheckedAt: now,
         })
-        return
+        return resolve('no-releases')
       }
-      console.warn('[updater] Update error:', reason)
-      setUpdateState({
-        status: 'error',
-        percent: null,
-        bytesPerSecond: null,
-        reason,
-      })
-    })
-  }
+      reject(err)
+    }
 
-  return autoUpdaterInstance
+    updater.on('update-available', onAvailable)
+    updater.on('update-not-available', onNotAvailable)
+    updater.on('error', onError)
+
+    try {
+      updater.checkForUpdatesPromise = null
+      const p = updater.checkForUpdates()
+      if (p && typeof p.then === 'function') {
+        p.then((checkResult) => {
+          if (settled) return
+          if (checkResult && typeof checkResult.isUpdateAvailable === 'boolean') {
+            if (checkResult.isUpdateAvailable) {
+              onAvailable(checkResult.updateInfo)
+            } else {
+              onNotAvailable()
+            }
+          }
+        }).catch((err) => {
+          if (!settled) {
+            onError(err)
+          }
+        })
+      }
+    } catch (err) {
+      onError(err)
+    }
+  })
 }
 
 /**
- * Fallback GitHub API check for dev builds and Linux .deb/.rpm packages.
+ * Perform GitHub releases API fetch and update state.
  */
-async function checkViaGithubApi(mode) {
-  const currentVersion = normalizeVersion(app.getVersion())
+async function doGithubApiCheck(mode, signal, thisAttemptId, thisGen) {
+  const currentVersion = normalizeVersion(getAppVersion())
   const now = Date.now()
-
-  setUpdateState({
-    status: 'checking',
-    reason: null,
-    percent: null,
-    bytesPerSecond: null,
-    canSelfUpdate: false,
-    devBuild: Boolean(mode.devBuild),
-  })
 
   if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_FAKE_LATEST) {
     const fakeLatest = normalizeVersion(process.env.SCREEN_BUDDY_FAKE_LATEST)
     const fakeNotes = formatReleaseNotes(process.env.SCREEN_BUDDY_FAKE_NOTES || '- Test release note\n- Simulated update check')
+    if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) {
+      return 'ignored'
+    }
     if (compareSemver(fakeLatest, currentVersion) > 0) {
       if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-      return setUpdateState({
+      setUpdateState({
         status: 'available',
         version: fakeLatest,
         notes: fakeNotes,
@@ -543,9 +772,10 @@ async function checkViaGithubApi(mode) {
         htmlUrl: buildReleaseUrl(fakeLatest),
         lastCheckedAt: now,
       })
+      return 'available'
     }
     if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-    return setUpdateState({
+    setUpdateState({
       status: mode.devBuild ? 'dev' : 'up-to-date',
       version: currentVersion,
       notes: null,
@@ -555,10 +785,12 @@ async function checkViaGithubApi(mode) {
       htmlUrl: RELEASES_PAGE_URL,
       lastCheckedAt: now,
     })
+    return 'up-to-date'
   }
 
   if (mode.engine === 'unsupported') {
-    return setUpdateState({
+    if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) return 'ignored'
+    setUpdateState({
       status: 'error',
       version: null,
       notes: null,
@@ -568,182 +800,301 @@ async function checkViaGithubApi(mode) {
       htmlUrl: RELEASES_PAGE_URL,
       lastCheckedAt: now,
     })
+    return 'error'
   }
 
-  try {
-    const { statusCode, data } = await fetchJson(GITHUB_API_LATEST_URL)
-    if (statusCode === 404) {
-      consecutiveFailures = 0
-      if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-      if (mode.devBuild) {
-        return setUpdateState({
-          status: 'dev',
-          version: currentVersion,
-          notes: null,
-          reason: 'Development build — no published releases yet.',
-          canSelfUpdate: false,
-          devBuild: true,
-          htmlUrl: RELEASES_PAGE_URL,
-          lastCheckedAt: now,
-        })
-      }
-      return setUpdateState({
-        status: 'no-releases',
-        version: null,
-        notes: null,
-        reason: 'No releases published yet.',
-        canSelfUpdate: false,
-        devBuild: false,
-        htmlUrl: RELEASES_PAGE_URL,
-        lastCheckedAt: now,
-      })
-    }
+  const fetcher = _testOverrides.fetchJson || fetchJson
+  const { statusCode, data } = await fetcher(GITHUB_API_LATEST_URL, { signal })
 
-    if (statusCode === 403) {
-      consecutiveFailures++
-      return setUpdateState({
-        status: 'error',
-        reason: 'GitHub rate limit reached. Try again later.',
-        canSelfUpdate: false,
-        devBuild: Boolean(mode.devBuild),
-      })
-    }
+  if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) {
+    return 'ignored'
+  }
 
-    if (statusCode < 200 || statusCode >= 300) {
-      consecutiveFailures++
-      return setUpdateState({
-        status: 'error',
-        reason: `GitHub returned HTTP ${statusCode}`,
-        canSelfUpdate: false,
-        devBuild: Boolean(mode.devBuild),
-      })
-    }
-
-    const latestVersion = normalizeVersion(data.tag_name || data.name || '')
-    const notes = formatReleaseNotes(data.body)
-    const htmlUrl = data.html_url || buildReleaseUrl(latestVersion)
+  if (statusCode === 404) {
     consecutiveFailures = 0
     if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-
-    if (!latestVersion) {
-      return setUpdateState({
-        status: mode.devBuild ? 'dev' : 'no-releases',
-        version: mode.devBuild ? currentVersion : null,
-        notes: null,
-        reason: mode.devBuild ? 'Development build — no valid release version found.' : 'No releases published yet.',
-        canSelfUpdate: false,
-        devBuild: Boolean(mode.devBuild),
-        htmlUrl: RELEASES_PAGE_URL,
-        lastCheckedAt: now,
-      })
-    }
-
-    if (compareSemver(latestVersion, currentVersion) > 0) {
-      return setUpdateState({
-        status: 'available',
-        version: latestVersion,
-        notes,
-        percent: null,
-        bytesPerSecond: null,
-        reason: mode.reason,
-        canSelfUpdate: false,
-        devBuild: Boolean(mode.devBuild),
-        htmlUrl,
-        lastCheckedAt: now,
-      })
-    }
-
-    return setUpdateState({
-      status: mode.devBuild ? 'dev' : 'up-to-date',
-      version: currentVersion,
+    setUpdateState({
+      status: mode.devBuild ? 'dev' : 'no-releases',
+      version: mode.devBuild ? currentVersion : null,
       notes: null,
-      reason: mode.devBuild ? mode.reason : null,
+      reason: mode.devBuild ? 'Development build — no published releases yet.' : 'No releases published yet.',
       canSelfUpdate: false,
       devBuild: Boolean(mode.devBuild),
       htmlUrl: RELEASES_PAGE_URL,
       lastCheckedAt: now,
     })
-  } catch (err) {
-    consecutiveFailures++
-    const { reason } = classifyUpdaterError(err)
-    return setUpdateState({
-      status: 'error',
-      reason,
+    return 'no-releases'
+  }
+
+  if (statusCode === 403) {
+    const err = new Error('GitHub rate limit reached. Try again later.')
+    err.statusCode = 403
+    throw err
+  }
+
+  if (statusCode < 200 || statusCode >= 300) {
+    const err = new Error(`GitHub returned HTTP ${statusCode}`)
+    err.statusCode = statusCode
+    throw err
+  }
+
+  const latestVersion = normalizeVersion(data.tag_name || data.name || '')
+  const notes = formatReleaseNotes(data.body)
+  const htmlUrl = data.html_url || buildReleaseUrl(latestVersion)
+  consecutiveFailures = 0
+  if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
+
+  if (!latestVersion) {
+    setUpdateState({
+      status: mode.devBuild ? 'dev' : 'no-releases',
+      version: mode.devBuild ? currentVersion : null,
+      notes: null,
+      reason: mode.devBuild ? 'Development build — no valid release version found.' : 'No releases published yet.',
       canSelfUpdate: false,
       devBuild: Boolean(mode.devBuild),
+      htmlUrl: RELEASES_PAGE_URL,
+      lastCheckedAt: now,
     })
+    return 'no-releases'
   }
+
+  if (compareSemver(latestVersion, currentVersion) > 0) {
+    setUpdateState({
+      status: 'available',
+      version: latestVersion,
+      notes,
+      percent: null,
+      bytesPerSecond: null,
+      reason: mode.reason,
+      canSelfUpdate: false,
+      devBuild: Boolean(mode.devBuild),
+      htmlUrl,
+      lastCheckedAt: now,
+    })
+    return 'available'
+  }
+
+  setUpdateState({
+    status: mode.devBuild ? 'dev' : 'up-to-date',
+    version: currentVersion,
+    notes: null,
+    reason: mode.devBuild ? mode.reason : null,
+    canSelfUpdate: false,
+    devBuild: Boolean(mode.devBuild),
+    htmlUrl: RELEASES_PAGE_URL,
+    lastCheckedAt: now,
+  })
+  return 'up-to-date'
+}
+
+/**
+ * Run a single check attempt using GitHub API with 20s time limit and AbortController.
+ */
+function runGithubApiAttempt(mode, thisAttemptId, thisGen) {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController()
+    activeCheckAbortController = controller
+
+    let settled = false
+    const timeoutMs = _testOverrides.checkTimeoutMs || CHECK_ATTEMPT_TIMEOUT_MS
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      cleanup()
+      const err = new Error('Update check timed out')
+      err.name = 'TimeoutError'
+      err.isTimeout = true
+      try {
+        controller.abort(err)
+      } catch (_) {
+        /* ignore */
+      }
+      reject(err)
+    }, timeoutMs)
+    activeCheckTimer = timer
+
+    function cleanup() {
+      if (timer) {
+        clearTimeout(timer)
+        if (activeCheckTimer === timer) activeCheckTimer = null
+      }
+      if (activeCheckAbortController === controller) {
+        activeCheckAbortController = null
+      }
+    }
+
+    doGithubApiCheck(mode, controller.signal, thisAttemptId, thisGen)
+      .then((res) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(res)
+      })
+      .catch((err) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(err)
+      })
+  })
+}
+
+/**
+ * Execute the multi-attempt check flow with timeout, retry, and timing logging.
+ */
+async function runCheckFlow(source) {
+  checkGeneration++
+  const thisGen = checkGeneration
+
+  setUpdateState({
+    status: 'checking',
+    reason: null,
+    percent: null,
+    bytesPerSecond: null,
+  })
+
+  const mode = getCurrentMode()
+  let lastError = null
+
+  for (let attempt = 1; attempt <= MAX_CHECK_ATTEMPTS; attempt++) {
+    if (isQuittingUpdater || thisGen !== checkGeneration) {
+      break
+    }
+
+    attemptIdCounter++
+    const thisAttemptId = attemptIdCounter
+    activeAttemptId = thisAttemptId
+
+    const startTime = Date.now()
+    let attemptResult = 'error'
+    lastError = null
+
+    let timer = null
+    const timeoutMs = _testOverrides.checkTimeoutMs || CHECK_ATTEMPT_TIMEOUT_MS
+
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error('Update check timed out')
+        err.name = 'TimeoutError'
+        err.isTimeout = true
+        reject(err)
+      }, timeoutMs)
+    })
+    activeCheckTimer = timer
+
+    try {
+      let attemptPromise
+      if (typeof _testOverrides.runCheckAttempt === 'function') {
+        attemptPromise = _testOverrides.runCheckAttempt(mode, thisAttemptId, thisGen, attempt)
+      } else if (mode.engine === 'electron-updater') {
+        attemptPromise = runElectronUpdaterAttempt(mode, thisAttemptId, thisGen)
+      } else {
+        attemptPromise = runGithubApiAttempt(mode, thisAttemptId, thisGen)
+      }
+      attemptResult = await Promise.race([attemptPromise, timeoutPromise])
+    } catch (err) {
+      lastError = err
+      if (err?.isTimeout || err?.name === 'TimeoutError') {
+        attemptResult = 'timeout'
+      } else {
+        const classified = classifyUpdaterError(err)
+        if (classified.status === 'no-releases') {
+          attemptResult = 'no-releases'
+        } else {
+          attemptResult = 'error'
+        }
+      }
+    } finally {
+      if (timer) {
+        clearTimeout(timer)
+        if (activeCheckTimer === timer) activeCheckTimer = null
+      }
+      if (activeAttemptId === thisAttemptId) {
+        activeAttemptId = 0
+      }
+    }
+
+    const elapsed = Date.now() - startTime
+
+    if (thisGen !== checkGeneration) {
+      break
+    }
+
+    logCheckTiming(source, attempt, elapsed, attemptResult)
+
+    if (attemptResult === 'available' || attemptResult === 'up-to-date' || attemptResult === 'no-releases') {
+      return getUpdateState()
+    }
+
+    if (attempt < MAX_CHECK_ATTEMPTS && isNetworkOrTimeout(lastError, attemptResult)) {
+      const delayMs = _testOverrides.retryDelayMs !== undefined ? _testOverrides.retryDelayMs : RETRY_DELAY_MS
+      await new Promise((resolve) => {
+        activeRetryTimer = setTimeout(() => {
+          activeRetryTimer = null
+          resolve()
+        }, delayMs)
+      })
+      if (isQuittingUpdater || thisGen !== checkGeneration) {
+        break
+      }
+      continue
+    } else {
+      break
+    }
+  }
+
+  if (thisGen !== checkGeneration || isQuittingUpdater) {
+    return getUpdateState()
+  }
+
+  consecutiveFailures++
+  let reason = "Couldn't reach GitHub. Check your connection and try again."
+  if (lastError) {
+    const rawMsg = String(lastError.message || lastError || '').toLowerCase()
+    if (rawMsg.includes('rate limit') || rawMsg.includes('403')) {
+      reason = 'Update server rate limit reached. Try again later.'
+    }
+  }
+
+  setUpdateState({
+    status: 'error',
+    reason,
+    percent: null,
+    bytesPerSecond: null,
+  })
+
+  return getUpdateState()
 }
 
 /**
  * Check for updates (supports electron-updater on Windows/AppImage/debug feed, GitHub API on dev/.deb/.rpm).
  * Never auto-downloads updates.
- * @param {{ manual?: boolean }} [options]
+ * @param {{ manual?: boolean, source?: 'startup'|'schedule'|'manual' }} [options]
  */
-async function checkForUpdates(options = {}) {
+function checkForUpdates(options = {}) {
   if (isQuittingUpdater || process.env.SCREEN_BUDDY_DISABLE_UPDATER === '1') {
-    return getUpdateState()
+    return Promise.resolve(getUpdateState())
   }
-  const manual = Boolean(options?.manual)
   const current = ensureInitializedState()
 
   // Do not discard an active download or a ready-to-install update
   if (current.status === 'downloading' || current.status === 'ready') {
-    return getUpdateState()
+    return Promise.resolve(getUpdateState())
   }
 
   if (inFlightCheckPromise) {
     return inFlightCheckPromise
   }
 
-  const mode = getCurrentMode()
-  if (mode.engine !== 'electron-updater') {
-    // Allow user to inspect dev status or GitHub releases safely
-    if (!manual && current.status === 'dev' && !process.env.SCREEN_BUDDY_FAKE_LATEST) {
-      // On automatic startup/open in dev mode, still run GitHub API check quietly if desired,
-      // ending cleanly in 'dev' (or 'available' if a real release or FAKE_LATEST exists).
-    }
-    inFlightCheckPromise = checkViaGithubApi(mode).finally(() => {
-      inFlightCheckPromise = null
-    })
-    return inFlightCheckPromise
+  let source = options?.source
+  if (source !== 'startup' && source !== 'schedule' && source !== 'manual') {
+    source = options?.manual ? 'manual' : (options?.manual === false ? 'startup' : 'manual')
   }
 
-  const updater = ensureAutoUpdater()
-  if (!updater) {
-    return getUpdateState()
-  }
-
-  inFlightCheckPromise = (async () => {
-    try {
-      setUpdateState({
-        status: 'checking',
-        reason: null,
-        percent: null,
-        bytesPerSecond: null,
-        canSelfUpdate: true,
-        devBuild: mode.devBuild,
-      })
-      await updater.checkForUpdates()
-    } catch (err) {
-      const prev = ensureInitializedState()
-      if (prev.status !== 'error' && prev.status !== 'no-releases') {
-        const { status, reason } = classifyUpdaterError(err)
-        if (status === 'no-releases') {
-          consecutiveFailures = 0
-          const now = Date.now()
-          if (typeof onCheckPersistedFn === 'function') onCheckPersistedFn(now)
-          setUpdateState({ status: 'no-releases', reason, lastCheckedAt: now })
-        } else {
-          consecutiveFailures++
-          setUpdateState({ status: 'error', reason })
-        }
-      }
-    } finally {
-      inFlightCheckPromise = null
-    }
-    return getUpdateState()
-  })()
+  inFlightCheckPromise = runCheckFlow(source).finally(() => {
+    inFlightCheckPromise = null
+  })
 
   return inFlightCheckPromise
 }
@@ -871,7 +1222,7 @@ function scheduleNextPeriodicCheck() {
     if (latestSettings?.autoCheckUpdates !== false) {
       const cur = ensureInitializedState()
       if (cur.status !== 'downloading' && cur.status !== 'ready' && cur.status !== 'checking') {
-        await checkForUpdates({ manual: false })
+        await checkForUpdates({ manual: false, source: 'schedule' })
       }
     }
     scheduleNextPeriodicCheck()
@@ -898,7 +1249,7 @@ function initUpdater({ getSettings, broadcast, onCheckPersisted }) {
       if (latestSettings?.autoCheckUpdates !== false) {
         const cur = ensureInitializedState()
         if (cur.status !== 'downloading' && cur.status !== 'ready' && cur.status !== 'checking') {
-          await checkForUpdates({ manual: false })
+          await checkForUpdates({ manual: false, source: 'startup' })
         }
       }
       scheduleNextPeriodicCheck()
@@ -919,7 +1270,25 @@ function notifyUpdaterSettingsChanged(settings) {
 
 function cleanupUpdater() {
   isQuittingUpdater = true
+  checkGeneration++
+  activeAttemptId = 0
   clearSchedulerTimers()
+  if (activeCheckTimer) {
+    clearTimeout(activeCheckTimer)
+    activeCheckTimer = null
+  }
+  if (activeRetryTimer) {
+    clearTimeout(activeRetryTimer)
+    activeRetryTimer = null
+  }
+  if (activeCheckAbortController) {
+    try {
+      activeCheckAbortController.abort()
+    } catch (_) {
+      /* ignore */
+    }
+    activeCheckAbortController = null
+  }
   if (activeDownloadCancellationToken) {
     try {
       activeDownloadCancellationToken.cancel()
@@ -930,6 +1299,7 @@ function cleanupUpdater() {
   }
   if (autoUpdaterInstance) {
     try {
+      autoUpdaterInstance.checkForUpdatesPromise = null
       autoUpdaterInstance.removeAllListeners()
     } catch (_) {
       /* ignore */
@@ -943,6 +1313,7 @@ module.exports = {
   downloadUpdate,
   installUpdate,
   getUpdateState,
+  setUpdateState,
   initUpdater,
   notifyUpdaterSettingsChanged,
   cleanupUpdater,
@@ -951,4 +1322,7 @@ module.exports = {
   formatReleaseNotes,
   resolveUpdateMode,
   classifyUpdaterError,
+  buildRestartHint,
+  _setTestOverrides,
+  _clearTestOverrides,
 }

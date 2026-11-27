@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Button } from './ui'
 import {
   Sparkles,
@@ -8,6 +8,8 @@ import {
   RotateCw,
   CheckCircle2,
   AlertCircle,
+  Copy,
+  Check,
 } from 'lucide-react'
 
 const RELEASES_URL = 'https://github.com/THE-Nullb0rn/Screen-Buddy/releases'
@@ -66,6 +68,8 @@ export default function UpdatePanel({
   onInstall,
   onOpenExternal,
 }) {
+  const [copiedPath, setCopiedPath] = useState(false)
+
   if (!updateState) return null
 
   const status = updateState.status || 'idle'
@@ -73,6 +77,40 @@ export default function UpdatePanel({
   const appVer = currentVersion || updateState.currentVersion || ''
   const lastTs = updateState.lastCheckedAt || lastUpdateCheck
   const releaseUrl = updateState.htmlUrl || RELEASES_URL
+
+  const copyPath = async (text) => {
+    let success = false
+    try {
+      if (window.api && typeof window.api.copyText === 'function') {
+        const res = await window.api.copyText(text)
+        success = Boolean(res && res.ok)
+      } else if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        success = true
+      }
+    } catch (_) {
+      success = false
+    }
+    if (!success) {
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        success = true
+      } catch (_) {
+        success = false
+      }
+    }
+    if (success) {
+      setCopiedPath(true)
+      setTimeout(() => setCopiedPath(false), 1500)
+    }
+  }
 
   const openUrl = (url) => {
     if (onOpenExternal) {
@@ -230,6 +268,43 @@ export default function UpdatePanel({
               <span>View changelog</span>
             </Button>
           </div>
+          {updateState.restartHint?.kind === 'appimage' && updateState.restartHint.path && (
+            <div className="sb-update-restart-hint" style={{ marginTop: '12px' }}>
+              <p className="sb-update-note" style={{ marginBottom: '8px' }}>
+                If Screen Buddy doesn&apos;t reopen by itself, start it again from your app launcher or run:
+              </p>
+              <div className="sb-code-box">
+                <code className="sb-code-box__text">{updateState.restartHint.path}</code>
+                <div className="sb-code-box__actions">
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={() => copyPath(updateState.restartHint.path)}
+                    aria-label="Copy AppImage path"
+                  >
+                    {copiedPath ? (
+                      <>
+                        <Check size={12} className="sb-icon--ok" />
+                        <span>Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={12} />
+                        <span>Copy</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+          {updateState.restartHint?.kind === 'start-menu' && (
+            <div className="sb-update-restart-hint" style={{ marginTop: '12px' }}>
+              <p className="sb-update-note">
+                If Screen Buddy doesn&apos;t reopen by itself, start it again from the Start menu.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
