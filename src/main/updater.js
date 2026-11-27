@@ -264,6 +264,8 @@ let autoUpdaterInstance = null
 let autoUpdaterHooksInstalled = false
 let inFlightCheckPromise = null
 let inFlightDownloadPromise = null
+let activeDownloadCancellationToken = null
+let isQuittingUpdater = false
 let initialCheckTimer = null
 let periodicCheckTimer = null
 let consecutiveFailures = 0
@@ -665,6 +667,9 @@ async function checkViaGithubApi(mode) {
  * @param {{ manual?: boolean }} [options]
  */
 async function checkForUpdates(options = {}) {
+  if (isQuittingUpdater || process.env.SCREEN_BUDDY_DISABLE_UPDATER === '1') {
+    return getUpdateState()
+  }
   const manual = Boolean(options?.manual)
   const current = ensureInitializedState()
 
@@ -734,6 +739,9 @@ async function checkForUpdates(options = {}) {
  * Sets autoInstallOnAppQuit = true only once download begins.
  */
 async function downloadUpdate() {
+  if (isQuittingUpdater || process.env.SCREEN_BUDDY_DISABLE_UPDATER === '1') {
+    return getUpdateState()
+  }
   const mode = getCurrentMode()
   const current = ensureInitializedState()
 
@@ -771,9 +779,17 @@ async function downloadUpdate() {
 
   inFlightDownloadPromise = (async () => {
     try {
+      if (mode.engine === 'electron-updater') {
+        try {
+          const { CancellationToken } = require('builder-util-runtime')
+          activeDownloadCancellationToken = new CancellationToken()
+        } catch (_) {
+          /* ignore */
+        }
+      }
       // Ensure updater has metadata if download was invoked right after state check
       if (ensureInitializedState().status !== 'ready') {
-        await updater.downloadUpdate()
+        await updater.downloadUpdate(activeDownloadCancellationToken || undefined)
       }
     } catch (err) {
       updater.autoInstallOnAppQuit = false
@@ -788,6 +804,7 @@ async function downloadUpdate() {
         })
       }
     } finally {
+      activeDownloadCancellationToken = null
       inFlightDownloadPromise = null
     }
     return getUpdateState()
@@ -887,7 +904,23 @@ function notifyUpdaterSettingsChanged(settings) {
 }
 
 function cleanupUpdater() {
+  isQuittingUpdater = true
   clearSchedulerTimers()
+  if (activeDownloadCancellationToken) {
+    try {
+      activeDownloadCancellationToken.cancel()
+    } catch (_) {
+      /* ignore */
+    }
+    activeDownloadCancellationToken = null
+  }
+  if (autoUpdaterInstance) {
+    try {
+      autoUpdaterInstance.removeAllListeners()
+    } catch (_) {
+      /* ignore */
+    }
+  }
   stateBroadcastFn = null
 }
 

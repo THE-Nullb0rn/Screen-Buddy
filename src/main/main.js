@@ -191,7 +191,26 @@ let quitWatchdogTimer = null
 let persistSettingsWindowBoundsRef = null
 let stopIdlePollTimer = null
 
+let outOfProcessWatchdogStarted = false
+function startOutOfProcessWatchdog() {
+  if (process.platform !== 'linux') return
+  if (outOfProcessWatchdogStarted) return
+  outOfProcessWatchdogStarted = true
+  try {
+    const parentPid = process.pid
+    const cmd = `sleep 4; if kill -0 ${parentPid} 2>/dev/null; then if grep -s -a -i -q screen-buddy /proc/${parentPid}/cmdline 2>/dev/null; then kill -9 ${parentPid} 2>/dev/null; fi; fi`
+    const child = require('child_process').spawn('sh', ['-c', cmd], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 function ensureQuitWatchdog() {
+  startOutOfProcessWatchdog()
   if (quitWatchdogTimer) return
   quitWatchdogTimer = setTimeout(() => {
     console.log('[main] quit watchdog: forcing exit')
@@ -866,6 +885,15 @@ app.on('quit', (event, exitCode) => {
   if (process.env.SCREEN_BUDDY_DEBUG === '1') {
     console.log(`[main] quit event (exitCode=${exitCode})`)
     console.log('[updater] fake autoInstallOnAppQuit triggered on quit event')
+  }
+  if (process.platform === 'linux') {
+    setImmediate(() => {
+      try {
+        process.exit(typeof exitCode === 'number' ? exitCode : 0)
+      } catch (_) {
+        /* ignore */
+      }
+    })
   }
 })
 
