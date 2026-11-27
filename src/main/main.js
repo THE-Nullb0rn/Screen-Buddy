@@ -548,14 +548,16 @@ app.whenReady().then(async () => {
   electronScreen.on('display-metrics-changed', () => handleDisplayChange('display-metrics-changed'))
 
   // Apply saved autostart preference on launch
-  if (process.platform === 'linux' && process.env.APPIMAGE) {
-    if (settings.autostart) {
-      if (!repairAutostartExecIfNeeded()) {
-        setAutostart()
+  if (app.isPackaged) {
+    if (process.platform === 'linux' && process.env.APPIMAGE) {
+      if (settings.autostart) {
+        if (!repairAutostartExecIfNeeded(undefined, settings.autostart)) {
+          setAutostart()
+        }
       }
+    } else if (settings.autostart) {
+      setAutostart()
     }
-  } else if (settings.autostart) {
-    setAutostart()
   }
 
   // Start typing detection based on initial settings
@@ -3375,10 +3377,12 @@ function registerIpcHandlers() {
     syncDeveloperMode(Boolean(settings.developerMode))
 
     // Toggle autostart .desktop file based on the new setting
-    if (settings.autostart) {
-      setAutostart()
-    } else {
-      removeAutostart()
+    if (app.isPackaged) {
+      if (settings.autostart) {
+        setAutostart()
+      } else {
+        removeAutostart()
+      }
     }
     notifyUpdaterSettingsChanged(settings)
 

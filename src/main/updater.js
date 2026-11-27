@@ -752,7 +752,7 @@ async function doGithubApiCheck(mode, signal, thisAttemptId, thisGen) {
   const currentVersion = normalizeVersion(getAppVersion())
   const now = Date.now()
 
-  if (process.env.SCREEN_BUDDY_DEBUG === '1' && process.env.SCREEN_BUDDY_FAKE_LATEST) {
+  if (!isAppPackaged() && process.env.SCREEN_BUDDY_FAKE_LATEST) {
     const fakeLatest = normalizeVersion(process.env.SCREEN_BUDDY_FAKE_LATEST)
     const fakeNotes = formatReleaseNotes(process.env.SCREEN_BUDDY_FAKE_NOTES || '- Test release note\n- Simulated update check')
     if (thisGen !== checkGeneration || activeAttemptId !== thisAttemptId) {

@@ -16,8 +16,24 @@ const path = require('path')
 const os = require('os')
 const { app } = require('electron')
 
+let _testOverrides = {}
+
+function _setTestOverrides(overrides) {
+  _testOverrides = { ...overrides }
+}
+
+function _clearTestOverrides() {
+  _testOverrides = {}
+}
+
+function isAppPackaged() {
+  if (_testOverrides.isPackaged !== undefined) return _testOverrides.isPackaged
+  return Boolean(app && app.isPackaged)
+}
+
 // ─── XDG autostart path ──────────────────────────────────────────────────────
 function getAutostartDir() {
+  if (_testOverrides.autostartDir) return _testOverrides.autostartDir
   const configHome =
     process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
   return path.join(configHome, 'autostart')
@@ -41,15 +57,13 @@ function quoteDesktopArg(arg) {
 /**
  * Generate the .desktop entry content.
  * Exec path is the currently running Electron binary or AppImage file.
- * On a packaged build this is the wrapped app binary or process.env.APPIMAGE;
- * in development it is the raw `electron` binary with the project dir as the first argument.
+ * In packaged builds this is the wrapped app binary or process.env.APPIMAGE.
  */
 function buildDesktopEntry() {
+  const appImagePath = _testOverrides.appImage !== undefined ? _testOverrides.appImage : process.env.APPIMAGE
   let execPath
-  if (process.env.NODE_ENV === 'development') {
-    execPath = `${quoteDesktopArg(process.execPath)} ${quoteDesktopArg(path.resolve(__dirname, '..'))} --autostart`
-  } else if (process.env.APPIMAGE) {
-    execPath = `${quoteDesktopArg(process.env.APPIMAGE)} --autostart`
+  if (appImagePath) {
+    execPath = `${quoteDesktopArg(appImagePath)} --autostart`
   } else {
     execPath = `${quoteDesktopArg(process.execPath)} --autostart`
   }
@@ -71,7 +85,7 @@ X-GNOME-Autostart-enabled=true
 
 function getAutostartStatus() {
   if (process.platform === 'win32') {
-    if (!app.isPackaged) {
+    if (!isAppPackaged()) {
       return {
         available: false,
         devBuild: true,
@@ -79,7 +93,9 @@ function getAutostartStatus() {
         reason: 'Available in the installed app',
       }
     }
-    const info = app.getLoginItemSettings({ args: ['--autostart'] })
+    const info = app && typeof app.getLoginItemSettings === 'function'
+      ? app.getLoginItemSettings({ args: ['--autostart'] })
+      : null
     return {
       available: true,
       devBuild: false,
@@ -87,8 +103,17 @@ function getAutostartStatus() {
     }
   }
   if (process.platform === 'linux') {
+    if (!isAppPackaged()) {
+      return {
+        available: false,
+        devBuild: true,
+        enabled: false,
+        reason: 'Available in the installed app',
+      }
+    }
     return {
       available: true,
+      devBuild: false,
       enabled: fs.existsSync(getDesktopFile()),
     }
   }
@@ -104,11 +129,13 @@ function getAutostartStatus() {
  */
 function setAutostart() {
   if (process.platform === 'win32') {
-    if (!app.isPackaged) {
+    if (!isAppPackaged()) {
       return { success: false, supported: false, devBuild: true, message: 'Autostart is disabled in dev builds' }
     }
     try {
-      app.setLoginItemSettings({ openAtLogin: true, args: ['--autostart'] })
+      if (app && typeof app.setLoginItemSettings === 'function') {
+        app.setLoginItemSettings({ openAtLogin: true, args: ['--autostart'] })
+      }
       return { success: true, supported: true }
     } catch (err) {
       console.error('[autostart] Failed to enable Windows login item:', err)
@@ -117,6 +144,9 @@ function setAutostart() {
   }
   if (process.platform !== 'linux') {
     return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
+  }
+  if (!isAppPackaged()) {
+    return { success: false, supported: false, devBuild: true, message: 'Autostart is disabled in dev builds' }
   }
   try {
     const desktopFile = getDesktopFile()
@@ -142,11 +172,13 @@ function setAutostart() {
  */
 function removeAutostart() {
   if (process.platform === 'win32') {
-    if (!app.isPackaged) {
+    if (!isAppPackaged()) {
       return { success: false, supported: false, devBuild: true, message: 'Autostart is disabled in dev builds' }
     }
     try {
-      app.setLoginItemSettings({ openAtLogin: false, args: ['--autostart'] })
+      if (app && typeof app.setLoginItemSettings === 'function') {
+        app.setLoginItemSettings({ openAtLogin: false, args: ['--autostart'] })
+      }
       return { success: true, supported: true }
     } catch (err) {
       console.error('[autostart] Failed to remove Windows login item:', err)
@@ -155,6 +187,9 @@ function removeAutostart() {
   }
   if (process.platform !== 'linux') {
     return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
+  }
+  if (!isAppPackaged()) {
+    return { success: false, supported: false, devBuild: true, message: 'Autostart is disabled in dev builds' }
   }
   try {
     const desktopFile = getDesktopFile()
@@ -176,10 +211,11 @@ function removeAutostart() {
  */
 function isAutostartEnabled() {
   if (process.platform === 'win32') {
-    if (!app.isPackaged) return false
-    return Boolean(app.getLoginItemSettings({ args: ['--autostart'] })?.openAtLogin)
+    if (!isAppPackaged()) return false
+    return Boolean(app && typeof app.getLoginItemSettings === 'function' ? app.getLoginItemSettings({ args: ['--autostart'] })?.openAtLogin : false)
   }
   if (process.platform !== 'linux') return false
+  if (!isAppPackaged()) return false
   return fs.existsSync(getDesktopFile())
 }
 
@@ -187,15 +223,40 @@ function isAutostartEnabled() {
  * Self-heal Linux AppImage autostart .desktop entry if Exec differs from process.env.APPIMAGE.
  * Linux AppImage only. Never creates entry if it does not already exist.
  *
- * @param {string} [newAppImagePath]
+ * @param {string|object} [newAppImagePathOrOpts]
+ * @param {boolean} [maybeAutostart]
  * @returns {boolean}
  */
-function repairAutostartExecIfNeeded(newAppImagePath) {
+function repairAutostartExecIfNeeded(newAppImagePathOrOpts, maybeAutostart) {
   if (process.platform !== 'linux') return false
+
+  let newAppImagePath
+  let autostart = true
+
+  if (typeof newAppImagePathOrOpts === 'object' && newAppImagePathOrOpts !== null) {
+    newAppImagePath = newAppImagePathOrOpts.newAppImagePath
+    if (newAppImagePathOrOpts.autostart !== undefined) {
+      autostart = Boolean(newAppImagePathOrOpts.autostart)
+    }
+  } else if (typeof newAppImagePathOrOpts === 'boolean') {
+    autostart = newAppImagePathOrOpts
+  } else if (typeof newAppImagePathOrOpts === 'string') {
+    newAppImagePath = newAppImagePathOrOpts
+    if (typeof maybeAutostart === 'boolean') {
+      autostart = maybeAutostart
+    }
+  } else if (typeof maybeAutostart === 'boolean') {
+    autostart = maybeAutostart
+  }
+
+  // When autostart is off, repair must not create or touch the file
+  if (!autostart) return false
+
   if (newAppImagePath && typeof newAppImagePath === 'string') {
     process.env.APPIMAGE = newAppImagePath
   }
-  if (!process.env.APPIMAGE) return false
+  const appImagePath = _testOverrides.appImage !== undefined ? _testOverrides.appImage : process.env.APPIMAGE
+  if (!appImagePath) return false
 
   const desktopFile = getDesktopFile()
   if (!fs.existsSync(desktopFile)) return false
@@ -228,4 +289,6 @@ module.exports = {
   isAutostartEnabled,
   getAutostartStatus,
   repairAutostartExecIfNeeded,
+  _setTestOverrides,
+  _clearTestOverrides,
 }

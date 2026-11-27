@@ -37,8 +37,21 @@ Prebuilt installers and packages are available on the [GitHub Releases](https://
 
 ## Platform Support
 
-- **Linux (Hyprland / Wayland)**: Full experience, including pinned always-on-top overlay, z-order locking, fullscreen detection, follower speech bubbles, playerctl media monitoring, and keyboard/typing detection.
-- **Linux (GNOME / KDE / X11) & Windows**: The companion runs with core features (animated mascot, hydration and health reminders, Gemini AI chat, sound, tray controls). Desktop integration features like compositor-level pin/z-order and typing detection run with a reduced feature set while platform parity is actively in progress.
+- **Windows**:
+  - Full support: walking along window bounds, global hotkeys, typing detection (low-level hook), media detection (Windows Media Manager helper), fullscreen window suppression, autostart (via registry), and seamless in-app updates.
+- **Linux on Hyprland**:
+  - Full feature set: pinned transparent overlay, follower speech bubbles, z-order management (`hyprctl`), and workspace/fullscreen tracking via Hyprland's IPC socket2.
+  - Compositor shortcuts via control files under `$XDG_RUNTIME_DIR` (`/run/user/<uid>/`):
+    - `screen-buddy-toggle`: toggle pause state
+    - `screen-buddy-chat`: open AI chat input
+    - `screen-buddy-call`: summon the companion to cursor
+  - External dependencies: requires `input` group membership to read `/dev/input/event*` devices for typing detection, and `playerctl` for MPRIS media playback monitoring.
+- **Linux on other Wayland compositors (GNOME, KDE) and X11**:
+  - Features depending on Hyprland IPC (`hyprctl`, socket2 events) — such as compositor-level window pinning, z-order locking, and fullscreen detection — or the `/run/user/<uid>/` control files are limited or unavailable.
+  - Non-Hyprland Linux desktop environments are currently **untested**.
+- **Updates across platforms**:
+  - Windows installer and Linux AppImage update in-app via electron-updater.
+  - Linux `.rpm` and `.deb` packages check releases and provide a direct "View release" button to download updates.
 
 ---
 

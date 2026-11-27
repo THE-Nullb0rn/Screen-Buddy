@@ -265,3 +265,75 @@ test('TASK 1 & 2: 5. restartHint generation across platforms and clearing outsid
   setUpdateState({ status: 'error', reason: 'Failed' })
   assert.equal(getUpdateState().restartHint, undefined)
 })
+
+test('TASK B: SCREEN_BUDDY_FAKE_LATEST honoured in unpackaged dev and ignored in packaged', async () => {
+  const origFakeLatest = process.env.SCREEN_BUDDY_FAKE_LATEST
+  const origDebug = process.env.SCREEN_BUDDY_DEBUG
+  const origLog = console.log
+  const timingLogs = []
+
+  console.log = (...args) => {
+    origLog(...args)
+    const line = args.join(' ')
+    if (line.startsWith('[updates] check')) {
+      timingLogs.push(line)
+    }
+  }
+
+  try {
+    delete process.env.SCREEN_BUDDY_DEBUG
+    process.env.SCREEN_BUDDY_FAKE_LATEST = '0.9.9'
+
+    // Case 1: Unpackaged dev run must honour SCREEN_BUDDY_FAKE_LATEST
+    _setTestOverrides({
+      isPackaged: false,
+      appVersion: '0.1.2',
+    })
+
+    const devState = await checkForUpdates({ manual: true, source: 'manual' })
+    assert.equal(devState.status, 'available', 'Unpackaged run must report status as available')
+    assert.equal(devState.version, '0.9.9', 'Unpackaged run must report fake version 0.9.9')
+    assert.ok(devState.htmlUrl.includes('/releases/tag/v0.9.9'), 'HTML url must point to release tag')
+    assert.ok(
+      timingLogs.some((l) => l.includes('source=manual') && l.includes('result=available')),
+      'Must log result=available for fake latest check'
+    )
+
+    // Case 2: Packaged run must completely ignore SCREEN_BUDDY_FAKE_LATEST
+    timingLogs.length = 0
+    let fetchCalled = false
+    _setTestOverrides({
+      isPackaged: true,
+      appVersion: '0.1.2',
+      platform: 'linux',
+      appImage: '',
+      fetchJson: async () => {
+        fetchCalled = true
+        return {
+          statusCode: 200,
+          data: {
+            tag_name: 'v0.1.2',
+            body: 'Latest real release notes',
+          },
+        }
+      },
+    })
+
+    const packagedState = await checkForUpdates({ manual: true, source: 'manual' })
+    assert.equal(fetchCalled, true, 'Packaged run must make real network check and ignore fake latest')
+    assert.equal(packagedState.status, 'up-to-date', 'Packaged run must be up-to-date against real 0.1.2')
+    assert.notEqual(packagedState.version, '0.9.9', 'Packaged run must not report fake version')
+  } finally {
+    console.log = origLog
+    if (origFakeLatest !== undefined) {
+      process.env.SCREEN_BUDDY_FAKE_LATEST = origFakeLatest
+    } else {
+      delete process.env.SCREEN_BUDDY_FAKE_LATEST
+    }
+    if (origDebug !== undefined) {
+      process.env.SCREEN_BUDDY_DEBUG = origDebug
+    } else {
+      delete process.env.SCREEN_BUDDY_DEBUG
+    }
+  }
+})
