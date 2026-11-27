@@ -1,6 +1,6 @@
 {
   "name": "screen-buddy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A desktop cat companion for self-care reminders",
   "main": "dist-electron/main.js",
   "repository": {
