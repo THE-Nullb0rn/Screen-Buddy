@@ -72,7 +72,7 @@ linux:
       StartupWMClass: screen-buddy
 
 appImage:
-  artifactName: Screen-Buddy-${version}-x86_64.${ext}
+  artifactName: Screen-Buddy-${arch}.${ext}
 
 rpm:
   artifactName: Screen-Buddy-${version}-x86_64.${ext}

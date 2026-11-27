@@ -17,11 +17,15 @@ const os = require('os')
 const { app } = require('electron')
 
 // ─── XDG autostart path ──────────────────────────────────────────────────────
-const XDG_CONFIG_HOME =
-  process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+function getAutostartDir() {
+  const configHome =
+    process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+  return path.join(configHome, 'autostart')
+}
 
-const AUTOSTART_DIR = path.join(XDG_CONFIG_HOME, 'autostart')
-const DESKTOP_FILE = path.join(AUTOSTART_DIR, 'screen-buddy.desktop')
+function getDesktopFile() {
+  return path.join(getAutostartDir(), 'screen-buddy.desktop')
+}
 
 /**
  * Escape a string for use inside double quotes in an Exec key per the
@@ -85,7 +89,7 @@ function getAutostartStatus() {
   if (process.platform === 'linux') {
     return {
       available: true,
-      enabled: fs.existsSync(DESKTOP_FILE),
+      enabled: fs.existsSync(getDesktopFile()),
     }
   }
   return {
@@ -115,16 +119,17 @@ function setAutostart() {
     return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
   }
   try {
+    const desktopFile = getDesktopFile()
     const content = buildDesktopEntry()
-    if (fs.existsSync(DESKTOP_FILE)) {
-      const existing = fs.readFileSync(DESKTOP_FILE, 'utf-8')
+    if (fs.existsSync(desktopFile)) {
+      const existing = fs.readFileSync(desktopFile, 'utf-8')
       if (existing === content) {
         return { success: true, supported: true }
       }
     }
-    fs.mkdirSync(AUTOSTART_DIR, { recursive: true })
-    fs.writeFileSync(DESKTOP_FILE, content, 'utf-8')
-    console.log('[autostart] .desktop file written to', DESKTOP_FILE)
+    fs.mkdirSync(getAutostartDir(), { recursive: true })
+    fs.writeFileSync(desktopFile, content, 'utf-8')
+    console.log('[autostart] .desktop file written to', desktopFile)
     return { success: true, supported: true }
   } catch (err) {
     console.error('[autostart] Failed to write .desktop file:', err)
@@ -152,9 +157,10 @@ function removeAutostart() {
     return { success: false, supported: false, message: 'Autostart is unsupported for now on this platform' }
   }
   try {
-    if (fs.existsSync(DESKTOP_FILE)) {
-      fs.unlinkSync(DESKTOP_FILE)
-      console.log('[autostart] .desktop file removed from', DESKTOP_FILE)
+    const desktopFile = getDesktopFile()
+    if (fs.existsSync(desktopFile)) {
+      fs.unlinkSync(desktopFile)
+      console.log('[autostart] .desktop file removed from', desktopFile)
     }
     return { success: true, supported: true }
   } catch (err) {
@@ -174,7 +180,52 @@ function isAutostartEnabled() {
     return Boolean(app.getLoginItemSettings({ args: ['--autostart'] })?.openAtLogin)
   }
   if (process.platform !== 'linux') return false
-  return fs.existsSync(DESKTOP_FILE)
+  return fs.existsSync(getDesktopFile())
 }
 
-module.exports = { setAutostart, removeAutostart, isAutostartEnabled, getAutostartStatus }
+/**
+ * Self-heal Linux AppImage autostart .desktop entry if Exec differs from process.env.APPIMAGE.
+ * Linux AppImage only. Never creates entry if it does not already exist.
+ *
+ * @param {string} [newAppImagePath]
+ * @returns {boolean}
+ */
+function repairAutostartExecIfNeeded(newAppImagePath) {
+  if (process.platform !== 'linux') return false
+  if (newAppImagePath && typeof newAppImagePath === 'string') {
+    process.env.APPIMAGE = newAppImagePath
+  }
+  if (!process.env.APPIMAGE) return false
+
+  const desktopFile = getDesktopFile()
+  if (!fs.existsSync(desktopFile)) return false
+
+  try {
+    const existing = fs.readFileSync(desktopFile, 'utf-8')
+    const content = buildDesktopEntry()
+    if (existing === content) return false
+
+    const existingExec = existing.split('\n').find((l) => l.startsWith('Exec='))
+    const expectedExec = content.split('\n').find((l) => l.startsWith('Exec='))
+
+    if (!existingExec || existingExec.trim() === expectedExec?.trim()) {
+      return false
+    }
+
+    fs.mkdirSync(getAutostartDir(), { recursive: true })
+    fs.writeFileSync(desktopFile, content, 'utf-8')
+    console.log('[autostart] repaired Exec path')
+    return true
+  } catch (err) {
+    console.warn('[autostart] Failed to repair Exec path:', err.message)
+    return false
+  }
+}
+
+module.exports = {
+  setAutostart,
+  removeAutostart,
+  isAutostartEnabled,
+  getAutostartStatus,
+  repairAutostartExecIfNeeded,
+}

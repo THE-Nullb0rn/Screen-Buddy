@@ -62,7 +62,12 @@ const execFileAsync = util.promisify(execFileCallback)
 
 
 const { DEFAULT_SETTINGS, loadSettings, saveSettings, getSettingsPath, validateSettingsUpdate } = require('./settings')
-const { setAutostart, removeAutostart, getAutostartStatus } = require('./autostart')
+const {
+  setAutostart,
+  removeAutostart,
+  getAutostartStatus,
+  repairAutostartExecIfNeeded,
+} = require('./autostart')
 const mediaMonitor = require('./mediaMonitor')
 const TypingDetector = require('./typing/TypingDetector')
 const { NotificationsManager } = require('./notifications')
@@ -191,6 +196,17 @@ let quitWatchdogTimer = null
 let persistSettingsWindowBoundsRef = null
 let stopIdlePollTimer = null
 
+let singleInstanceLockReleased = false
+function releaseSingleInstanceLock() {
+  if (singleInstanceLockReleased) return
+  singleInstanceLockReleased = true
+  try {
+    app.releaseSingleInstanceLock()
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 let outOfProcessWatchdogStarted = false
 function startOutOfProcessWatchdog() {
   if (process.platform !== 'linux') return
@@ -210,6 +226,7 @@ function startOutOfProcessWatchdog() {
 }
 
 function ensureQuitWatchdog() {
+  releaseSingleInstanceLock()
   startOutOfProcessWatchdog()
   if (quitWatchdogTimer) return
   quitWatchdogTimer = setTimeout(() => {
@@ -276,6 +293,7 @@ function setupSignalHandlers() {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.on(sig, () => {
       console.log(`[main] Received ${sig} — quitting application`)
+      releaseSingleInstanceLock()
       isQuitting = true
       isShuttingDown = true
       ensureQuitWatchdog()
@@ -530,7 +548,13 @@ app.whenReady().then(async () => {
   electronScreen.on('display-metrics-changed', () => handleDisplayChange('display-metrics-changed'))
 
   // Apply saved autostart preference on launch
-  if (settings.autostart) {
+  if (process.platform === 'linux' && process.env.APPIMAGE) {
+    if (settings.autostart) {
+      if (!repairAutostartExecIfNeeded()) {
+        setAutostart()
+      }
+    }
+  } else if (settings.autostart) {
     setAutostart()
   }
 
@@ -899,6 +923,7 @@ app.on('quit', (event, exitCode) => {
 
 let beforeQuitHandled = false
 app.on('before-quit', () => {
+  releaseSingleInstanceLock()
   if (beforeQuitHandled) return
   beforeQuitHandled = true
   console.log('[main] Quitting application (before-quit)')
@@ -2766,6 +2791,7 @@ function createOverlayWindow() {
     mainWindow = null  // Null immediately so the IPC guard drops any in-flight events
     if (!isShuttingDown && !isQuitting) {
       console.log('[main] Primary overlay window closed — quitting application')
+      releaseSingleInstanceLock()
       isQuitting = true
       isShuttingDown = true
       ensureQuitWatchdog()
@@ -3286,6 +3312,7 @@ function buildTrayMenu() {
       label: '✖  Exit',
       click: () => {
         console.log('[main] Tray Quit clicked — quitting application')
+        releaseSingleInstanceLock()
         isQuitting = true
         isShuttingDown = true
         ensureQuitWatchdog()

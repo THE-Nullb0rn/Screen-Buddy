@@ -383,6 +383,20 @@ function ensureAutoUpdater() {
   if (!autoUpdaterHooksInstalled) {
     autoUpdaterHooksInstalled = true
 
+    if (process.platform === 'linux' && process.env.APPIMAGE) {
+      autoUpdaterInstance.on('appimage-filename-updated', (destination) => {
+        try {
+          const settings = typeof settingsGetter === 'function' ? settingsGetter() : null
+          if (settings?.autostart) {
+            const { repairAutostartExecIfNeeded } = require('./autostart')
+            repairAutostartExecIfNeeded(destination)
+          }
+        } catch (err) {
+          console.warn('[updater] Failed to repair autostart on appimage-filename-updated:', err.message)
+        }
+      })
+    }
+
     autoUpdaterInstance.on('checking-for-update', () => {
       setUpdateState({
         status: 'checking',
